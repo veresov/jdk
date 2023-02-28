@@ -284,18 +284,18 @@ class CompilationPolicy : AllStatic {
 
     const char* method_name() const { return _method_name; }
 
-    static unsigned hash(CompilationRecord* const& r) {
-      return string_hash(r->method_name());
+    static unsigned hash_name(const char* const& n) {
+      return string_hash(n);
     }
-    static bool equals(CompilationRecord* const& r1, CompilationRecord* const& r2) {
-      return strcmp(r1->method_name(), r2->method_name()) == 0;
+    static bool equals_name(const char* const& n1, const char* const& n2) {
+      return strcmp(n1, n2) == 0;
     }
   };
 
   static GrowableArrayCHeap<CompilationRecord*, mtCompiler> _compilation_records;
-  static ResizeableResourceHashtable<CompilationRecord*, bool,
+  static ResizeableResourceHashtable<const char*, CompilationRecord*,
                                      AnyObj::C_HEAP, mtCompiler,
-                                     CompilationRecord::hash, CompilationRecord::equals> _compilation_records_set;
+                                     CompilationRecord::hash_name, CompilationRecord::equals_name> _compilation_records_set;
  
   static void record_compilation(const methodHandle& m);
 public:
