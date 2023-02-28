@@ -245,6 +245,59 @@ class CompilationPolicy : AllStatic {
 
   // m must be compiled before executing it
   static bool must_be_compiled(const methodHandle& m, int comp_level = CompLevel_any);
+
+  // Record information about a method at the time compilation is requested.
+  // Just a name for now, full profile later.
+  class CompilationRecord : public CHeapObj<mtCompiler> {
+    char* _method_name;
+
+    static unsigned string_hash(const char* s) {
+      unsigned h = 0;
+      const char* p = s;
+      while (*p != '\0') {
+        h = 31 * h + *p;
+        p++;
+      }
+      return h;
+    }
+    static char* clone_string(const char* s) {
+      char* c = AllocateHeap(strlen(s) + 1, mtCompiler);
+      strcpy(c, s);
+      return c;
+    }
+  public:
+    CompilationRecord(const CompilationRecord& cr) {
+      _method_name = clone_string(cr.method_name());
+    }
+    CompilationRecord(const methodHandle& mh) {
+      ResourceMark rm;
+      const char* method_name = mh->name_and_sig_as_C_string();
+      _method_name = clone_string(method_name);
+    }
+    CompilationRecord(const char* method_name) {
+      _method_name = clone_string(method_name);
+    }
+
+    ~CompilationRecord() {
+      FreeHeap(_method_name);
+    }
+
+    const char* method_name() const { return _method_name; }
+
+    static unsigned hash(CompilationRecord* const& r) {
+      return string_hash(r->method_name());
+    }
+    static bool equals(CompilationRecord* const& r1, CompilationRecord* const& r2) {
+      return strcmp(r1->method_name(), r2->method_name()) == 0;
+    }
+  };
+
+  static GrowableArrayCHeap<CompilationRecord*, mtCompiler> _compilation_records;
+  static ResizeableResourceHashtable<CompilationRecord*, bool,
+                                     AnyObj::C_HEAP, mtCompiler,
+                                     CompilationRecord::hash, CompilationRecord::equals> _compilation_records_set;
+ 
+  static void record_compilation(const methodHandle& m);
 public:
   static int min_invocations() { return Tier4MinInvocationThreshold; }
   static int c1_count() { return _c1_count; }
@@ -254,6 +307,9 @@ public:
   // If m must_be_compiled then request a compilation from the CompileBroker.
   // This supports the -Xcomp option.
   static void compile_if_required(const methodHandle& m, TRAPS);
+  static void compile_if_required_after_init(const methodHandle& m, TRAPS);
+  static void load_profiles();
+  static void store_profiles();
 
   // m is allowed to be compiled
   static bool can_be_compiled(const methodHandle& m, int comp_level = CompLevel_any);
@@ -278,6 +334,7 @@ public:
   static CompLevel initial_compile_level(const methodHandle& method);
   // Return highest level possible
   static CompLevel highest_compile_level();
+  static void dump();
 };
 
 #endif // SHARE_COMPILER_COMPILATIONPOLICY_HPP

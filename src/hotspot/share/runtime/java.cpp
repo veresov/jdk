@@ -31,6 +31,7 @@
 #include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "code/codeCache.hpp"
+#include "compiler/compilationPolicy.hpp"
 #include "compiler/compileBroker.hpp"
 #include "compiler/compilerOracle.hpp"
 #include "gc/shared/collectedHeap.hpp"
@@ -528,6 +529,10 @@ void before_exit(JavaThread* thread, bool halt) {
     }
   }
 #endif
+
+  if (StoreProfiles != nullptr) {
+    CompilationPolicy::store_profiles();
+  }
 
   print_statistics();
   Universe::heap()->print_tracing_info();

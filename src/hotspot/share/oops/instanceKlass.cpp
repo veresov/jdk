@@ -1173,6 +1173,17 @@ void InstanceKlass::initialize_impl(TRAPS) {
     }
   }
   DTRACE_CLASSINIT_PROBE_WAIT(end, -1, wait);
+
+  if (LoadProfiles != nullptr) {
+    int len = methods()->length();
+    for (int i = 0; i < len; i++) {
+      const methodHandle mh(THREAD, methods()->at(i));
+      CompilationPolicy::compile_if_required_after_init(mh, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        CLEAR_PENDING_EXCEPTION;
+      }
+    }
+  }
 }
 
 
