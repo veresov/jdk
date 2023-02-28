@@ -205,6 +205,7 @@ class CompilationPolicy : AllStatic {
   inline static double weight(Method* method);
   // Apply heuristics and return true if x should be compiled before y
   inline static bool compare_methods(Method* x, Method* y);
+  inline static bool compare_tasks(CompileTask* x, CompileTask* y);
   // Compute event rate for a given method. The rate is the number of event (invocations + backedges)
   // per millisecond.
   inline static void update_rate(jlong t, const methodHandle& method);
@@ -297,7 +298,7 @@ class CompilationPolicy : AllStatic {
                                      AnyObj::C_HEAP, mtCompiler,
                                      CompilationRecord::hash_name, CompilationRecord::equals_name> _compilation_records_set;
  
-  static void record_compilation(const methodHandle& m);
+  static void record_compilation(const methodHandle& m, CompLevel level);
 public:
   static int min_invocations() { return Tier4MinInvocationThreshold; }
   static int c1_count() { return _c1_count; }

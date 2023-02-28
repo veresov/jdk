@@ -727,7 +727,7 @@ CompileTask* CompilationPolicy::select_task(CompileQueue* compile_queue) {
       continue;
     }
     update_rate(t, mh);
-    if (max_task == nullptr || compare_methods(method, max_method)) {
+    if (max_task == nullptr || compare_methods(method, max_method) || compare_tasks(task, max_task)) {
       // Select a method with the highest rate
       max_task = task;
       max_method = method;
@@ -788,7 +788,7 @@ void CompilationPolicy::reprofile(ScopeDesc* trap_scope, bool is_osr) {
   }
 }
 
-void CompilationPolicy::record_compilation(const methodHandle& method) {
+void CompilationPolicy::record_compilation(const methodHandle& method, CompLevel level) {
   ResourceMark rm;
   const char* method_name = method->name_and_sig_as_C_string();
   MutexLocker ml(Compile_lock);
@@ -911,7 +911,7 @@ void CompilationPolicy::compile(const methodHandle& mh, int bci, CompLevel level
     update_rate(nanos_to_millis(os::javaTimeNanos()), mh);
     CompileBroker::compile_method(mh, bci, level, mh, hot_count, CompileTask::Reason_Tiered, THREAD);
     if (StoreProfiles != nullptr) {
-      record_compilation(mh);
+      record_compilation(mh, level);
     }
   }
 }
@@ -992,6 +992,13 @@ bool CompilationPolicy::compare_methods(Method* x, Method* y) {
         return true;
       }
     }
+  return false;
+}
+
+bool CompilationPolicy::compare_tasks(CompileTask* x, CompileTask* y) {
+  if (x->compile_reason() != y->compile_reason() && y->compile_reason() == CompileTask::Reason_MustBeCompiled) {
+    return true;
+  }
   return false;
 }
 
