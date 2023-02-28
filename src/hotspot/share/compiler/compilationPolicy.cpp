@@ -56,6 +56,12 @@ int CompilationPolicy::_c1_count = 0;
 int CompilationPolicy::_c2_count = 0;
 double CompilationPolicy::_increase_threshold_at_ratio = 0;
 
+
+GrowableArrayCHeap<CompilationPolicy::CompilationRecord*, mtCompiler> CompilationPolicy::_compilation_records(1024);
+ResizeableResourceHashtable<CompilationPolicy::CompilationRecord*, bool, AnyObj::C_HEAP, mtCompiler,
+                            CompilationPolicy::CompilationRecord::hash, 
+                            CompilationPolicy::CompilationRecord::equals> CompilationPolicy::_compilation_records_set(1024);
+
 void compilationPolicy_init() {
   CompilationPolicy::initialize();
 }
@@ -79,8 +85,31 @@ bool CompilationPolicy::must_be_compiled(const methodHandle& m, int comp_level) 
   if (m->has_compiled_code()) return false;       // already compiled
   if (!can_be_compiled(m, comp_level)) return false;
 
-  return !UseInterpreter ||                                              // must compile all methods
+  return !UseInterpreter ||                                                                        // must compile all methods
          (AlwaysCompileLoopMethods && m->has_loops() && CompileBroker::should_compile_new_jobs()); // eagerly compile loop methods
+}
+
+void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TRAPS) {
+  assert(m->method_holder()->is_initialized(), "Holder should be initialized");
+  CompLevel level = initial_compile_level(m);
+  if (!m->is_native() && !m->has_compiled_code() && can_be_compiled(m, level)) {
+    bool has_profile = false;
+    {
+       CompilationRecord cr(m);
+       MutexLocker ml(Compile_lock);
+       has_profile = _compilation_records_set.contains(&cr);
+    }
+    if (has_profile) {
+      if (UseNewCode) {
+        ResourceMark rm;
+        tty->print_cr("force compiling %s", m->name_and_sig_as_C_string());
+      }
+      if (PrintTieredEvents) {
+        print_event(COMPILE, m(), m(), InvocationEntryBci, level);
+      }
+      CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
+    }
+  }
 }
 
 void CompilationPolicy::compile_if_required(const methodHandle& m, TRAPS) {
@@ -498,7 +527,60 @@ void CompilationPolicy::initialize() {
     assert(count == c1_count() + c2_count(), "inconsistent compiler thread count");
     set_increase_threshold_at_ratio();
   }
+
+  load_profiles();
+
   set_start_time(nanos_to_millis(os::javaTimeNanos()));
+}
+
+
+void CompilationPolicy::load_profiles() {
+  MutexLocker ml(Compile_lock);
+  if (LoadProfiles != nullptr) { 
+    int fd = os::open(LoadProfiles, O_RDONLY, 0666);
+    if (fd != -1) {
+      FILE* profile_file = os::fdopen(fd, "r");
+      if (profile_file != nullptr) {
+        fileStream profile_stream(profile_file, /*need_close=*/true);
+        char line[4096];
+        char* method_name = nullptr;
+        do {
+          method_name = profile_stream.readln(line, sizeof(line));
+          if (method_name != nullptr) {
+            CompilationRecord* cr = new CompilationRecord(method_name);
+            if (!_compilation_records_set.contains(cr)) {
+              _compilation_records_set.put(cr, false);
+              _compilation_records.append(cr);
+            } else {
+              delete cr;
+            }
+          }
+        } while (method_name != nullptr);
+      }
+    } else {
+      tty->print_cr("# Can't open file to load profiles.");
+    }
+  }
+}
+
+
+void CompilationPolicy::store_profiles() {
+  MutexLocker ml(Compile_lock);
+  if (StoreProfiles != nullptr) { 
+    int fd = os::open(StoreProfiles, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd != -1) {
+      FILE* profile_file = os::fdopen(fd, "w");
+      if (profile_file != nullptr) {
+        fileStream profile_stream(profile_file, /*need_close=*/true);
+        int len = _compilation_records.length();
+        for (int i = 0; i < len; i++) {
+          profile_stream.print_cr("%s", _compilation_records.at(i)->method_name());
+        }
+      }
+    } else {
+      tty->print_cr("# Can't open file to store profiles.");
+    }
+  }
 }
 
 
@@ -707,6 +789,26 @@ void CompilationPolicy::reprofile(ScopeDesc* trap_scope, bool is_osr) {
   }
 }
 
+void CompilationPolicy::record_compilation(const methodHandle& method) {
+  CompilationRecord* cr = new CompilationRecord(method);
+  MutexLocker ml(Compile_lock);
+  if (!_compilation_records_set.contains(cr)) {
+    _compilation_records_set.put(cr, false);
+    _compilation_records.append(cr);
+  } else {
+    delete cr;
+  }
+}
+
+void CompilationPolicy::dump() {
+  MutexLocker ml(Compile_lock);
+  int len = _compilation_records.length();
+  for (int i  = 0; i < len; i++) {
+    tty->print_cr("%s", _compilation_records.at(i)->method_name());
+  }
+  store_profiles();
+}
+
 nmethod* CompilationPolicy::event(const methodHandle& method, const methodHandle& inlinee,
                                       int branch_bci, int bci, CompLevel comp_level, CompiledMethod* nm, TRAPS) {
   if (PrintTieredEvents) {
@@ -809,6 +911,9 @@ void CompilationPolicy::compile(const methodHandle& mh, int bci, CompLevel level
     int hot_count = (bci == InvocationEntryBci) ? mh->invocation_count() : mh->backedge_count();
     update_rate(nanos_to_millis(os::javaTimeNanos()), mh);
     CompileBroker::compile_method(mh, bci, level, mh, hot_count, CompileTask::Reason_Tiered, THREAD);
+    if (StoreProfiles != nullptr) {
+      record_compilation(mh);
+    }
   }
 }
 
