@@ -58,9 +58,9 @@ double CompilationPolicy::_increase_threshold_at_ratio = 0;
 
 
 GrowableArrayCHeap<CompilationPolicy::CompilationRecord*, mtCompiler> CompilationPolicy::_compilation_records(1024);
-ResizeableResourceHashtable<CompilationPolicy::CompilationRecord*, bool, AnyObj::C_HEAP, mtCompiler,
-                            CompilationPolicy::CompilationRecord::hash, 
-                            CompilationPolicy::CompilationRecord::equals> CompilationPolicy::_compilation_records_set(1024);
+ResizeableResourceHashtable<const char*, CompilationPolicy::CompilationRecord*, AnyObj::C_HEAP, mtCompiler,
+                            CompilationPolicy::CompilationRecord::hash_name, 
+                            CompilationPolicy::CompilationRecord::equals_name> CompilationPolicy::_compilation_records_set(1024);
 
 void compilationPolicy_init() {
   CompilationPolicy::initialize();
@@ -93,11 +93,12 @@ void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TR
   assert(m->method_holder()->is_initialized(), "Holder should be initialized");
   CompLevel level = initial_compile_level(m);
   if (!m->is_native() && !m->has_compiled_code() && can_be_compiled(m, level)) {
+    ResourceMark rm;
+    const char* method_name = m->name_and_sig_as_C_string();
     bool has_profile = false;
     {
-       CompilationRecord cr(m);
        MutexLocker ml(Compile_lock);
-       has_profile = _compilation_records_set.contains(&cr);
+       has_profile = _compilation_records_set.contains(method_name);
     }
     if (has_profile) {
       if (UseNewCode) {
@@ -547,12 +548,10 @@ void CompilationPolicy::load_profiles() {
         do {
           method_name = profile_stream.readln(line, sizeof(line));
           if (method_name != nullptr) {
-            CompilationRecord* cr = new CompilationRecord(method_name);
-            if (!_compilation_records_set.contains(cr)) {
-              _compilation_records_set.put(cr, false);
+            if (!_compilation_records_set.contains(method_name)) {
+              CompilationRecord* cr = new CompilationRecord(method_name);
+              _compilation_records_set.put(cr->method_name(), cr);
               _compilation_records.append(cr);
-            } else {
-              delete cr;
             }
           }
         } while (method_name != nullptr);
@@ -790,13 +789,13 @@ void CompilationPolicy::reprofile(ScopeDesc* trap_scope, bool is_osr) {
 }
 
 void CompilationPolicy::record_compilation(const methodHandle& method) {
-  CompilationRecord* cr = new CompilationRecord(method);
+  ResourceMark rm;
+  const char* method_name = method->name_and_sig_as_C_string();
   MutexLocker ml(Compile_lock);
-  if (!_compilation_records_set.contains(cr)) {
-    _compilation_records_set.put(cr, false);
+  if (!_compilation_records_set.contains(method_name)) {
+    CompilationRecord* cr = new CompilationRecord(method);
+    _compilation_records_set.put(cr->method_name(), cr);
     _compilation_records.append(cr);
-  } else {
-    delete cr;
   }
 }
 
