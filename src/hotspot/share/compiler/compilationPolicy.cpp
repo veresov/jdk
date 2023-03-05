@@ -91,24 +91,32 @@ bool CompilationPolicy::must_be_compiled(const methodHandle& m, int comp_level) 
 
 void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TRAPS) {
   assert(m->method_holder()->is_initialized(), "Holder should be initialized");
-  CompLevel level = initial_compile_level(m);
-  if (!m->is_native() && !m->has_compiled_code() && can_be_compiled(m, level)) {
+  if (!m->is_native() && !m->has_compiled_code()) {
     ResourceMark rm;
     const char* method_name = m->name_and_sig_as_C_string();
-    bool has_profile = false;
+    CompilationRecord **v = nullptr;
     {
        MutexLocker ml(Compile_lock);
-       has_profile = _compilation_records_set.contains(method_name);
+       v = _compilation_records_set.get(method_name);
     }
-    if (has_profile) {
-      if (UseNewCode) {
-        ResourceMark rm;
-        tty->print_cr("force compiling %s", m->name_and_sig_as_C_string());
+    if (v != nullptr) {
+      CompilationRecord* cr = *v;
+      CompLevel level = initial_compile_level(m);
+      if (cr->level() == CompLevel_simple) {
+        level = CompLevel_simple;
+      } else if (cr->level() != CompLevel_full_optimization) {
+        level = CompLevel_limited_profile;
       }
-      if (PrintTieredEvents) {
-        print_event(COMPILE, m(), m(), InvocationEntryBci, level);
+      if (can_be_compiled(m, level)) {
+        if (UseNewCode) {
+         ResourceMark rm;
+         tty->print_cr("force compiling %s to level %d", m->name_and_sig_as_C_string(), level);
+        }
+        if (PrintTieredEvents) {
+         print_event(COMPILE, m(), m(), InvocationEntryBci, level);
+        }
+        CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
       }
-      CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
     }
   }
 }
@@ -544,17 +552,20 @@ void CompilationPolicy::load_profiles() {
       if (profile_file != nullptr) {
         fileStream profile_stream(profile_file, /*need_close=*/true);
         char line[4096];
-        char* method_name = nullptr;
+        char* buffer;
+        char method_name[4096];
+        int level;
         do {
-          method_name = profile_stream.readln(line, sizeof(line));
-          if (method_name != nullptr) {
+          buffer = profile_stream.readln(line, sizeof(line));
+          if (buffer != nullptr) {
+            sscanf(buffer, "%s %d", method_name, &level);
             if (!_compilation_records_set.contains(method_name)) {
-              CompilationRecord* cr = new CompilationRecord(method_name);
+              CompilationRecord* cr = new CompilationRecord(method_name, level);
               _compilation_records_set.put(cr->method_name(), cr);
               _compilation_records.append(cr);
             }
           }
-        } while (method_name != nullptr);
+        } while (buffer != nullptr);
       }
     } else {
       tty->print_cr("# Can't open file to load profiles.");
@@ -573,7 +584,8 @@ void CompilationPolicy::store_profiles() {
         fileStream profile_stream(profile_file, /*need_close=*/true);
         int len = _compilation_records.length();
         for (int i = 0; i < len; i++) {
-          profile_stream.print_cr("%s", _compilation_records.at(i)->method_name());
+          CompilationRecord* cr = _compilation_records.at(i);
+          profile_stream.print_cr("%s %d", cr->method_name(), cr->level());
         }
       }
     } else {
@@ -792,11 +804,34 @@ void CompilationPolicy::record_compilation(const methodHandle& method, CompLevel
   ResourceMark rm;
   const char* method_name = method->name_and_sig_as_C_string();
   MutexLocker ml(Compile_lock);
-  if (!_compilation_records_set.contains(method_name)) {
-    CompilationRecord* cr = new CompilationRecord(method);
+  CompilationRecord** v = _compilation_records_set.get(method_name);
+  if (v == nullptr) {
+    CompilationRecord* cr = new CompilationRecord(method, level);
     _compilation_records_set.put(cr->method_name(), cr);
     _compilation_records.append(cr);
+  } else {
+    CompilationRecord* cr = *v;
+    if (level == CompLevel_simple) {
+      cr->set_level(CompLevel_simple);
+    } else if (level > cr->level()) {
+      cr->set_level(level);
+    }
   }
+}
+
+bool CompilationPolicy::should_delay(const methodHandle& method) {
+  if (LoadProfiles == nullptr) {
+    return false;
+  }
+  ResourceMark rm;
+  const char* method_name = method->name_and_sig_as_C_string();
+  MutexLocker ml(Compile_lock);
+  CompilationRecord** v = _compilation_records_set.get(method_name);
+  if (v != nullptr) {
+    CompilationRecord* cr = *v;
+    return cr->level() != CompLevel_full_optimization;
+  }
+  return true;
 }
 
 void CompilationPolicy::dump() {
@@ -1041,6 +1076,7 @@ bool CompilationPolicy::should_create_mdo(const methodHandle& method, CompLevel 
   if (is_old(method)) {
     return true;
   }
+  
   int i = method->invocation_count();
   int b = method->backedge_count();
   double k = Tier0ProfilingStartPercentage / 100.0;
@@ -1154,8 +1190,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
           // we introduce a feedback on the C2 queue size. If the C2 queue is sufficiently long
           // we choose to compile a limited profiled version and then recompile with full profiling
           // when the load on C2 goes down.
-          if (!disable_feedback && CompileBroker::queue_size(CompLevel_full_optimization) >
-              Tier3DelayOn * compiler_count(CompLevel_full_optimization)) {
+          if ((!disable_feedback && CompileBroker::queue_size(CompLevel_full_optimization) > Tier3DelayOn * compiler_count(CompLevel_full_optimization)) || should_delay(method)) {
             next_level = CompLevel_limited_profile;
           } else {
             next_level = CompLevel_full_profile;
@@ -1168,11 +1203,12 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
           next_level = CompLevel_full_optimization;
         } else {
           MethodData* mdo = method->method_data();
+          double s = should_delay(method) ? Tier2DelayFactor : 1.0;
           if (mdo != nullptr) {
             if (mdo->would_profile()) {
               if (disable_feedback || (CompileBroker::queue_size(CompLevel_full_optimization) <=
                                        Tier3DelayOff * compiler_count(CompLevel_full_optimization) &&
-                                       Predicate::apply(method, cur_level, i, b))) {
+                                       Predicate::apply_scaled(method, cur_level, i, b, s))) {
                 next_level = CompLevel_full_profile;
               }
             } else {
@@ -1182,7 +1218,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
             // If there is no MDO we need to profile
             if (disable_feedback || (CompileBroker::queue_size(CompLevel_full_optimization) <=
                                      Tier3DelayOff * compiler_count(CompLevel_full_optimization) &&
-                                     Predicate::apply(method, cur_level, i, b))) {
+                                     Predicate::apply_scaled(method, cur_level, i, b, s))) {
               next_level = CompLevel_full_profile;
             }
           }
