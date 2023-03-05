@@ -1231,6 +1231,8 @@ int ciEnv::compile_id() {
 // ciEnv::notice_inlined_method()
 void ciEnv::notice_inlined_method(ciMethod* method) {
   _num_inlined_bytecodes += method->code_size_for_inlining();
+  methodHandle mh(Thread::current(), method->get_Method());
+  CompilationPolicy::record_compilation(mh, comp_level(), true);
 }
 
 // ------------------------------------------------------------------
