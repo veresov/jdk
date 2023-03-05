@@ -219,6 +219,7 @@ class CompilationPolicy : AllStatic {
   static void create_mdo(const methodHandle& mh, JavaThread* THREAD);
   // Is method profiled enough?
   static bool is_method_profiled(const methodHandle& method);
+  static bool should_delay(const methodHandle& m);
 
   static void set_c1_count(int x) { _c1_count = x;    }
   static void set_c2_count(int x) { _c2_count = x;    }
@@ -251,6 +252,7 @@ class CompilationPolicy : AllStatic {
   // Just a name for now, full profile later.
   class CompilationRecord : public CHeapObj<mtCompiler> {
     char* _method_name;
+    int _level;
 
     static unsigned string_hash(const char* s) {
       unsigned h = 0;
@@ -269,14 +271,18 @@ class CompilationPolicy : AllStatic {
   public:
     CompilationRecord(const CompilationRecord& cr) {
       _method_name = clone_string(cr.method_name());
+      _level = cr.level();
     }
-    CompilationRecord(const methodHandle& mh) {
+    CompilationRecord(const methodHandle& mh, int level) {
       ResourceMark rm;
       const char* method_name = mh->name_and_sig_as_C_string();
       _method_name = clone_string(method_name);
+      _level = level;
     }
-    CompilationRecord(const char* method_name) {
+    
+    CompilationRecord(const char* method_name, int level) {
       _method_name = clone_string(method_name);
+      _level = level;
     }
 
     ~CompilationRecord() {
@@ -284,6 +290,8 @@ class CompilationPolicy : AllStatic {
     }
 
     const char* method_name() const { return _method_name; }
+    int level() const { return _level; }
+    void set_level(int level) { _level = level; }
 
     static unsigned hash_name(const char* const& n) {
       return string_hash(n);
