@@ -57,10 +57,10 @@ int CompilationPolicy::_c2_count = 0;
 double CompilationPolicy::_increase_threshold_at_ratio = 0;
 
 
-GrowableArrayCHeap<CompilationPolicy::CompilationRecord*, mtCompiler> CompilationPolicy::_compilation_records(1024);
-ResizeableResourceHashtable<const char*, CompilationPolicy::CompilationRecord*, AnyObj::C_HEAP, mtCompiler,
-                            CompilationPolicy::CompilationRecord::hash_name, 
-                            CompilationPolicy::CompilationRecord::equals_name> CompilationPolicy::_compilation_records_set(1024);
+GrowableArrayCHeap<CompilationRecord*, mtCompiler> CompilationPolicy::_compilation_records(1024);
+ResizeableResourceHashtable<const char*, CompilationRecord*, AnyObj::C_HEAP, mtCompiler,
+                            CompilationRecord::hash_name,
+                            CompilationRecord::equals_name> CompilationPolicy::_compilation_records_set(1024);
 
 void compilationPolicy_init() {
   CompilationPolicy::initialize();
@@ -101,49 +101,67 @@ void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TR
     }
     if (v != nullptr) {
       CompilationRecord* cr = *v;
-      CompLevel level = initial_compile_level(m);
+
+      // Cache the pointer to the CompilationRecord in MethodCounters for faster lookups.
+      MethodCounters *mcs = m->method_counters();
+      if (mcs == nullptr) {
+        mcs = Method::build_method_counters(THREAD, m());
+      }
+      if (mcs != nullptr && mcs->compilation_record() == nullptr) {
+        mcs->set_compilation_record(cr);
+      }
+
+      if ((cr->level() != CompLevel_simple || cr->level() != CompLevel_full_optimization) && cr->only_inlined()) {
+        return;
+      }
+      CompLevel level = CompLevel_full_profile;
       if (cr->level() == CompLevel_simple) {
         level = CompLevel_simple;
       } else if (cr->level() != CompLevel_full_optimization) {
         level = CompLevel_limited_profile;
       }
-      if (can_be_compiled(m, level)) {
+      if (can_be_compiled(m, level) && !CompileBroker::compilation_is_in_queue(m)) {
         if (UseNewCode) {
-         ResourceMark rm;
-         tty->print_cr("force compiling %s to level %d", m->name_and_sig_as_C_string(), level);
+          ResourceMark rm;
+          tty->print_cr("force compiling %s to level %d", m->name_and_sig_as_C_string(), level);
         }
         if (PrintTieredEvents) {
-         print_event(COMPILE, m(), m(), InvocationEntryBci, level);
+          print_event(COMPILE, m(), m(), InvocationEntryBci, level);
         }
         CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
+        if (HAS_PENDING_EXCEPTION) {
+          CLEAR_PENDING_EXCEPTION;
+        }
       }
     }
   }
 }
 
 void CompilationPolicy::compile_if_required(const methodHandle& m, TRAPS) {
+  if (!THREAD->can_call_java() || THREAD->is_Compiler_thread()) {
+    // don't force compilation, resolve was on behalf of compiler
+    return;
+  }
+  if (m->method_holder()->is_not_initialized()) {
+    // 'is_not_initialized' means not only '!is_initialized', but also that
+    // initialization has not been started yet ('!being_initialized')
+    // Do not force compilation of methods in uninitialized classes.
+    // Note that doing this would throw an assert later,
+    // in CompileBroker::compile_method.
+    // We sometimes use the link resolver to do reflective lookups
+    // even before classes are initialized.
+    return;
+  }
+
   if (must_be_compiled(m)) {
     // This path is unusual, mostly used by the '-Xcomp' stress test mode.
-
-    if (!THREAD->can_call_java() || THREAD->is_Compiler_thread()) {
-      // don't force compilation, resolve was on behalf of compiler
-      return;
-    }
-    if (m->method_holder()->is_not_initialized()) {
-      // 'is_not_initialized' means not only '!is_initialized', but also that
-      // initialization has not been started yet ('!being_initialized')
-      // Do not force compilation of methods in uninitialized classes.
-      // Note that doing this would throw an assert later,
-      // in CompileBroker::compile_method.
-      // We sometimes use the link resolver to do reflective lookups
-      // even before classes are initialized.
-      return;
-    }
     CompLevel level = initial_compile_level(m);
     if (PrintTieredEvents) {
       print_event(COMPILE, m(), m(), InvocationEntryBci, level);
     }
     CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
+  } else {
+    compile_if_required_after_init(m, THREAD);
   }
 }
 
@@ -545,7 +563,7 @@ void CompilationPolicy::initialize() {
 
 void CompilationPolicy::load_profiles() {
   MutexLocker ml(Compile_lock);
-  if (LoadProfiles != nullptr) { 
+  if (LoadProfiles != nullptr) {
     int fd = os::open(LoadProfiles, O_RDONLY, 0666);
     if (fd != -1) {
       FILE* profile_file = os::fdopen(fd, "r");
@@ -555,12 +573,13 @@ void CompilationPolicy::load_profiles() {
         char* buffer;
         char method_name[4096];
         int level;
+        int only_inlined;
         do {
           buffer = profile_stream.readln(line, sizeof(line));
           if (buffer != nullptr) {
-            sscanf(buffer, "%s %d", method_name, &level);
+            sscanf(buffer, "%s %d %d", method_name, &level, &only_inlined);
             if (!_compilation_records_set.contains(method_name)) {
-              CompilationRecord* cr = new CompilationRecord(method_name, level);
+              CompilationRecord* cr = new CompilationRecord(method_name, level, only_inlined);
               _compilation_records_set.put(cr->method_name(), cr);
               _compilation_records.append(cr);
             }
@@ -576,7 +595,7 @@ void CompilationPolicy::load_profiles() {
 
 void CompilationPolicy::store_profiles() {
   MutexLocker ml(Compile_lock);
-  if (StoreProfiles != nullptr) { 
+  if (StoreProfiles != nullptr) {
     int fd = os::open(StoreProfiles, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd != -1) {
       FILE* profile_file = os::fdopen(fd, "w");
@@ -585,7 +604,7 @@ void CompilationPolicy::store_profiles() {
         int len = _compilation_records.length();
         for (int i = 0; i < len; i++) {
           CompilationRecord* cr = _compilation_records.at(i);
-          profile_stream.print_cr("%s %d", cr->method_name(), cr->level());
+          profile_stream.print_cr("%s %d %d", cr->method_name(), cr->level(), cr->only_inlined());
         }
       }
     } else {
@@ -800,17 +819,20 @@ void CompilationPolicy::reprofile(ScopeDesc* trap_scope, bool is_osr) {
   }
 }
 
-void CompilationPolicy::record_compilation(const methodHandle& method, CompLevel level) {
+void CompilationPolicy::record_compilation(const methodHandle& method, int level, bool inlined) {
   ResourceMark rm;
   const char* method_name = method->name_and_sig_as_C_string();
   MutexLocker ml(Compile_lock);
   CompilationRecord** v = _compilation_records_set.get(method_name);
   if (v == nullptr) {
-    CompilationRecord* cr = new CompilationRecord(method, level);
+    CompilationRecord* cr = new CompilationRecord(method_name, level, inlined);
     _compilation_records_set.put(cr->method_name(), cr);
     _compilation_records.append(cr);
   } else {
     CompilationRecord* cr = *v;
+    if (cr->only_inlined() && !inlined) {
+      cr->set_only_inlined(false);
+    }
     if (level == CompLevel_simple) {
       cr->set_level(CompLevel_simple);
     } else if (level > cr->level()) {
@@ -823,13 +845,12 @@ bool CompilationPolicy::should_delay(const methodHandle& method) {
   if (LoadProfiles == nullptr) {
     return false;
   }
-  ResourceMark rm;
-  const char* method_name = method->name_and_sig_as_C_string();
-  MutexLocker ml(Compile_lock);
-  CompilationRecord** v = _compilation_records_set.get(method_name);
-  if (v != nullptr) {
-    CompilationRecord* cr = *v;
-    return cr->level() != CompLevel_full_optimization;
+  MethodCounters* mcs = method->method_counters();
+  if (mcs != nullptr) {
+    CompilationRecord* cr = mcs->compilation_record();
+    if (cr != nullptr) {
+      return cr->level() != CompLevel_full_optimization;
+    }
   }
   return true;
 }
@@ -946,7 +967,7 @@ void CompilationPolicy::compile(const methodHandle& mh, int bci, CompLevel level
     update_rate(nanos_to_millis(os::javaTimeNanos()), mh);
     CompileBroker::compile_method(mh, bci, level, mh, hot_count, CompileTask::Reason_Tiered, THREAD);
     if (StoreProfiles != nullptr) {
-      record_compilation(mh, level);
+      record_compilation(mh, level, false);
     }
   }
 }
@@ -1070,13 +1091,13 @@ bool CompilationPolicy::is_mature(Method* method) {
 // start profiling without waiting for the compiled method to arrive.
 // We also take the load on compilers into the account.
 bool CompilationPolicy::should_create_mdo(const methodHandle& method, CompLevel cur_level) {
-  if (cur_level != CompLevel_none || force_comp_at_level_simple(method) || CompilationModeFlag::quick_only() || !ProfileInterpreter) {
+  if (cur_level != CompLevel_none || force_comp_at_level_simple(method) || CompilationModeFlag::quick_only() || !ProfileInterpreter || should_delay(method)) {
     return false;
   }
   if (is_old(method)) {
     return true;
   }
-  
+
   int i = method->invocation_count();
   int b = method->backedge_count();
   double k = Tier0ProfilingStartPercentage / 100.0;
@@ -1190,7 +1211,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
           // we introduce a feedback on the C2 queue size. If the C2 queue is sufficiently long
           // we choose to compile a limited profiled version and then recompile with full profiling
           // when the load on C2 goes down.
-          if ((!disable_feedback && CompileBroker::queue_size(CompLevel_full_optimization) > Tier3DelayOn * compiler_count(CompLevel_full_optimization)) || should_delay(method)) {
+          if (!disable_feedback && CompileBroker::queue_size(CompLevel_full_optimization) > Tier3DelayOn * compiler_count(CompLevel_full_optimization)) {
             next_level = CompLevel_limited_profile;
           } else {
             next_level = CompLevel_full_profile;
@@ -1198,28 +1219,31 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
         }
         break;
       case CompLevel_limited_profile:
-        if (is_method_profiled(method)) {
-          // Special case: we got here because this method was fully profiled in the interpreter.
-          next_level = CompLevel_full_optimization;
-        } else {
-          MethodData* mdo = method->method_data();
-          double s = should_delay(method) ? Tier2DelayFactor : 1.0;
-          if (mdo != nullptr) {
-            if (mdo->would_profile()) {
-              if (disable_feedback || (CompileBroker::queue_size(CompLevel_full_optimization) <=
-                                       Tier3DelayOff * compiler_count(CompLevel_full_optimization) &&
-                                       Predicate::apply_scaled(method, cur_level, i, b, s))) {
-                next_level = CompLevel_full_profile;
+        {
+          bool delay = should_delay(method);
+          if (is_method_profiled(method) && !delay) {
+            // Special case: we got here because this method was fully profiled in the interpreter.
+            next_level = CompLevel_full_optimization;
+          } else {
+            MethodData* mdo = method->method_data();
+            double s = delay ? Tier2DelayFactor : 1.0;
+            if (mdo != nullptr) {
+              if (mdo->would_profile()) {
+                if (disable_feedback || (CompileBroker::queue_size(CompLevel_full_optimization) <=
+                                        Tier3DelayOff * compiler_count(CompLevel_full_optimization) &&
+                                        Predicate::apply_scaled(method, cur_level, i, b, s))) {
+                  next_level = CompLevel_full_profile;
+                }
+              } else {
+                next_level = CompLevel_full_optimization;
               }
             } else {
-              next_level = CompLevel_full_optimization;
-            }
-          } else {
-            // If there is no MDO we need to profile
-            if (disable_feedback || (CompileBroker::queue_size(CompLevel_full_optimization) <=
-                                     Tier3DelayOff * compiler_count(CompLevel_full_optimization) &&
-                                     Predicate::apply_scaled(method, cur_level, i, b, s))) {
-              next_level = CompLevel_full_profile;
+              // If there is no MDO we need to profile
+              if (disable_feedback || (CompileBroker::queue_size(CompLevel_full_optimization) <=
+                                      Tier3DelayOff * compiler_count(CompLevel_full_optimization) &&
+                                      Predicate::apply_scaled(method, cur_level, i, b, s))) {
+                next_level = CompLevel_full_profile;
+              }
             }
           }
         }
@@ -1251,7 +1275,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
 // Determine if a method should be compiled with a normal entry point at a different level.
 CompLevel CompilationPolicy::call_event(const methodHandle& method, CompLevel cur_level, Thread* thread) {
   CompLevel osr_level = MIN2((CompLevel) method->highest_osr_comp_level(), common<LoopPredicate>(method, cur_level, true));
-  CompLevel next_level = common<CallPredicate>(method, cur_level, is_old(method));
+  CompLevel next_level = common<CallPredicate>(method, cur_level, LoadProfiles == nullptr && is_old(method));
 
   // If OSR method level is greater than the regular method level, the levels should be
   // equalized by raising the regular method level in order to avoid OSRs during each

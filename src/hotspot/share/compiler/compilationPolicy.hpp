@@ -27,6 +27,7 @@
 
 #include "code/nmethod.hpp"
 #include "compiler/compileBroker.hpp"
+#include "compiler/compilationRecord.hpp"
 #include "oops/methodData.hpp"
 #include "utilities/globalDefinitions.hpp"
 
@@ -248,66 +249,14 @@ class CompilationPolicy : AllStatic {
   // m must be compiled before executing it
   static bool must_be_compiled(const methodHandle& m, int comp_level = CompLevel_any);
 
-  // Record information about a method at the time compilation is requested.
-  // Just a name for now, full profile later.
-  class CompilationRecord : public CHeapObj<mtCompiler> {
-    char* _method_name;
-    int _level;
 
-    static unsigned string_hash(const char* s) {
-      unsigned h = 0;
-      const char* p = s;
-      while (*p != '\0') {
-        h = 31 * h + *p;
-        p++;
-      }
-      return h;
-    }
-    static char* clone_string(const char* s) {
-      char* c = AllocateHeap(strlen(s) + 1, mtCompiler);
-      strcpy(c, s);
-      return c;
-    }
-  public:
-    CompilationRecord(const CompilationRecord& cr) {
-      _method_name = clone_string(cr.method_name());
-      _level = cr.level();
-    }
-    CompilationRecord(const methodHandle& mh, int level) {
-      ResourceMark rm;
-      const char* method_name = mh->name_and_sig_as_C_string();
-      _method_name = clone_string(method_name);
-      _level = level;
-    }
-    
-    CompilationRecord(const char* method_name, int level) {
-      _method_name = clone_string(method_name);
-      _level = level;
-    }
-
-    ~CompilationRecord() {
-      FreeHeap(_method_name);
-    }
-
-    const char* method_name() const { return _method_name; }
-    int level() const { return _level; }
-    void set_level(int level) { _level = level; }
-
-    static unsigned hash_name(const char* const& n) {
-      return string_hash(n);
-    }
-    static bool equals_name(const char* const& n1, const char* const& n2) {
-      return strcmp(n1, n2) == 0;
-    }
-  };
 
   static GrowableArrayCHeap<CompilationRecord*, mtCompiler> _compilation_records;
   static ResizeableResourceHashtable<const char*, CompilationRecord*,
                                      AnyObj::C_HEAP, mtCompiler,
                                      CompilationRecord::hash_name, CompilationRecord::equals_name> _compilation_records_set;
- 
-  static void record_compilation(const methodHandle& m, CompLevel level);
-public:
+
+ public:
   static int min_invocations() { return Tier4MinInvocationThreshold; }
   static int c1_count() { return _c1_count; }
   static int c2_count() { return _c2_count; }
@@ -317,6 +266,7 @@ public:
   // This supports the -Xcomp option.
   static void compile_if_required(const methodHandle& m, TRAPS);
   static void compile_if_required_after_init(const methodHandle& m, TRAPS);
+  static void record_compilation(const methodHandle& m, int level, bool inlining);
   static void load_profiles();
   static void store_profiles();
 
