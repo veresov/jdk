@@ -90,13 +90,12 @@ bool CompilationPolicy::must_be_compiled(const methodHandle& m, int comp_level) 
 }
 
 void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TRAPS) {
-  assert(m->method_holder()->is_initialized(), "Holder should be initialized");
   if (!m->is_native() && !m->has_compiled_code()) {
     ResourceMark rm;
     const char* method_name = m->name_and_sig_as_C_string();
     CompilationRecord **v = nullptr;
     {
-       MutexLocker ml(Compile_lock);
+       MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
        v = _compilation_records_set.get(method_name);
     }
     if (v != nullptr) {
@@ -562,7 +561,7 @@ void CompilationPolicy::initialize() {
 
 
 void CompilationPolicy::load_profiles() {
-  MutexLocker ml(Compile_lock);
+  MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
   if (LoadProfiles != nullptr) {
     int fd = os::open(LoadProfiles, O_RDONLY, 0666);
     if (fd != -1) {
@@ -594,7 +593,7 @@ void CompilationPolicy::load_profiles() {
 
 
 void CompilationPolicy::store_profiles() {
-  MutexLocker ml(Compile_lock);
+  MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
   if (StoreProfiles != nullptr) {
     int fd = os::open(StoreProfiles, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd != -1) {
@@ -822,7 +821,7 @@ void CompilationPolicy::reprofile(ScopeDesc* trap_scope, bool is_osr) {
 void CompilationPolicy::record_compilation(const methodHandle& method, int level, bool inlined) {
   ResourceMark rm;
   const char* method_name = method->name_and_sig_as_C_string();
-  MutexLocker ml(Compile_lock);
+  MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
   CompilationRecord** v = _compilation_records_set.get(method_name);
   if (v == nullptr) {
     CompilationRecord* cr = new CompilationRecord(method_name, level, inlined);
@@ -856,7 +855,7 @@ bool CompilationPolicy::should_delay(const methodHandle& method) {
 }
 
 void CompilationPolicy::dump() {
-  MutexLocker ml(Compile_lock);
+  MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
   int len = _compilation_records.length();
   for (int i  = 0; i < len; i++) {
     tty->print_cr("%s", _compilation_records.at(i)->method_name());

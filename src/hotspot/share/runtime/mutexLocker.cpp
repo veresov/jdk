@@ -97,6 +97,7 @@ Monitor* InitCompleted_lock           = nullptr;
 Monitor* BeforeExit_lock              = nullptr;
 Monitor* Notify_lock                  = nullptr;
 Mutex*   ExceptionCache_lock          = nullptr;
+Mutex*   CompilationRecord_lock       = nullptr;
 #ifndef PRODUCT
 Mutex*   FullGCALot_lock              = nullptr;
 #endif
@@ -281,6 +282,7 @@ void mutex_init() {
   def(JfieldIdCreation_lock        , PaddedMutex  , safepoint);
 
   def(CompiledIC_lock              , PaddedMutex  , nosafepoint);  // locks VtableStubs_lock, InlineCacheBuffer_lock
+  def(CompilationRecord_lock       , PaddedMutex  , nosafepoint);
   def(MethodCompileQueue_lock      , PaddedMonitor, safepoint);
   def(CompileStatistics_lock       , PaddedMutex  , safepoint);
   def(DirectivesStack_lock         , PaddedMutex  , nosafepoint);
@@ -376,6 +378,7 @@ void mutex_init() {
   // JVMCIRuntime_lock must be acquired before JVMCI_lock to avoid deadlock
   defl(JVMCI_lock                  , PaddedMonitor, JVMCIRuntime_lock);
 #endif
+
 }
 
 void MutexLocker::post_initialize() {
