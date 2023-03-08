@@ -819,28 +819,51 @@ void CompilationPolicy::reprofile(ScopeDesc* trap_scope, bool is_osr) {
 }
 
 void CompilationPolicy::record_compilation(const methodHandle& method, int level, bool inlined) {
-  ResourceMark rm;
-  const char* method_name = method->name_and_sig_as_C_string();
-  MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
-  CompilationRecord** v = _compilation_records_set.get(method_name);
-  if (v == nullptr) {
-    CompilationRecord* cr = new CompilationRecord(method_name, level, inlined);
-    _compilation_records_set.put(cr->method_name(), cr);
-    _compilation_records.append(cr);
-  } else {
-    CompilationRecord* cr = *v;
-    if (cr->only_inlined() && !inlined) {
-      cr->set_only_inlined(false);
+  CompilationRecord* cr = nullptr;
+
+  // Try grabbing the cached value first.
+  MethodCounters* mcs = method->method_counters();
+  if (mcs != nullptr) {
+    cr = mcs->compilation_record();
+  }
+
+  // No cached value. Slow path.
+  if (cr == nullptr) {
+    ResourceMark rm;
+    const char* method_name = method->name_and_sig_as_C_string();
+    MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
+    CompilationRecord** v = _compilation_records_set.get(method_name);
+    if (v == nullptr) {
+      cr = new CompilationRecord(method_name, level, inlined);
+      _compilation_records_set.put(cr->method_name(), cr);
+      _compilation_records.append(cr);
+    } else {
+      cr = *v;
     }
-    if (level == CompLevel_simple) {
-      cr->set_level(CompLevel_simple);
-    } else if (level > cr->level()) {
-      cr->set_level(level);
+    // Cache the value if we can.
+    if (mcs == nullptr) {
+      mcs = Method::build_method_counters(Thread::current(), method());
     }
+    if (mcs != nullptr) {
+      mcs->set_compilation_record(cr);
+    }
+  }
+
+  assert(cr != nullptr, "Should have a CompilationRecord");
+  if (cr->only_inlined() && !inlined) {
+    cr->set_only_inlined(false);
+  }
+  if (level == CompLevel_simple) {
+    cr->set_level(CompLevel_simple);
+  } else if (level > cr->level()) {
+    cr->set_level(level);
   }
 }
 
 bool CompilationPolicy::should_delay(const methodHandle& method) {
+  // It's important to keep this method lock-free and fast as we use at every event.
+  // We cache the pointer to the CompilationRecord in MethodCounters to avoid producing a string with
+  // the method name and doing a hash table lookup, which requires a lock.
   if (LoadProfiles == nullptr) {
     return false;
   }

@@ -48,12 +48,6 @@ class CompilationRecord : public CHeapObj<mtCompiler> {
     return c;
   }
 public:
-  CompilationRecord(const CompilationRecord& cr) {
-    _method_name = clone_string(cr.method_name());
-    _level = cr.level();
-    _only_inlined = cr.only_inlined();
-  }
-
   CompilationRecord(const char* method_name, int level, bool inlined) {
     _method_name = clone_string(method_name);
     _level = level;
