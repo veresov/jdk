@@ -30,6 +30,7 @@
 #include "compiler/compilationRecord.hpp"
 #include "oops/methodData.hpp"
 #include "utilities/globalDefinitions.hpp"
+#include "utilities/resizeableResourceHash.hpp"
 
 class CompileTask;
 class CompileQueue;
@@ -248,13 +249,36 @@ class CompilationPolicy : AllStatic {
 
   // m must be compiled before executing it
   static bool must_be_compiled(const methodHandle& m, int comp_level = CompLevel_any);
-
-
-
-  static GrowableArrayCHeap<CompilationRecord*, mtCompiler> _compilation_records;
-  static ResizeableResourceHashtable<const char*, CompilationRecord*,
-                                     AnyObj::C_HEAP, mtCompiler,
-                                     CompilationRecord::hash_name, CompilationRecord::equals_name> _compilation_records_set;
+  typedef ResizeableResourceHashtable<const char*, CompilationRecord*, AnyObj::C_HEAP, mtCompiler,
+                                      CompilationRecord::hash_name, CompilationRecord::equals_name> CompilationRecordSet;
+  static CompilationRecordSet _compilation_record_set;
+  struct CompilationRecordsLock : public CHeapObj<mtCompiler> {
+    virtual void lock()   { CompilationRecord_lock->lock_without_safepoint_check(); }
+    virtual void unlock() { CompilationRecord_lock->unlock();                       }
+  };
+  struct CompilationRecordsLockNoop : public CompilationRecordsLock {
+    virtual void lock()   { }
+    virtual void unlock() { }
+  };
+  class CompilationRecordsLocker {
+    static CompilationRecordsLock* lock;
+  public:
+    static void initialize() {
+      if (StoreProfiles != nullptr) {
+        lock = new CompilationRecordsLock();
+      } else {
+        lock = new CompilationRecordsLockNoop();
+      }
+    }
+    CompilationRecordsLocker() {
+      assert(lock != nullptr, "Forgot to call CompilationRecordsLocker::initialize()");
+      lock->lock();
+    }
+    ~CompilationRecordsLocker() {
+      assert(lock != nullptr, "Forgot to call CompilationRecordsLocker::initialize()");
+      lock->unlock();
+    }
+  };
 
  public:
   static int min_invocations() { return Tier4MinInvocationThreshold; }

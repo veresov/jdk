@@ -57,10 +57,8 @@ int CompilationPolicy::_c2_count = 0;
 double CompilationPolicy::_increase_threshold_at_ratio = 0;
 
 
-GrowableArrayCHeap<CompilationRecord*, mtCompiler> CompilationPolicy::_compilation_records(1024);
-ResizeableResourceHashtable<const char*, CompilationRecord*, AnyObj::C_HEAP, mtCompiler,
-                            CompilationRecord::hash_name,
-                            CompilationRecord::equals_name> CompilationPolicy::_compilation_records_set(1024);
+CompilationPolicy::CompilationRecordSet CompilationPolicy::_compilation_record_set(1024);
+CompilationPolicy::CompilationRecordsLock* CompilationPolicy::CompilationRecordsLocker::lock;
 
 void compilationPolicy_init() {
   CompilationPolicy::initialize();
@@ -95,8 +93,8 @@ void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TR
     const char* method_name = m->name_and_sig_as_C_string();
     CompilationRecord **v = nullptr;
     {
-       MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
-       v = _compilation_records_set.get(method_name);
+      CompilationRecordsLocker l;
+       v = _compilation_record_set.get(method_name);
     }
     if (v != nullptr) {
       CompilationRecord* cr = *v;
@@ -554,6 +552,7 @@ void CompilationPolicy::initialize() {
     set_increase_threshold_at_ratio();
   }
 
+  CompilationRecordsLocker::initialize();
   load_profiles();
 
   set_start_time(nanos_to_millis(os::javaTimeNanos()));
@@ -561,7 +560,7 @@ void CompilationPolicy::initialize() {
 
 
 void CompilationPolicy::load_profiles() {
-  MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
+  CompilationRecordsLocker l;
   if (LoadProfiles != nullptr) {
     int fd = os::open(LoadProfiles, O_RDONLY, 0666);
     if (fd != -1) {
@@ -577,10 +576,9 @@ void CompilationPolicy::load_profiles() {
           buffer = profile_stream.readln(line, sizeof(line));
           if (buffer != nullptr) {
             sscanf(buffer, "%s %d %d", method_name, &level, &only_inlined);
-            if (!_compilation_records_set.contains(method_name)) {
+            if (!_compilation_record_set.contains(method_name)) {
               CompilationRecord* cr = new CompilationRecord(method_name, level, only_inlined);
-              _compilation_records_set.put(cr->method_name(), cr);
-              _compilation_records.append(cr);
+              _compilation_record_set.put(cr->method_name(), cr);
             }
           }
         } while (buffer != nullptr);
@@ -593,18 +591,17 @@ void CompilationPolicy::load_profiles() {
 
 
 void CompilationPolicy::store_profiles() {
-  MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
+  CompilationRecordsLocker l;
   if (StoreProfiles != nullptr) {
     int fd = os::open(StoreProfiles, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd != -1) {
       FILE* profile_file = os::fdopen(fd, "w");
       if (profile_file != nullptr) {
         fileStream profile_stream(profile_file, /*need_close=*/true);
-        int len = _compilation_records.length();
-        for (int i = 0; i < len; i++) {
-          CompilationRecord* cr = _compilation_records.at(i);
+        auto save_record = [&](const char*, CompilationRecord* cr) {
           profile_stream.print_cr("%s %d %d", cr->method_name(), cr->level(), cr->only_inlined());
-        }
+        };
+        _compilation_record_set.iterate_all(save_record);
       }
     } else {
       tty->print_cr("# Can't open file to store profiles.");
@@ -831,12 +828,11 @@ void CompilationPolicy::record_compilation(const methodHandle& method, int level
   if (cr == nullptr) {
     ResourceMark rm;
     const char* method_name = method->name_and_sig_as_C_string();
-    MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
-    CompilationRecord** v = _compilation_records_set.get(method_name);
+    CompilationRecordsLocker l;
+    CompilationRecord** v = _compilation_record_set.get(method_name);
     if (v == nullptr) {
       cr = new CompilationRecord(method_name, level, inlined);
-      _compilation_records_set.put(cr->method_name(), cr);
-      _compilation_records.append(cr);
+      _compilation_record_set.put(cr->method_name(), cr);
     } else {
       cr = *v;
     }
@@ -878,12 +874,10 @@ bool CompilationPolicy::should_delay(const methodHandle& method) {
 }
 
 void CompilationPolicy::dump() {
-  MutexLocker ml(CompilationRecord_lock, Mutex::_no_safepoint_check_flag);
-  int len = _compilation_records.length();
-  for (int i  = 0; i < len; i++) {
-    tty->print_cr("%s", _compilation_records.at(i)->method_name());
-  }
-  store_profiles();
+  CompilationRecordsLocker l;
+  _compilation_record_set.iterate_all([](const char*, CompilationRecord* cr) {
+    tty->print_cr("%s", cr->method_name());
+  });
 }
 
 nmethod* CompilationPolicy::event(const methodHandle& method, const methodHandle& inlinee,
