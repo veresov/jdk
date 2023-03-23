@@ -29,6 +29,7 @@
 #include "compiler/compileBroker.hpp"
 #include "compiler/compilationRecord.hpp"
 #include "oops/methodData.hpp"
+#include "runtime/mutexLocker.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/resizeableResourceHash.hpp"
 
