@@ -1,3 +1,4 @@
+#include "precompiled.hpp"
 #include "compiler/methodTrainingData.hpp"
 #include "oops/method.hpp"
 #include "oops/methodCounters.hpp"
