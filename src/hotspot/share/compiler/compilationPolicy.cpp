@@ -28,6 +28,7 @@
 #include "compiler/compileBroker.hpp"
 #include "compiler/compilerDefinitions.inline.hpp"
 #include "compiler/compilerOracle.hpp"
+#include "compiler/methodTrainingData.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/methodData.hpp"
 #include "oops/method.inline.hpp"
@@ -55,10 +56,6 @@ jlong CompilationPolicy::_start_time = 0;
 int CompilationPolicy::_c1_count = 0;
 int CompilationPolicy::_c2_count = 0;
 double CompilationPolicy::_increase_threshold_at_ratio = 0;
-
-
-CompilationPolicy::CompilationRecordSet CompilationPolicy::_compilation_record_set(1024);
-CompilationPolicy::CompilationRecordsLock* CompilationPolicy::CompilationRecordsLocker::lock;
 
 void compilationPolicy_init() {
   CompilationPolicy::initialize();
@@ -89,46 +86,31 @@ bool CompilationPolicy::must_be_compiled(const methodHandle& m, int comp_level) 
 
 void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TRAPS) {
   if (!m->is_native() && !m->has_compiled_code()) {
-    ResourceMark rm;
-    const char* method_name = m->name_and_sig_as_C_string();
-    CompilationRecord **v = nullptr;
-    {
-      CompilationRecordsLocker l;
-       v = _compilation_record_set.get(method_name);
+    MethodTrainingData* mtd = MethodTrainingData::get(m);
+    if (mtd == nullptr) {
+      return;
     }
-    if (v != nullptr) {
-      CompilationRecord* cr = *v;
+    if ((mtd->level() != CompLevel_simple || mtd->level() != CompLevel_full_optimization) && mtd->only_inlined()) {
+      return;
+    }
 
-      // Cache the pointer to the CompilationRecord in MethodCounters for faster lookups.
-      MethodCounters *mcs = m->method_counters();
-      if (mcs == nullptr) {
-        mcs = Method::build_method_counters(THREAD, m());
+    CompLevel level = CompLevel_full_profile;
+    if (mtd->level() == CompLevel_simple) {
+      level = CompLevel_simple;
+    } else if (mtd->level() != CompLevel_full_optimization) {
+      level = CompLevel_limited_profile;
+    }
+    if (can_be_compiled(m, level) && !CompileBroker::compilation_is_in_queue(m)) {
+      if (UseNewCode) {
+        ResourceMark rm;
+        tty->print_cr("force compiling %s to level %d", m->name_and_sig_as_C_string(), level);
       }
-      if (mcs != nullptr && mcs->compilation_record() == nullptr) {
-        mcs->set_compilation_record(cr);
+      if (PrintTieredEvents) {
+        print_event(COMPILE, m(), m(), InvocationEntryBci, level);
       }
-
-      if ((cr->level() != CompLevel_simple || cr->level() != CompLevel_full_optimization) && cr->only_inlined()) {
-        return;
-      }
-      CompLevel level = CompLevel_full_profile;
-      if (cr->level() == CompLevel_simple) {
-        level = CompLevel_simple;
-      } else if (cr->level() != CompLevel_full_optimization) {
-        level = CompLevel_limited_profile;
-      }
-      if (can_be_compiled(m, level) && !CompileBroker::compilation_is_in_queue(m)) {
-        if (UseNewCode) {
-          ResourceMark rm;
-          tty->print_cr("force compiling %s to level %d", m->name_and_sig_as_C_string(), level);
-        }
-        if (PrintTieredEvents) {
-          print_event(COMPILE, m(), m(), InvocationEntryBci, level);
-        }
-        CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
-        if (HAS_PENDING_EXCEPTION) {
-          CLEAR_PENDING_EXCEPTION;
-        }
+      CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        CLEAR_PENDING_EXCEPTION;
       }
     }
   }
@@ -552,62 +534,13 @@ void CompilationPolicy::initialize() {
     set_increase_threshold_at_ratio();
   }
 
-  CompilationRecordsLocker::initialize();
-  load_profiles();
+  MethodTrainingData::initialize();
+  MethodTrainingData::load_profiles();
 
   set_start_time(nanos_to_millis(os::javaTimeNanos()));
 }
 
 
-void CompilationPolicy::load_profiles() {
-  CompilationRecordsLocker l;
-  if (LoadProfiles != nullptr) {
-    int fd = os::open(LoadProfiles, O_RDONLY, 0666);
-    if (fd != -1) {
-      FILE* profile_file = os::fdopen(fd, "r");
-      if (profile_file != nullptr) {
-        fileStream profile_stream(profile_file, /*need_close=*/true);
-        char line[4096];
-        char* buffer;
-        char method_name[4096];
-        int level;
-        int only_inlined;
-        do {
-          buffer = profile_stream.readln(line, sizeof(line));
-          if (buffer != nullptr) {
-            sscanf(buffer, "%s %d %d", method_name, &level, &only_inlined);
-            if (!_compilation_record_set.contains(method_name)) {
-              CompilationRecord* cr = new CompilationRecord(method_name, level, only_inlined);
-              _compilation_record_set.put(cr->method_name(), cr);
-            }
-          }
-        } while (buffer != nullptr);
-      }
-    } else {
-      tty->print_cr("# Can't open file to load profiles.");
-    }
-  }
-}
-
-
-void CompilationPolicy::store_profiles() {
-  CompilationRecordsLocker l;
-  if (StoreProfiles != nullptr) {
-    int fd = os::open(StoreProfiles, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (fd != -1) {
-      FILE* profile_file = os::fdopen(fd, "w");
-      if (profile_file != nullptr) {
-        fileStream profile_stream(profile_file, /*need_close=*/true);
-        auto save_record = [&](const char*, CompilationRecord* cr) {
-          profile_stream.print_cr("%s %d %d", cr->method_name(), cr->level(), cr->only_inlined());
-        };
-        _compilation_record_set.iterate_all(save_record);
-      }
-    } else {
-      tty->print_cr("# Can't open file to store profiles.");
-    }
-  }
-}
 
 
 #ifdef ASSERT
@@ -815,69 +748,20 @@ void CompilationPolicy::reprofile(ScopeDesc* trap_scope, bool is_osr) {
   }
 }
 
-void CompilationPolicy::record_compilation(const methodHandle& method, int level, bool inlined) {
-  CompilationRecord* cr = nullptr;
-
-  // Try grabbing the cached value first.
-  MethodCounters* mcs = method->method_counters();
-  if (mcs != nullptr) {
-    cr = mcs->compilation_record();
-  }
-
-  // No cached value. Slow path.
-  if (cr == nullptr) {
-    ResourceMark rm;
-    const char* method_name = method->name_and_sig_as_C_string();
-    CompilationRecordsLocker l;
-    CompilationRecord** v = _compilation_record_set.get(method_name);
-    if (v == nullptr) {
-      cr = new CompilationRecord(method_name, level, inlined);
-      _compilation_record_set.put(cr->method_name(), cr);
-    } else {
-      cr = *v;
-    }
-    // Cache the value if we can.
-    if (mcs == nullptr) {
-      mcs = Method::build_method_counters(Thread::current(), method());
-    }
-    if (mcs != nullptr) {
-      mcs->set_compilation_record(cr);
-    }
-  }
-
-  assert(cr != nullptr, "Should have a CompilationRecord");
-  if (cr->only_inlined() && !inlined) {
-    cr->set_only_inlined(false);
-  }
-  if (level == CompLevel_simple) {
-    cr->set_level(CompLevel_simple);
-  } else if (level > cr->level()) {
-    cr->set_level(level);
-  }
-}
-
 bool CompilationPolicy::should_delay(const methodHandle& method) {
   // It's important to keep this method lock-free and fast as we use at every event.
-  // We cache the pointer to the CompilationRecord in MethodCounters to avoid producing a string with
+  // We cache the pointer to the MethodTrainingData in MethodCounters to avoid producing a string with
   // the method name and doing a hash table lookup, which requires a lock.
-  if (LoadProfiles == nullptr) {
+  if (!MethodTrainingData::has_data()) {
     return false;
   }
-  MethodCounters* mcs = method->method_counters();
-  if (mcs != nullptr) {
-    CompilationRecord* cr = mcs->compilation_record();
-    if (cr != nullptr) {
-      return cr->level() != CompLevel_full_optimization;
-    }
-  }
-  return true;
-}
 
-void CompilationPolicy::dump() {
-  CompilationRecordsLocker l;
-  _compilation_record_set.iterate_all([](const char*, CompilationRecord* cr) {
-    tty->print_cr("%s", cr->method_name());
-  });
+  MethodTrainingData* mtd = MethodTrainingData::get_cached(method);
+  if (mtd != nullptr && mtd->level() == CompLevel_full_optimization) {
+    return false;
+  }
+
+  return true;
 }
 
 nmethod* CompilationPolicy::event(const methodHandle& method, const methodHandle& inlinee,
@@ -982,9 +866,7 @@ void CompilationPolicy::compile(const methodHandle& mh, int bci, CompLevel level
     int hot_count = (bci == InvocationEntryBci) ? mh->invocation_count() : mh->backedge_count();
     update_rate(nanos_to_millis(os::javaTimeNanos()), mh);
     CompileBroker::compile_method(mh, bci, level, mh, hot_count, CompileTask::Reason_Tiered, THREAD);
-    if (StoreProfiles != nullptr) {
-      record_compilation(mh, level, false);
-    }
+    MethodTrainingData::notice_compilation(mh, level, false);
   }
 }
 
@@ -1291,7 +1173,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
 // Determine if a method should be compiled with a normal entry point at a different level.
 CompLevel CompilationPolicy::call_event(const methodHandle& method, CompLevel cur_level, Thread* thread) {
   CompLevel osr_level = MIN2((CompLevel) method->highest_osr_comp_level(), common<LoopPredicate>(method, cur_level, true));
-  CompLevel next_level = common<CallPredicate>(method, cur_level, LoadProfiles == nullptr && is_old(method));
+  CompLevel next_level = common<CallPredicate>(method, cur_level, !MethodTrainingData::has_data() && is_old(method));
 
   // If OSR method level is greater than the regular method level, the levels should be
   // equalized by raising the regular method level in order to avoid OSRs during each

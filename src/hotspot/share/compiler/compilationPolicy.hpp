@@ -27,11 +27,9 @@
 
 #include "code/nmethod.hpp"
 #include "compiler/compileBroker.hpp"
-#include "compiler/compilationRecord.hpp"
+#include "compiler/methodTrainingData.hpp"
 #include "oops/methodData.hpp"
-#include "runtime/mutexLocker.hpp"
 #include "utilities/globalDefinitions.hpp"
-#include "utilities/resizeableResourceHash.hpp"
 
 class CompileTask;
 class CompileQueue;
@@ -250,36 +248,6 @@ class CompilationPolicy : AllStatic {
 
   // m must be compiled before executing it
   static bool must_be_compiled(const methodHandle& m, int comp_level = CompLevel_any);
-  typedef ResizeableResourceHashtable<const char*, CompilationRecord*, AnyObj::C_HEAP, mtCompiler,
-                                      CompilationRecord::hash_name, CompilationRecord::equals_name> CompilationRecordSet;
-  static CompilationRecordSet _compilation_record_set;
-  struct CompilationRecordsLock : public CHeapObj<mtCompiler> {
-    virtual void lock()   { CompilationRecord_lock->lock_without_safepoint_check(); }
-    virtual void unlock() { CompilationRecord_lock->unlock();                       }
-  };
-  struct CompilationRecordsLockNoop : public CompilationRecordsLock {
-    virtual void lock()   { }
-    virtual void unlock() { }
-  };
-  class CompilationRecordsLocker {
-    static CompilationRecordsLock* lock;
-  public:
-    static void initialize() {
-      if (StoreProfiles != nullptr) {
-        lock = new CompilationRecordsLock();
-      } else {
-        lock = new CompilationRecordsLockNoop();
-      }
-    }
-    CompilationRecordsLocker() {
-      assert(lock != nullptr, "Forgot to call CompilationRecordsLocker::initialize()");
-      lock->lock();
-    }
-    ~CompilationRecordsLocker() {
-      assert(lock != nullptr, "Forgot to call CompilationRecordsLocker::initialize()");
-      lock->unlock();
-    }
-  };
 
  public:
   static int min_invocations() { return Tier4MinInvocationThreshold; }
@@ -291,9 +259,6 @@ class CompilationPolicy : AllStatic {
   // This supports the -Xcomp option.
   static void compile_if_required(const methodHandle& m, TRAPS);
   static void compile_if_required_after_init(const methodHandle& m, TRAPS);
-  static void record_compilation(const methodHandle& m, int level, bool inlining);
-  static void load_profiles();
-  static void store_profiles();
 
   // m is allowed to be compiled
   static bool can_be_compiled(const methodHandle& m, int comp_level = CompLevel_any);

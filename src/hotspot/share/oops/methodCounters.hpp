@@ -28,7 +28,7 @@
 #include "oops/metadata.hpp"
 #include "compiler/compilerDefinitions.hpp"
 #include "compiler/compilerOracle.hpp"
-#include "compiler/compilationRecord.hpp"
+#include "compiler/methodTrainingData.hpp"
 #include "interpreter/invocationCounter.hpp"
 #include "utilities/align.hpp"
 
@@ -36,22 +36,22 @@ class MethodCounters : public Metadata {
  friend class VMStructs;
  friend class JVMCIVMStructs;
  private:
-  InvocationCounter  _invocation_counter;         // Incremented before each activation of the method - used to trigger frequency-based optimizations
-  InvocationCounter  _backedge_counter;           // Incremented before each backedge taken - used to trigger frequency-based optimizations
-  CompilationRecord* _compilation_record;
-  jlong              _prev_time;                   // Previous time the rate was acquired
-  float              _rate;                        // Events (invocation and backedge counter increments) per millisecond
-  int                _invoke_mask;                 // per-method Tier0InvokeNotifyFreqLog
-  int                _backedge_mask;               // per-method Tier0BackedgeNotifyFreqLog
-  int                _prev_event_count;            // Total number of events saved at previous callback
+  InvocationCounter   _invocation_counter;         // Incremented before each activation of the method - used to trigger frequency-based optimizations
+  InvocationCounter   _backedge_counter;           // Incremented before each backedge taken - used to trigger frequency-based optimizations
+  MethodTrainingData* _method_training_data;
+  jlong               _prev_time;                   // Previous time the rate was acquired
+  float               _rate;                        // Events (invocation and backedge counter increments) per millisecond
+  int                 _invoke_mask;                 // per-method Tier0InvokeNotifyFreqLog
+  int                 _backedge_mask;               // per-method Tier0BackedgeNotifyFreqLog
+  int                 _prev_event_count;            // Total number of events saved at previous callback
 #if COMPILER2_OR_JVMCI
-  u2                 _interpreter_throwout_count; // Count of times method was exited via exception while interpreting
+  u2                  _interpreter_throwout_count; // Count of times method was exited via exception while interpreting
 #endif
 #if INCLUDE_JVMTI
-  u2                 _number_of_breakpoints;      // fullspeed debugging support
+  u2                  _number_of_breakpoints;      // fullspeed debugging support
 #endif
-  u1                 _highest_comp_level;          // Highest compile level this method has ever seen.
-  u1                 _highest_osr_comp_level;      // Same for OSR level
+  u1                  _highest_comp_level;          // Highest compile level this method has ever seen.
+  u1                  _highest_osr_comp_level;      // Same for OSR level
 
   MethodCounters(const methodHandle& mh);
  public:
@@ -134,7 +134,7 @@ class MethodCounters : public Metadata {
   virtual const char* internal_name() const { return "{method counters}"; }
   virtual void print_value_on(outputStream* st) const;
 
-  CompilationRecord* compilation_record() const { return _compilation_record; }
-  void set_compilation_record(CompilationRecord* compilation_record) { _compilation_record = compilation_record; }
+  MethodTrainingData* method_training_data() const { return _method_training_data; }
+  void set_method_training_data(MethodTrainingData* method_training_data) { _method_training_data = method_training_data; }
 };
 #endif // SHARE_OOPS_METHODCOUNTERS_HPP

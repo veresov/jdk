@@ -47,6 +47,7 @@
 #include "compiler/compileLog.hpp"
 #include "compiler/compileTask.hpp"
 #include "compiler/disassembler.hpp"
+#include "compiler/methodTrainingData.hpp"
 #include "gc/shared/collectedHeap.inline.hpp"
 #include "interpreter/bytecodeStream.hpp"
 #include "interpreter/linkResolver.hpp"
@@ -1231,10 +1232,8 @@ int ciEnv::compile_id() {
 // ciEnv::notice_inlined_method()
 void ciEnv::notice_inlined_method(ciMethod* method) {
   _num_inlined_bytecodes += method->code_size_for_inlining();
-  if (StoreProfiles != nullptr) {
-    methodHandle mh(Thread::current(), method->get_Method());
-    CompilationPolicy::record_compilation(mh, comp_level(), true);
-  }
+  methodHandle mh(Thread::current(), method->get_Method());
+  MethodTrainingData::notice_compilation(mh, comp_level(), true);
 }
 
 // ------------------------------------------------------------------
