@@ -84,13 +84,14 @@ bool CompilationPolicy::must_be_compiled(const methodHandle& m, int comp_level) 
          (AlwaysCompileLoopMethods && m->has_loops() && CompileBroker::should_compile_new_jobs()); // eagerly compile loop methods
 }
 
-void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TRAPS) {
+
+void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
   if (!m->is_native() && !m->has_compiled_code()) {
     MethodTrainingData* mtd = MethodTrainingData::get(m);
     if (mtd == nullptr) {
       return;
     }
-    if ((mtd->level() != CompLevel_simple || mtd->level() != CompLevel_full_optimization) && mtd->only_inlined()) {
+    if ((mtd->level() != CompLevel_simple && mtd->level() != CompLevel_full_optimization) && mtd->only_inlined()) {
       return;
     }
 
@@ -101,12 +102,8 @@ void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TR
       level = CompLevel_limited_profile;
     }
     if (can_be_compiled(m, level) && !CompileBroker::compilation_is_in_queue(m)) {
-      if (UseNewCode) {
-        ResourceMark rm;
-        tty->print_cr("force compiling %s to level %d", m->name_and_sig_as_C_string(), level);
-      }
       if (PrintTieredEvents) {
-        print_event(COMPILE, m(), m(), InvocationEntryBci, level);
+        print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, level);
       }
       CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
       if (HAS_PENDING_EXCEPTION) {
@@ -114,6 +111,11 @@ void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TR
       }
     }
   }
+}
+
+void CompilationPolicy::compile_if_required_after_init(const methodHandle& m, TRAPS) {
+  assert(m->method_holder()->is_initialized(), "Should be called after class initialization");
+  maybe_compile_early(m, THREAD);
 }
 
 void CompilationPolicy::compile_if_required(const methodHandle& m, TRAPS) {
@@ -136,11 +138,11 @@ void CompilationPolicy::compile_if_required(const methodHandle& m, TRAPS) {
     // This path is unusual, mostly used by the '-Xcomp' stress test mode.
     CompLevel level = initial_compile_level(m);
     if (PrintTieredEvents) {
-      print_event(COMPILE, m(), m(), InvocationEntryBci, level);
+      print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, level);
     }
     CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
   } else {
-    compile_if_required_after_init(m, THREAD);
+    maybe_compile_early(m, THREAD);
   }
 }
 
@@ -394,6 +396,9 @@ void CompilationPolicy::print_event(EventType type, const Method* m, const Metho
     break;
   case COMPILE:
     tty->print("compile");
+    break;
+  case FORCE_COMPILE:
+    tty->print("force-compile");
     break;
   case REMOVE_FROM_QUEUE:
     tty->print("remove-from-queue");
