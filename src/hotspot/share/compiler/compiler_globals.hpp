@@ -281,12 +281,6 @@
           "high-only-quick-internal: C2/JVMCI-only mode, "                  \
           "with JVMCI compiler compiled with C1.")                          \
                                                                             \
-  product(ccstr, StoreProfiles, nullptr,                                    \
-          "File name to store method profiles in")                          \
-                                                                            \
-  product(ccstr, LoadProfiles, nullptr,                                     \
-          "File name to load method profiles from")                         \
-                                                                            \
   product(bool, PrintTieredEvents, false,                                   \
           "Print tiered events notifications")                              \
                                                                             \

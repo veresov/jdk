@@ -69,6 +69,7 @@
 #include "oops/oop.inline.hpp"
 #include "oops/recordComponent.hpp"
 #include "oops/symbol.hpp"
+#include "oops/trainingData.hpp"
 #include "prims/jvmtiExport.hpp"
 #include "prims/jvmtiRedefineClasses.hpp"
 #include "prims/jvmtiThreadState.hpp"
@@ -1179,7 +1180,7 @@ void InstanceKlass::initialize_impl(TRAPS) {
   }
   DTRACE_CLASSINIT_PROBE_WAIT(end, -1, wait);
 
-  if (LoadProfiles != nullptr) {
+  if (TrainingData::has_data()) {
     int len = methods()->length();
     for (int i = 0; i < len; i++) {
       const methodHandle mh(THREAD, methods()->at(i));
