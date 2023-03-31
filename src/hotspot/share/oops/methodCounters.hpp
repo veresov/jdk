@@ -28,8 +28,8 @@
 #include "oops/metadata.hpp"
 #include "compiler/compilerDefinitions.hpp"
 #include "compiler/compilerOracle.hpp"
-#include "compiler/methodTrainingData.hpp"
 #include "interpreter/invocationCounter.hpp"
+#include "oops/trainingData.hpp"
 #include "utilities/align.hpp"
 
 class MethodCounters : public Metadata {

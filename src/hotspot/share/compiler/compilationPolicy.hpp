@@ -27,8 +27,8 @@
 
 #include "code/nmethod.hpp"
 #include "compiler/compileBroker.hpp"
-#include "compiler/methodTrainingData.hpp"
 #include "oops/methodData.hpp"
+#include "oops/trainingData.hpp"
 #include "utilities/globalDefinitions.hpp"
 
 class CompileTask;

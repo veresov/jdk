@@ -28,11 +28,11 @@
 #include "compiler/compileBroker.hpp"
 #include "compiler/compilerDefinitions.inline.hpp"
 #include "compiler/compilerOracle.hpp"
-#include "compiler/methodTrainingData.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/methodData.hpp"
 #include "oops/method.inline.hpp"
 #include "oops/oop.inline.hpp"
+#include "oops/trainingData.hpp"
 #include "prims/jvmtiExport.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/deoptimization.hpp"
@@ -539,9 +539,7 @@ void CompilationPolicy::initialize() {
     set_increase_threshold_at_ratio();
   }
 
-  MethodTrainingData::initialize();
-  MethodTrainingData::load_profiles();
-
+  TrainingData::initialize();
   set_start_time(nanos_to_millis(os::javaTimeNanos()));
 }
 
@@ -757,7 +755,7 @@ bool CompilationPolicy::should_delay(const methodHandle& method) {
   // It's important to keep this method lock-free and fast as we use at every event.
   // We cache the pointer to the MethodTrainingData in MethodCounters to avoid producing a string with
   // the method name and doing a hash table lookup, which requires a lock.
-  if (!MethodTrainingData::has_data()) {
+  if (!TrainingData::has_data()) {
     return false;
   }
 
@@ -1178,7 +1176,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
 // Determine if a method should be compiled with a normal entry point at a different level.
 CompLevel CompilationPolicy::call_event(const methodHandle& method, CompLevel cur_level, Thread* thread) {
   CompLevel osr_level = MIN2((CompLevel) method->highest_osr_comp_level(), common<LoopPredicate>(method, cur_level, true));
-  CompLevel next_level = common<CallPredicate>(method, cur_level, !MethodTrainingData::has_data() && is_old(method));
+  CompLevel next_level = common<CallPredicate>(method, cur_level, !TrainingData::has_data() && is_old(method));
 
   // If OSR method level is greater than the regular method level, the levels should be
   // equalized by raising the regular method level in order to avoid OSRs during each

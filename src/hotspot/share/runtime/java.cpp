@@ -33,7 +33,6 @@
 #include "code/codeCache.hpp"
 #include "compiler/compileBroker.hpp"
 #include "compiler/compilerOracle.hpp"
-#include "compiler/methodTrainingData.hpp"
 #include "gc/shared/collectedHeap.hpp"
 #include "gc/shared/stringdedup/stringDedup.hpp"
 #include "interpreter/bytecodeHistogram.hpp"
@@ -55,6 +54,7 @@
 #include "oops/objArrayOop.hpp"
 #include "oops/oop.inline.hpp"
 #include "oops/symbol.hpp"
+#include "oops/trainingData.hpp"
 #include "prims/jvmtiExport.hpp"
 #include "runtime/continuation.hpp"
 #include "runtime/deoptimization.hpp"
@@ -529,8 +529,9 @@ void before_exit(JavaThread* thread, bool halt) {
     }
   }
 #endif
-
-  MethodTrainingData::store_profiles();
+  if (UseNewCode) {
+    MethodTrainingData::dump_all();
+  }
 
   print_statistics();
   Universe::heap()->print_tracing_info();
