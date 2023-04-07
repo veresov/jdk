@@ -29,8 +29,9 @@
 #include "compiler/compilerDefinitions.hpp"
 #include "compiler/compilerOracle.hpp"
 #include "interpreter/invocationCounter.hpp"
-#include "oops/trainingData.hpp"
 #include "utilities/align.hpp"
+
+class MethodTrainingData;
 
 class MethodCounters : public Metadata {
  friend class VMStructs;
@@ -135,6 +136,9 @@ class MethodCounters : public Metadata {
   virtual void print_value_on(outputStream* st) const;
 
   MethodTrainingData* method_training_data() const { return _method_training_data; }
-  void set_method_training_data(MethodTrainingData* method_training_data) { _method_training_data = method_training_data; }
+  bool init_method_training_data(MethodTrainingData* tdata) {
+    return (_method_training_data == tdata ||
+            Atomic::replace_if_null(&_method_training_data, tdata));
+  }
 };
 #endif // SHARE_OOPS_METHODCOUNTERS_HPP

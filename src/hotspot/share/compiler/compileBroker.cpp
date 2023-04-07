@@ -342,6 +342,13 @@ void CompileQueue::add(CompileTask* task) {
     task->log_task_queued();
   }
 
+  if (RecordTraining) {
+    CompileTrainingData* tdata = CompileTrainingData::make(task);
+    if (tdata != nullptr) {
+      tdata->record_compilation_queued(task);
+    }
+  }
+
   // Notify CompilerThreads that a task is available.
   MethodCompileQueue_lock->notify_all();
 }
@@ -2144,6 +2151,7 @@ void CompileBroker::invoke_compiler_on_method(CompileTask* task) {
   bool should_break = false;
   const int task_level = task->comp_level();
   AbstractCompiler* comp = task->compiler();
+  CompileTrainingData* tdata = task->training_data();  //only if RecordTraining
   {
     // create the handle inside it's own block so it can't
     // accidentally be referenced once the thread transitions to
@@ -2159,6 +2167,10 @@ void CompileBroker::invoke_compiler_on_method(CompileTask* task) {
     }
 
     DTRACE_METHOD_COMPILE_BEGIN_PROBE(method, compiler_name(task_level));
+  }
+
+  if (tdata != nullptr) {
+    tdata->record_compilation_start(task);
   }
 
   should_break = directive->BreakAtCompileOption || task->check_break_at_flags();
@@ -2312,6 +2324,10 @@ void CompileBroker::invoke_compiler_on_method(CompileTask* task) {
         FormatBufferResource("COMPILE SKIPPED: %s",      failure_reason);
       task->print(tty, msg);
     }
+  }
+
+  if (tdata != nullptr) {
+    tdata->record_compilation_end(task);
   }
 
   methodHandle method(thread, task->method());

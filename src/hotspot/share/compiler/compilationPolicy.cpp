@@ -87,18 +87,20 @@ bool CompilationPolicy::must_be_compiled(const methodHandle& m, int comp_level) 
 
 void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
   if (!m->is_native() && !m->has_compiled_code()) {
-    MethodTrainingData* mtd = MethodTrainingData::get(m);
+    MethodTrainingData* mtd = MethodTrainingData::find(m);
     if (mtd == nullptr) {
-      return;
+      return;              // there is no training data recorded for m
     }
-    if ((mtd->level() != CompLevel_simple && mtd->level() != CompLevel_full_optimization) && mtd->only_inlined()) {
+    if (!mtd->saw_level(CompLevel_simple) &&
+        !mtd->saw_level(CompLevel_full_optimization) &&
+        mtd->only_inlined()) {
       return;
     }
 
     CompLevel level = CompLevel_full_profile;
-    if (mtd->level() == CompLevel_simple) {
+    if (mtd->saw_level(CompLevel_simple)) {
       level = CompLevel_simple;
-    } else if (mtd->level() != CompLevel_full_optimization) {
+    } else if (!mtd->saw_level(CompLevel_full_optimization)) {
       level = CompLevel_limited_profile;
     }
     if (can_be_compiled(m, level) && !CompileBroker::compilation_is_in_queue(m)) {
@@ -752,15 +754,16 @@ void CompilationPolicy::reprofile(ScopeDesc* trap_scope, bool is_osr) {
 }
 
 bool CompilationPolicy::should_delay(const methodHandle& method) {
-  // It's important to keep this method lock-free and fast as we use at every event.
-  // We cache the pointer to the MethodTrainingData in MethodCounters to avoid producing a string with
-  // the method name and doing a hash table lookup, which requires a lock.
-  if (!TrainingData::has_data()) {
+  if (!TrainingData::have_data()) {
     return false;
   }
 
-  MethodTrainingData* mtd = MethodTrainingData::get_cached(method);
-  if (mtd != nullptr && mtd->level() == CompLevel_full_optimization) {
+  // It's important to keep this method lock-free and fast as we use
+  // at every event.  We cache the pointer to the MethodTrainingData
+  // in MethodCounters to avoid producing doing a hash table lookup,
+  // which requires a lock.
+  MethodTrainingData* mtd = MethodTrainingData::find(method);
+  if (mtd != nullptr && mtd->saw_level(CompLevel_full_optimization)) {
     return false;
   }
 
@@ -869,7 +872,6 @@ void CompilationPolicy::compile(const methodHandle& mh, int bci, CompLevel level
     int hot_count = (bci == InvocationEntryBci) ? mh->invocation_count() : mh->backedge_count();
     update_rate(nanos_to_millis(os::javaTimeNanos()), mh);
     CompileBroker::compile_method(mh, bci, level, mh, hot_count, CompileTask::Reason_Tiered, THREAD);
-    MethodTrainingData::notice_compilation(mh, level, false);
   }
 }
 
@@ -1176,7 +1178,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
 // Determine if a method should be compiled with a normal entry point at a different level.
 CompLevel CompilationPolicy::call_event(const methodHandle& method, CompLevel cur_level, Thread* thread) {
   CompLevel osr_level = MIN2((CompLevel) method->highest_osr_comp_level(), common<LoopPredicate>(method, cur_level, true));
-  CompLevel next_level = common<CallPredicate>(method, cur_level, !TrainingData::has_data() && is_old(method));
+  CompLevel next_level = common<CallPredicate>(method, cur_level, !TrainingData::have_data() && is_old(method));
 
   // If OSR method level is greater than the regular method level, the levels should be
   // equalized by raising the regular method level in order to avoid OSRs during each

@@ -995,17 +995,17 @@ void CodeBuffer::verify_section_allocation() {
 }
 
 void CodeBuffer::log_section_sizes(const char* name) {
-  if (xtty != NULL) {
+  if (xtty != nullptr) {
     ttyLocker ttyl;
     // log info about buffer usage
-    xtty->print_cr("<blob name='%s' total_size='%d'>", name, _total_size);
+    xtty->head("blob name='%s' total_size='%d'", name, _total_size);
     for (int n = (int) CodeBuffer::SECT_FIRST; n < (int) CodeBuffer::SECT_LIMIT; n++) {
       CodeSection* sect = code_section(n);
       if (!sect->is_allocated() || sect->is_empty())  continue;
-      xtty->print_cr("<sect index='%d' capacity='%d' size='%d' remaining='%d'/>",
-                     n, sect->capacity(), sect->size(), sect->remaining());
+      xtty->elem("sect index='%d' capacity='%d' size='%d' remaining='%d'",
+                 n, sect->capacity(), sect->size(), sect->remaining());
     }
-    xtty->print_cr("</blob>");
+    xtty->tail("blob");
   }
 }
 

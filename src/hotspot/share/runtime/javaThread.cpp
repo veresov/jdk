@@ -486,6 +486,7 @@ JavaThread::JavaThread() :
   _parker(),
 
   _class_to_be_initialized(nullptr),
+  _class_being_initialized(nullptr),
 
   _SleepEvent(ParkEvent::Allocate(this))
 {

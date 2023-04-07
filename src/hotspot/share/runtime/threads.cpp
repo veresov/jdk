@@ -571,6 +571,9 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
     *canTryAgain = false; // don't let caller call JNI_CreateJavaVM again
     return status;
   }
+  if (xtty != nullptr)
+    xtty->elem("vm_main_thread thread='" UINTX_FORMAT "'",
+               (uintx) main_thread->osthread()->thread_id());
 
   JFR_ONLY(Jfr::on_create_vm_1();)
 

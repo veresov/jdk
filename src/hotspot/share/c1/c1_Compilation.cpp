@@ -143,7 +143,7 @@ void Compilation::build_hir() {
   // setup ir
   CompileLog* log = this->log();
   if (log != NULL) {
-    log->begin_head("parse method='%d' ",
+    log->begin_head("parse method='%d'",
                     log->identify(_method));
     log->stamp();
     log->end_head();

@@ -914,12 +914,13 @@ nmethod::nmethod(
 // Print a short set of xml attributes to identify this nmethod.  The
 // output should be embedded in some other element.
 void nmethod::log_identity(xmlStream* log) const {
-  log->print(" compile_id='%d'", compile_id());
+  assert(log->inside_attrs_or_error(), "printing attributes");
+  log->print(" code_compile_id='%d'", compile_id());
   const char* nm_kind = compile_kind();
-  if (nm_kind != nullptr)  log->print(" compile_kind='%s'", nm_kind);
-  log->print(" compiler='%s'", compiler_name());
+  if (nm_kind != nullptr)  log->print(" code_compile_kind='%s'", nm_kind);
+  log->print(" code_compiler='%s'", compiler_name());
   if (TieredCompilation) {
-    log->print(" level='%d'", comp_level());
+    log->print(" code_compile_level='%d'", comp_level());
   }
 #if INCLUDE_JVMCI
   if (jvmci_nmethod_data() != nullptr) {

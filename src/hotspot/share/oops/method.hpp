@@ -61,6 +61,7 @@ class LocalVariableTableElement;
 class AdapterHandlerEntry;
 class MethodData;
 class MethodCounters;
+class MethodTrainingData;
 class ConstMethod;
 class InlineTableSizes;
 class CompiledMethod;
@@ -364,6 +365,24 @@ class Method : public Metadata {
   }
 
   void set_method_data(MethodData* data);
+
+  MethodTrainingData* training_data_or_null() const {
+    MethodCounters* mcs = method_counters();
+    if (mcs == nullptr) {
+      return nullptr;
+    } else {
+      return mcs->method_training_data();
+    }
+  }
+
+  bool init_training_data(MethodTrainingData* tdata) {
+    MethodCounters* mcs = method_counters();
+    if (mcs == nullptr) {
+      return false;
+    } else {
+      return mcs->init_method_training_data(tdata);
+    }
+  }
 
   MethodCounters* method_counters() const {
     return _method_counters;

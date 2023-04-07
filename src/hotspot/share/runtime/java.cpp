@@ -529,8 +529,9 @@ void before_exit(JavaThread* thread, bool halt) {
     }
   }
 #endif
-  if (UseNewCode) {
-    MethodTrainingData::dump_all();
+
+  if (RecordTraining) {
+    TrainingData::store_results();
   }
 
   print_statistics();

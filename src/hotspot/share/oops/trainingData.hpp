@@ -25,154 +25,568 @@
 #ifndef SHARE_OOPS_TRAININGDATA_HPP
 #define SHARE_OOPS_TRAININGDATA_HPP
 
-#include "compiler/compiler_globals.hpp"
 #include "compiler/compilerDefinitions.hpp"
+#include "compiler/compiler_globals.hpp"
 #include "memory/allocation.hpp"
 #include "oops/instanceKlass.hpp"
-#include "oops/symbol.hpp"
+#include "oops/symbolHandle.hpp"
+#include "runtime/fieldDescriptor.inline.hpp"
 #include "runtime/handles.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "utilities/count_leading_zeros.hpp"
 #include "utilities/resizeableResourceHash.hpp"
 
-class MethodTrainingData;
+class ciEnv;
+class ciBaseObject;
+class CompileTask;
+class xmlStream;
+class CompileTrainingData;
 class KlassTrainingData;
-class TrainingData : public CHeapObj<mtCompiler>  {
-public:
-  class Key {
-    Symbol* _klass_name;
-    Symbol* _klass_loader_name;
-    Symbol* _method_name;
-    Symbol* _method_signature;
-  public:
-    Key(Symbol* klass_name, Symbol* klass_loader_name, Symbol* method_name, Symbol* method_signature) {
-      _klass_name = klass_name;
-      _klass_loader_name = klass_loader_name;
-      _method_name = method_name;
-      _method_signature = method_signature;
-    }
-    Key(const methodHandle& method);
-    Key(const InstanceKlass* klass);
-    void dump() const;
+class MethodTrainingData;
+class TrainingDataDumper;
+class TrainingDataSetLocker;
 
-    static unsigned hash(Key const& k) {
-      unsigned h =  (k.klass_name() != nullptr) ? k.klass_name()->identity_hash() : 0;
-               h += (k.klass_loader_name() != nullptr) ? k.klass_loader_name()->identity_hash() : 0;
-               h += (k.method_name() != nullptr) ? k.method_name()->identity_hash() : 0;
-               h += (k.method_signature() != nullptr) ? k.method_signature()->identity_hash() : 0;
-      return h;
+//FIXME: should be class TrainingData : public Metadata
+class TrainingData : public CHeapObj<mtCompiler> {
+  friend KlassTrainingData;
+  friend MethodTrainingData;
+
+ public:
+  class Key {
+    SymbolHandle _klass_name;   // from Klass::name
+    SymbolHandle _loader_name;  // from Klass::class_loader_name_and_id
+    SymbolHandle _method_name;  // from Method::name, or null
+    SymbolHandle _signature;    // from Method::signature, or null
+
+    // These guys can get to my constructors:
+    friend TrainingData;
+    friend KlassTrainingData;
+    friend MethodTrainingData;
+
+    Key(Symbol* klass_name, Symbol* loader_name,
+        Symbol* method_name, Symbol* signature) {
+      // Since we are using SymbolHandles here, the reference counts
+      // are incremented here, in this constructor.  We assume that
+      // the symbols are already kept alive by some other means, but
+      // after this point the Key object keeps them alive as well.
+      _klass_name   = klass_name;
+      _loader_name  = loader_name;
+      _method_name  = method_name;
+      _signature    = signature;
     }
-    static bool equals(Key const& k1, Key const& k2) {
+    Key(const KlassTrainingData* klass,
+        Symbol* method_name, Symbol* signature);
+    Key(const InstanceKlass* klass,
+        Symbol* method_name = nullptr, Symbol* signature = nullptr);
+    Key(const methodHandle& method);
+
+  public:
+    static unsigned hash(const Key* const& k) {
+      // A symmetric hash code is usually a bad idea, except in cases
+      // like this where it is very unlikely that any one string might
+      // appear in two positions, and even less likely that two
+      // strings might trade places in two otherwise equal keys.
+      return (Symbol::identity_hash(k->klass_name()) +
+              Symbol::identity_hash(k->loader_name()) +
+              Symbol::identity_hash(k->method_name()) +
+              Symbol::identity_hash(k->signature()));
+    }
+    static bool equals(const Key* const& k1, const Key* const& k2) {
       // We assume that all Symbols come for SymbolTable and therefore are unique.
       // Hence pointer comparison is enough to prove equality.
-      return k1.klass_name() == k2.klass_name() && k1.klass_loader_name() == k2.klass_loader_name() &&
-             k1.method_name() == k2.method_name() && k1.method_signature() == k2.method_signature();
+      return (k1->klass_name()  == k2->klass_name() &&
+              k1->loader_name() == k2->loader_name() &&
+              k1->method_name() == k2->method_name() &&
+              k1->signature()   == k2->signature());
     }
-    Symbol* klass_name() const        { return _klass_name;        }
-    Symbol* klass_loader_name() const { return _klass_loader_name; }
-    Symbol* method_name() const       { return _method_name;       }
-    Symbol* method_signature() const  { return _method_signature;  }
+    int cmp(const Key* that) const {
+      Symbol* k1 = nullptr;
+      Symbol* k2 = nullptr;
+      for (;;) {
+        #define CHECK_COMPONENT(name)   \
+          if ((k1 = this->name()) != (k2 = that->name()))  break;
+        CHECK_COMPONENT(klass_name);
+        CHECK_COMPONENT(loader_name);
+        CHECK_COMPONENT(method_name);
+        CHECK_COMPONENT(signature);
+        #undef CHECK_COMPONENT
+        return 0; // no pair of differing components
+      }
+      // found the first pair of differing components
+      return ((k1 == k2) ? 0 :
+              k1 == nullptr ? -1 :
+              k2 == nullptr ? +1 :
+              k1->cmp(k2));
+    }
+    Symbol* klass_name() const        { return _klass_name; }
+    Symbol* loader_name() const       { return _loader_name; }
+    Symbol* method_name() const       { return _method_name; }
+    Symbol* signature() const         { return _signature;  }
+  };
+
+  class TrainingDataSet {
+    friend TrainingData;
+    friend TrainingDataSetLocker;
+    ResizeableResourceHashtable<const Key*, TrainingData*,
+                                AnyObj::C_HEAP, MEMFLAGS::mtCompiler,
+                                &TrainingData::Key::hash,
+                                &TrainingData::Key::equals>
+      _table;
+    static int _lock_mode;
+    static void initialize() {
+      _lock_mode = need_data() ? +1 : -1;   // if -1, we go lock-free
+    }
+    static void lock() {
+      assert(_lock_mode != 0, "Forgot to call TrainingDataSet::initialize()");
+      if (_lock_mode > 0) {
+        TrainingData_lock->lock_without_safepoint_check();
+      }
+    }
+    static void unlock() {
+      if (_lock_mode > 0) {
+        TrainingData_lock->unlock();
+      }
+    }
+    static bool safely_locked() {
+      assert(_lock_mode != 0, "Forgot to call TrainingDataSet::initialize()");
+      if (_lock_mode > 0) {
+        return TrainingData_lock->owned_by_self();
+      } else {
+        return true;
+      }
+    }
+
+  public:
+    template<typename... Arg>
+    TrainingDataSet(Arg... arg)
+      : _table(arg...) {
+    }
+    TrainingData* find(const Key* key) const {
+      assert(safely_locked(), "use under TrainingDataSetLocker");
+      auto res = _table.get(key);
+      return res == nullptr ? nullptr : *res;
+    }
+    bool remove(const Key* key) {
+      return _table.remove(key);
+    }
+    TrainingData* install(TrainingData* tdata) {
+      assert(safely_locked(), "use under TrainingDataSetLocker");
+      auto key = tdata->key();
+      bool created = false;
+      auto prior = _table.put_if_absent(key, tdata, &created);
+      if (prior == nullptr || *prior == tdata) {
+        return tdata;
+      }
+      // Problem: We just replaced *prior, and when we delete *prior
+      // its copy of the key will go away, but that's the copy that
+      // the table is holding in its entry node.  Solution: Retain the
+      // original tdata, on the theory that training data should never
+      // be reset.  Other solutions: Throw an assert, or else delete
+      // the old data (with its old key) and insert again.
+      delete tdata;
+      return *prior;
+    }
+    template<typename FN>
+    void iterate_all(FN fn) const { // lambda enabled API
+      return _table.iterate_all(fn);
+    }
   };
 
 private:
-  typedef ResizeableResourceHashtable<Key, TrainingData*, AnyObj::C_HEAP, mtCompiler,
-                                      TrainingData::Key::hash, TrainingData::Key::equals> TrainingDataSet;
+  Key _key;
+
+  // just forward all constructor arguments to the embedded key
+  template<typename... Arg>
+  TrainingData(Arg... arg)
+    : _key(arg...) {
+  }
+
   static TrainingDataSet _training_data_set;
 
 public:
-  // TODO: Fix these to mean whether we've loaded profiles and/or are collecting profiles
-  static bool has_data()  { return true;  } // Going to read
-  static bool need_data() { return true;  } // Going to write
+  virtual ~TrainingData() = default;
 
-  struct TrainingDataSetLock : public CHeapObj<mtCompiler> {
-    virtual void lock()   { TrainingData_lock->lock_without_safepoint_check(); }
-    virtual void unlock() { TrainingData_lock->unlock();                       }
-  };
-  struct TrainingDataSetLockNoop : public TrainingDataSetLock {
-    virtual void lock()   { }
-    virtual void unlock() { }
-  };
-  class TrainingDataSetLocker {
-    static TrainingDataSetLock* lock;
-  public:
-    static void initialize() {
-      if (need_data()) {
-        lock = new TrainingDataSetLock();
-      } else {
-        lock = new TrainingDataSetLockNoop();
-      }
-    }
-    TrainingDataSetLocker() {
-      assert(lock != nullptr, "Forgot to call MethodTrainingDataSetLocker::initialize()");
-      lock->lock();
-    }
-    ~TrainingDataSetLocker() {
-      assert(lock != nullptr, "Forgot to call MethodTrainingDataSetLocker::initialize()");
-      lock->unlock();
-    }
-  };
+  const Key* key() const { return &_key; }
+
+  static bool have_data() { return ReplayTraining;  } // Going to read
+  static bool need_data() { return RecordTraining;  } // Going to write
+
   static TrainingDataSet* training_data_set() { return &_training_data_set; }
 
-  virtual MethodTrainingData* as_MethodTrainingData() { return nullptr; };
-  virtual KlassTrainingData*  as_KlassTrainingData()  { return nullptr; };
+  virtual MethodTrainingData* as_MethodTrainingData() const { return nullptr; }
+  virtual KlassTrainingData*  as_KlassTrainingData()  const { return nullptr; }
+  bool is_MethodTrainingData() const { return as_MethodTrainingData() != nullptr; }
+  bool is_KlassTrainingData()  const { return as_KlassTrainingData()  != nullptr; }
+
+  virtual int cmp(const TrainingData* that) const = 0;
+
+  enum DumpPhase {
+    DP_prepare,   // no output, set final structure
+    DP_identify,  // output only an id='%d' element
+    DP_detail,    // output any additional information
+  };
+  virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp) = 0;
+  bool prepare_to_dump(TrainingDataDumper& tdd) { return dump(tdd, DP_prepare); }
+  bool dump_identity(TrainingDataDumper& tdd) { return dump(tdd, DP_identify); }
+  bool dump_detail(TrainingDataDumper& tdd) { return dump(tdd, DP_detail); }
 
   static void initialize();
-  static void dump_all();
+
+  // Store results to a file, and/or mark them for retention by CDS,
+  // if RecordTraining is enabled.
+  static void store_results();
+
+  // Widget for recording dependencies, as an N-to-M graph relation,
+  // possibly cyclic.
+  template<typename E>
+  class DepList : public StackObj {
+  private:
+    GrowableArrayCHeap<E, mtCompiler>* _deps_dyn;
+    Array<E>*                          _deps;
+    // (hmm, could we have state-selected union of these two?)
+
+  public:
+    DepList() {
+      _deps_dyn = nullptr;
+      _deps = nullptr;
+    }
+
+    int length() const {
+      return (_deps_dyn != nullptr ? _deps_dyn->length()
+              : _deps   != nullptr ? _deps->length()
+              : 0);
+    }
+    E* adr_at(int i) const {
+      return (_deps_dyn != nullptr ? _deps_dyn->adr_at(i)
+              : _deps   != nullptr ? _deps->adr_at(i)
+              : nullptr);
+    }
+    E at(int i) const {
+      assert(i >= 0 && i < length(), "oob");
+      return *adr_at(i);
+    }
+    bool append_if_missing(E dep) {
+      assert(_deps == nullptr, "must be growable");
+      if (_deps_dyn == nullptr) {
+        _deps_dyn = new GrowableArrayCHeap<KlassTrainingData*, mtCompiler>(10);
+        _deps_dyn->append(dep);
+        return true;
+      } else {
+        return _deps_dyn->append_if_missing(dep);
+      }
+    }
+  };
+};
+
+class TrainingDataSetLocker {
+ public:
+  TrainingDataSetLocker() {
+    TrainingData::TrainingDataSet::lock();
+  }
+  ~TrainingDataSetLocker() {
+    TrainingData::TrainingDataSet::unlock();
+  }
 };
 
 class KlassTrainingData : public TrainingData {
-  Symbol* _name;
-  Symbol* _loader_name;
-public:
-  KlassTrainingData(Symbol *name, Symbol* loader_name) :
-    _name(name), _loader_name(loader_name) {
-      _name->increment_refcount();
-      if (_loader_name != nullptr) {
-        _loader_name->increment_refcount();
-      }
-  }
-  ~KlassTrainingData() {
-    _name->decrement_refcount();
-    if (_loader_name != nullptr) {
-      _loader_name->decrement_refcount();
+  friend TrainingData;
+
+ public:
+  // Tracking field initialization, when RecordTraining is enabled.
+  struct FieldData {
+    Symbol*   _name;    // name of field, for making reports (no refcount)
+    int      _index;    // index in the field stream (a unique id)
+    BasicType _type;    // what kind of field is it?
+    int     _offset;    // offset of field storage, within mirror
+    int _fieldinit_sequence_index;  // 1-based local initialization order
+    void init_from(fieldDescriptor& fd) {
+      _name = fd.name();
+      _index = fd.index();
+      _offset = fd.offset(); 
+      _type = fd.field_type();
+      _fieldinit_sequence_index = 0;
     }
+  };
+
+ private:
+  // cross-link to live klass, or null if not loaded or encountered yet
+  InstanceKlass* _holder;
+  jobject _holder_mirror;   // extra link to prevent unloading by GC
+
+  // initialization tracking state
+  bool _has_initialization_touch;
+  int _clinit_sequence_index;       // 1-based global initialization order
+  GrowableArrayCHeap<FieldData, mtCompiler>* _static_fields;  //do not CDS
+  int _fieldinit_count;  // count <= _static_fields.length()
+  bool _clinit_is_done;
+  bool _do_not_dump;
+  DepList<KlassTrainingData*> _init_deps;  // classes to initialize before me
+
+  static GrowableArrayCHeap<FieldData, mtCompiler>* _no_static_fields;
+  static int _clinit_count;  // global count (so far) of clinit events
+
+  void init() {
+    _holder_mirror = nullptr;
+    _holder = nullptr;
+    _has_initialization_touch = false;
+    _clinit_sequence_index = 0;
+    _static_fields = nullptr;
+    _fieldinit_count = 0;
+    _clinit_is_done = _do_not_dump = false;
   }
-  Symbol* name() const { return _name; }
-  Symbol* loader_name() const { return _loader_name; }
-  void dump() const;
-  virtual KlassTrainingData* as_KlassTrainingData() { return this; };
+
+  KlassTrainingData(Symbol* klass_name, Symbol* loader_name)
+    : TrainingData(klass_name, loader_name, nullptr, nullptr)
+  {
+    init();
+  }
+  KlassTrainingData(InstanceKlass* klass)
+    : TrainingData(klass)
+  {
+    init();
+  }
+
+  int init_dep_count() const { return _init_deps.length(); }
+  KlassTrainingData* init_dep(int i) const { return _init_deps.at(i); }
+  bool add_init_dep(KlassTrainingData* k) { return _init_deps.append_if_missing(k); }
+
+  static GrowableArrayCHeap<FieldData, mtCompiler>* no_static_fields();
+  static int next_clinit_count() {
+    return Atomic::add(&_clinit_count, 1);
+  }
+  int next_fieldinit_count() {
+    return Atomic::add(&_fieldinit_count, 1);
+  }
+  void log_initialization(bool is_start);
+
+  bool record_static_field_init(FieldData* fdata, const char* reason);
+
+ public:
+  Symbol* name()                const { return _key.klass_name(); }
+  Symbol* loader_name()         const { return _key.loader_name(); }
+  bool    has_holder()          const { return _holder != nullptr; }
+  InstanceKlass* holder()       const { return _holder; }
+
+  // This sets up the mirror as well, and may scan for field metadata.
+  void init_holder(const InstanceKlass* klass);
+
+  // Update any copied data.
+  void refresh_from(const InstanceKlass* klass);
+
+  // factories from live class and from symbols:
+  static KlassTrainingData* make(Symbol* name, Symbol* loader_name);
+  static KlassTrainingData* make(InstanceKlass* holder);
+
+  virtual int cmp(const TrainingData* that) const;
+
+  virtual KlassTrainingData* as_KlassTrainingData() const { return const_cast<KlassTrainingData*>(this); };
+
+  ClassLoaderData* class_loader_data() {
+    assert(has_holder(), "");
+    return holder()->class_loader_data();
+  }
+  void setup_static_fields(const InstanceKlass* holder);
+  bool field_state_is_clean(FieldData* fdata);
+  FieldData* check_field_states_and_find_field(Symbol* name);
+  bool all_field_states_done() {
+    return _static_fields != nullptr && _static_fields->length() == _fieldinit_count;
+  }
+  static void print_klass_attrs(xmlStream* xtty,
+                                Klass* klass, const char* prefix = "");
+  static void print_iclock_attr(InstanceKlass* klass,
+                                xmlStream* xtty,
+                                int fieldinit_index = -1,
+                                const char* prefix = "");
+
+  void record_touch_common(xmlStream* xtty,
+                           const char* reason,
+                           CompileTask* jit_task,
+                           Klass* init_klass,
+                           Klass* requesting_klass,
+                           Symbol* name,
+                           Symbol* sig,
+                           const char* context);
+
+  // A 1-based global order in which <clinit> was called, or zero if
+  // that never did happen, or has not yet happened.
+  int clinit_sequence_index_or_zero() const {
+    return _clinit_sequence_index;
+  }
+
+  // Has this class been the subject of an initialization touch?
+  bool has_initialization_touch() { return _has_initialization_touch; }
+  // Add such a touch to the history of this class.
+  bool add_initialization_touch(Klass* requester);
+
+  // For some reason, somebody is touching my class (this->holder())
+  // and that might be relevant to my class's initialization state.
+  // We collect these events even after my class is fully initialized.
+  //
+  // The requesting class, if not null, is the class which is causing
+  // the event, somehow (depending on the reason).
+  //
+  // The name and signature, if not null, are somehow relevant to
+  // the event; depending on the reason, they might refer to a
+  // member of my class, or else to a member of the requesting class.
+  //
+  // The context is a little extra information.
+  //
+  // The record that will be emitted records all this information,
+  // plus extra stuff, notably whether there is a <clinit> execution
+  // on stack, and if so, who that is.  Often, the class running its
+  // <clinit> is even more interesting than the requesting class.
+  void record_initialization_touch(const char* reason,
+                                   Symbol* name,
+                                   Symbol* sig,
+                                   Klass* requesting_klass,
+                                   const char* context,
+                                   TRAPS);
+
+  void record_initialization_start();
+  void record_initialization_end();
+
+  // Record that we have witnessed the initialization of the name.
+  // This is called when we know we are doing a `putstatic` or equivalent.
+  // It can be called either just before or just after.  It is only
+  // safe to call this inside the initializing thread.
+  bool record_static_field_init(fieldDescriptor* fd, const char* reason);
+
+  virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
 };
 
 // Record information about a method at the time compilation is requested.
 class MethodTrainingData : public TrainingData {
+  friend CompileTrainingData;
+
   KlassTrainingData* _klass;
-  Symbol* _name;
-  Symbol* _signature;
-  int _level;
-  bool _only_inlined;
- public:
-  MethodTrainingData(KlassTrainingData* klass, Symbol* name, Symbol* signature, int level, bool only_inlined) :
-    _klass(klass), _name(name), _signature(signature), _level(level), _only_inlined(only_inlined) {
-    _name->increment_refcount();
-    _signature->increment_refcount();
-  }
-  ~MethodTrainingData() {
-    _name->decrement_refcount();
-    _signature->decrement_refcount();
+  const Method* _holder;  // can be null
+  CompileTrainingData* _compile;   // singly linked list, latest first
+  int _level_mask;  // bit-set of all possible levels
+  bool _was_inlined;
+  bool _was_toplevel;
+  bool _do_not_dump;
+  // metadata snapshots of final state:
+  MethodCounters* _final_counters;
+  MethodData*     _final_profile;
+
+  MethodTrainingData(KlassTrainingData* klass,
+                     Symbol* name, Symbol* signature)
+    : TrainingData(klass, name, signature)
+  {
+    _klass = klass;
+    _holder = nullptr;
+    _compile = nullptr;
+    _level_mask = 0;
+    _was_inlined = _was_toplevel = _do_not_dump = false;
   }
 
-  KlassTrainingData* klass() const { return _klass; }
-  Symbol* name() const { return _name; }
-  Symbol* signature() const { return _signature; }
+  static int level_mask(int level) {
+    return ((level & 0xF) != level ? 0 : 1 << level);
+  }
+  static CompLevel highest_level(int mask) {
+    if (mask == 0)  return (CompLevel) 0;
+    int diff = (count_leading_zeros(level_mask(0)) - count_leading_zeros(mask));
+    return (CompLevel) diff;
+  }
+
+ public:
+  KlassTrainingData* klass()  const { return _klass; }
+  bool has_holder()           const { return _holder != nullptr; }
+  const Method* holder()      const { return _holder; }
+  Symbol* name()              const { return _key.method_name(); }
+  Symbol* signature()         const { return _key.signature(); }
+  bool only_inlined()         const { return !_was_toplevel; }
+  bool never_inlined()        const { return !_was_inlined; }
+  bool saw_level(CompLevel l) const { return (_level_mask & level_mask(l)) != 0; }
+  int highest_level()         const { return highest_level(_level_mask); }
+
+  inline int last_compile_id() const;
+
+  void notice_compilation(int level, bool inlined = false) {
+    if (inlined)  _was_inlined = true;
+    else          _was_toplevel = true;
+    _level_mask |= level_mask(level);
+  }
+
+  // Update any copied data.
+  void refresh_from(const Method* method);
+
+  static MethodTrainingData* make(const methodHandle& method,
+                                  bool null_if_not_found = false);
+  static MethodTrainingData* find(const methodHandle& method) {
+    return make(method, true);
+  }
+
+  virtual int cmp(const TrainingData* that) const;
+
+  virtual MethodTrainingData* as_MethodTrainingData() const { return const_cast<MethodTrainingData*>(this); };
+
+  virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
+};
+
+// Information about particular JIT tasks.
+//FIXME: should be class CompileTrainingData : public Metadata
+class CompileTrainingData : public CHeapObj<mtCompiler> {
+  MethodTrainingData* _method;  // inlined method, or same as top method
+  MethodTrainingData* _top_method;
+  CompileTrainingData* _next;   // singly linked list, latest first
+  short _level;
+  int _compile_id;
+  int _nm_total_size;
+  float _qtime, _stime, _etime;   // time queued, started, ended
+
+  // classes that should be initialized before this JIT task runs
+  TrainingData::DepList<KlassTrainingData*> _init_deps;
+
+  // (should we also capture counters or MDO state or replay data?)
+
+  CompileTrainingData(MethodTrainingData* method,
+                      MethodTrainingData* top_method,
+                      int level,
+                      int compile_id) {
+    _method = method;
+    _level = level;
+    _compile_id = compile_id;
+    _next = nullptr;
+    _qtime = _stime = _etime = 0;
+    _nm_total_size = 0;
+  }
+
+ public:
+  // Record a use of a method in a given task.  If non-null, the given
+  // method is not the top-level method of the task, but instead it is
+  // inlined into the top-level method.
+  static CompileTrainingData* make(CompileTask* task,
+                                   Method* inlined_method = nullptr);
+
+  MethodTrainingData* method()      const { return _method; }
+  MethodTrainingData* top_method()  const { return _top_method; }
+  bool                is_inlined()  const { return _method != _top_method; }
+
+  CompileTrainingData* next() const { return _next; }
+
   int level() const { return _level; }
   void set_level(int level) { _level = level; }
-  bool only_inlined() const { return _only_inlined; }
-  void set_only_inlined(bool only_inlined) { _only_inlined = only_inlined; }
-  void dump() const;
-  virtual MethodTrainingData* as_MethodTrainingData() { return this; };
 
-  static MethodTrainingData* get(const methodHandle& method);
-  static MethodTrainingData* get_cached(const methodHandle& method);
-  static void notice_compilation(const methodHandle& method, int level, bool inlining);
+  int compile_id() const { return _compile_id; }
+  void set_compile_id(int id) { _compile_id = id; }
+
+  int init_dep_count() const { return _init_deps.length(); }
+  KlassTrainingData* init_dep(int i) const { return _init_deps.at(i); }
+  bool add_init_dep(KlassTrainingData* k) { return _init_deps.append_if_missing(k); }
+
+  void record_compilation_queued(CompileTask* task);
+  void record_compilation_start(CompileTask* task);
+  void record_compilation_end(CompileTask* task);
+  void notice_inlined_method(CompileTask* task, const methodHandle& method);
+
+  // The JIT looks at classes and objects too and can depend on their state.
+  // These simple calls just report the *possibility* of an observation.
+  void notice_jit_observation(ciEnv* env, ciBaseObject* what);
 };
+
+inline int MethodTrainingData::last_compile_id() const {
+  return (_compile == nullptr ? 0 : _compile->compile_id());
+}
 
 #endif // SHARE_OOPS_TRAININGDATA_HPP

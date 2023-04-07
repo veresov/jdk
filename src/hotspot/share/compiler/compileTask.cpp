@@ -123,6 +123,7 @@ void CompileTask::initialize(int compile_id,
   _nm_total_size = 0;
   _failure_reason = nullptr;
   _failure_reason_on_C_heap = false;
+  _training_data = nullptr;
 
   if (LogCompilation) {
     if (hot_method.not_null()) {
@@ -330,7 +331,6 @@ void CompileTask::log_task(xmlStream* log) {
   if (_is_blocking) {
     log->print(" blocking='1'");
   }
-  log->stamp();
 }
 
 // ------------------------------------------------------------------
@@ -346,20 +346,22 @@ void CompileTask::log_task_queued() {
   xtty->print(" comment='%s'", reason_name(_compile_reason));
 
   if (_hot_method != nullptr && _hot_method != _method) {
-    xtty->method(_hot_method);
+    xtty->method(_hot_method, "hot_");
   }
   if (_hot_count != 0) {
     xtty->print(" hot_count='%d'", _hot_count);
   }
+  xtty->stamp();
   xtty->end_elem();
 }
 
 
 // ------------------------------------------------------------------
 // CompileTask::log_task_start
-void CompileTask::log_task_start(CompileLog* log)   {
+void CompileTask::log_task_start(CompileLog* log) {
   log->begin_head("task");
   log_task(log);
+  log->stamp();
   log->end_head();
 }
 
