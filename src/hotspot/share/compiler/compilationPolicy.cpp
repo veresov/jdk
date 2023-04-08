@@ -541,7 +541,6 @@ void CompilationPolicy::initialize() {
     set_increase_threshold_at_ratio();
   }
 
-  TrainingData::initialize();
   set_start_time(nanos_to_millis(os::javaTimeNanos()));
 }
 

@@ -194,11 +194,13 @@ class TrainingData : public CHeapObj<mtCompiler> {
 
 private:
   Key _key;
+  bool _do_not_dump;
 
   // just forward all constructor arguments to the embedded key
   template<typename... Arg>
   TrainingData(Arg... arg)
     : _key(arg...) {
+    _do_not_dump = false;
   }
 
   static TrainingDataSet _training_data_set;
@@ -207,6 +209,9 @@ public:
   virtual ~TrainingData() = default;
 
   const Key* key() const { return &_key; }
+
+  bool do_not_dump() const { return _do_not_dump; }
+  void set_do_not_dump(bool z) { _do_not_dump = z; }
 
   static bool have_data() { return ReplayTraining;  } // Going to read
   static bool need_data() { return RecordTraining;  } // Going to write
@@ -226,15 +231,18 @@ public:
     DP_detail,    // output any additional information
   };
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp) = 0;
-  bool prepare_to_dump(TrainingDataDumper& tdd) { return dump(tdd, DP_prepare); }
-  bool dump_identity(TrainingDataDumper& tdd) { return dump(tdd, DP_identify); }
-  bool dump_detail(TrainingDataDumper& tdd) { return dump(tdd, DP_detail); }
+  // prepare_to_dump(TrainingDataDumper& tdd) { return dump(tdd, DP_prepare); }
+  // dump_identity(TrainingDataDumper& tdd) { return dump(tdd, DP_identify); }
+  // dump_detail(TrainingDataDumper& tdd) { return dump(tdd, DP_detail); }
 
   static void initialize();
 
   // Store results to a file, and/or mark them for retention by CDS,
   // if RecordTraining is enabled.
   static void store_results();
+
+  // Load stored results from a file if ReplayTraining is enabled.
+  static void load_profiles();
 
   // Widget for recording dependencies, as an N-to-M graph relation,
   // possibly cyclic.
@@ -319,7 +327,6 @@ class KlassTrainingData : public TrainingData {
   GrowableArrayCHeap<FieldData, mtCompiler>* _static_fields;  //do not CDS
   int _fieldinit_count;  // count <= _static_fields.length()
   bool _clinit_is_done;
-  bool _do_not_dump;
   DepList<KlassTrainingData*> _init_deps;  // classes to initialize before me
 
   static GrowableArrayCHeap<FieldData, mtCompiler>* _no_static_fields;
@@ -332,7 +339,7 @@ class KlassTrainingData : public TrainingData {
     _clinit_sequence_index = 0;
     _static_fields = nullptr;
     _fieldinit_count = 0;
-    _clinit_is_done = _do_not_dump = false;
+    _clinit_is_done = false;
   }
 
   KlassTrainingData(Symbol* klass_name, Symbol* loader_name)
@@ -375,6 +382,7 @@ class KlassTrainingData : public TrainingData {
 
   // factories from live class and from symbols:
   static KlassTrainingData* make(Symbol* name, Symbol* loader_name);
+  static KlassTrainingData* make(const char* name, const char* loader_name);
   static KlassTrainingData* make(InstanceKlass* holder);
 
   virtual int cmp(const TrainingData* that) const;
@@ -464,7 +472,6 @@ class MethodTrainingData : public TrainingData {
   int _level_mask;  // bit-set of all possible levels
   bool _was_inlined;
   bool _was_toplevel;
-  bool _do_not_dump;
   // metadata snapshots of final state:
   MethodCounters* _final_counters;
   MethodData*     _final_profile;
@@ -477,7 +484,7 @@ class MethodTrainingData : public TrainingData {
     _holder = nullptr;
     _compile = nullptr;
     _level_mask = 0;
-    _was_inlined = _was_toplevel = _do_not_dump = false;
+    _was_inlined = _was_toplevel = false;
   }
 
   static int level_mask(int level) {
@@ -511,6 +518,10 @@ class MethodTrainingData : public TrainingData {
   // Update any copied data.
   void refresh_from(const Method* method);
 
+  static MethodTrainingData* make(KlassTrainingData* klass,
+                                  Symbol* name, Symbol* signature);
+  static MethodTrainingData* make(KlassTrainingData* klass,
+                                  const char* name, const char* signature);
   static MethodTrainingData* make(const methodHandle& method,
                                   bool null_if_not_found = false);
   static MethodTrainingData* find(const methodHandle& method) {
@@ -534,6 +545,7 @@ class CompileTrainingData : public CHeapObj<mtCompiler> {
   int _compile_id;
   int _nm_total_size;
   float _qtime, _stime, _etime;   // time queued, started, ended
+  bool _do_not_dump;
 
   // classes that should be initialized before this JIT task runs
   TrainingData::DepList<KlassTrainingData*> _init_deps;
@@ -545,11 +557,13 @@ class CompileTrainingData : public CHeapObj<mtCompiler> {
                       int level,
                       int compile_id) {
     _method = method;
+    _top_method = top_method;
     _level = level;
     _compile_id = compile_id;
     _next = nullptr;
     _qtime = _stime = _etime = 0;
     _nm_total_size = 0;
+    _do_not_dump = false;
   }
 
  public:
@@ -558,7 +572,13 @@ class CompileTrainingData : public CHeapObj<mtCompiler> {
   // inlined into the top-level method.
   static CompileTrainingData* make(CompileTask* task,
                                    Method* inlined_method = nullptr);
-
+  static CompileTrainingData* make(MethodTrainingData* this_method,
+                                   MethodTrainingData* top_method,
+                                   int level, int compile_id);
+  static CompileTrainingData* make(MethodTrainingData* method,
+                                   int level, int compile_id) {
+    return make(method, method, level, compile_id);
+  }
   MethodTrainingData* method()      const { return _method; }
   MethodTrainingData* top_method()  const { return _top_method; }
   bool                is_inlined()  const { return _method != _top_method; }
@@ -570,6 +590,9 @@ class CompileTrainingData : public CHeapObj<mtCompiler> {
 
   int compile_id() const { return _compile_id; }
   void set_compile_id(int id) { _compile_id = id; }
+
+  bool do_not_dump() const { return _do_not_dump; }
+  void set_do_not_dump(bool z) { _do_not_dump = z; }
 
   int init_dep_count() const { return _init_deps.length(); }
   KlassTrainingData* init_dep(int i) const { return _init_deps.at(i); }

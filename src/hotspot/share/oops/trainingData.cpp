@@ -27,6 +27,7 @@
 #include "ci/ciObject.hpp"
 #include "classfile/classLoaderData.hpp"
 #include "classfile/javaClasses.hpp"
+#include "classfile/symbolTable.hpp"
 #include "compiler/compileTask.hpp"
 #include "memory/metadataFactory.hpp"
 #include "memory/resourceArea.hpp"
@@ -52,6 +53,9 @@ void TrainingData::initialize() {
   if (have_data() || need_data()) {
     TrainingDataSet::initialize();
   }
+  if (have_data()) {
+    load_profiles();
+  }
 }
 
 TrainingData::Key::Key(const KlassTrainingData* klass,
@@ -64,11 +68,30 @@ TrainingData::Key::Key(const InstanceKlass* klass,
                        Symbol* method_name, Symbol* signature)
   : Key(klass->name(), klass->class_loader_name_and_id(),
         method_name, signature) {
+  // often the loader is either null or the string "'app'" (w/ extra quotes)
 }
 
 TrainingData::Key::Key(const methodHandle& method)
   : Key(method->method_holder(),
         method->name(), method->signature()) {
+}
+
+MethodTrainingData* MethodTrainingData::make(KlassTrainingData* klass,
+                                             Symbol* name, Symbol* signature) {
+  // FIXME: metadata should be allocated in default CLD
+  MethodTrainingData* tdata = new MethodTrainingData(klass, name, signature);
+  if (tdata != nullptr) {
+    TrainingDataSetLocker l;
+    tdata = training_data_set()->install(tdata)->as_MethodTrainingData();
+  }
+  return tdata;
+}
+
+MethodTrainingData* MethodTrainingData::make(KlassTrainingData* klass,
+                                             const char* name, const char* signature) {
+  TempNewSymbol n = SymbolTable::new_symbol(name);
+  TempNewSymbol s = SymbolTable::new_symbol(signature);
+  return make(klass, n, s);
 }
 
 MethodTrainingData* MethodTrainingData::make(const methodHandle& method,
@@ -122,8 +145,8 @@ void MethodTrainingData::refresh_from(const Method* method) {
 
 CompileTrainingData* CompileTrainingData::make(CompileTask* task,
                                                Method* inlined_method) {
-  int cpl = task->comp_level();
-  int cid = task->compile_id();
+  int level = task->comp_level();
+  int compile_id = task->compile_id();
   Thread* thread = Thread::current();
   methodHandle top_method(thread, task->method());
   methodHandle this_method;
@@ -133,40 +156,50 @@ CompileTrainingData* CompileTrainingData::make(CompileTask* task,
     this_method = methodHandle(thread, inlined_method);
   }
   MethodTrainingData* topm = MethodTrainingData::make(top_method);
-  topm->notice_compilation(cpl);
   MethodTrainingData* thism = topm;
   if (inlined_method != top_method()) {
     thism = MethodTrainingData::make(this_method);
-    thism->notice_compilation(cpl, true);
+  }
+  auto tdata = CompileTrainingData::make(thism, topm, level, compile_id);
+  return tdata;
+}
+
+CompileTrainingData* CompileTrainingData::make(MethodTrainingData* this_method,
+                                               MethodTrainingData* top_method,
+                                               int level, int compile_id) {
+  top_method->notice_compilation(level);
+  if (this_method != top_method) {
+    this_method->notice_compilation(level, true);
   }
 
   // Find the insertion point.  Also check for duplicate records.
-  CompileTrainingData* *insp = &thism->_compile;
-  while ((*insp) != nullptr && (*insp)->compile_id() > cid) {
+  CompileTrainingData* *insp = &this_method->_compile;
+  while ((*insp) != nullptr && (*insp)->compile_id() > compile_id) {
     insp = &(*insp)->_next;
   }
-  while ((*insp) != nullptr && (*insp)->compile_id() == cid) {
-    if ((*insp)->method() == thism &&
-        (*insp)->top_method() == topm) {
+  while ((*insp) != nullptr && (*insp)->compile_id() == compile_id) {
+    if ((*insp)->method() == this_method &&
+        (*insp)->top_method() == top_method) {
       break;
     }
   }
 
   // FIXME: metadata should be allocated in CLD of a method holder
-  CompileTrainingData* ctd = new CompileTrainingData(thism, topm, cpl, cid);
+  auto tdata = new CompileTrainingData(this_method, top_method,
+                                       level, compile_id);
 
   // Link it into the method, under a lock.
   TrainingDataSetLocker l;
-  while ((*insp) != nullptr && (*insp)->compile_id() == cid) {
-    if ((*insp)->method() == thism &&
-        (*insp)->top_method() == topm) {
-      delete ctd;
+  while ((*insp) != nullptr && (*insp)->compile_id() == compile_id) {
+    if ((*insp)->method() == this_method &&
+        (*insp)->top_method() == top_method) {
+      delete tdata;
       return (*insp);
     }
   }
-  ctd->_next = (*insp);
-  (*insp) = ctd;
-  return ctd;
+  tdata->_next = (*insp);
+  (*insp) = tdata;
+  return tdata;
 }
 
 void CompileTrainingData::record_compilation_queued(CompileTask* task) {
@@ -214,9 +247,6 @@ void CompileTrainingData::notice_jit_observation(ciEnv* env, ciBaseObject* what)
     }
   }
 }
-
-
-
 
 static int cmp_zeroes_to_end(int id1, int id2) {
   int cmp = id1 - id2;
@@ -353,10 +383,8 @@ static int name_to_ClassState(const char* n) {
 }
 
 bool KlassTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
-  if (_do_not_dump) {
-    return false;
-  }
   if (dp == DP_prepare) {
+    // FIXME: Decide if we should set _do_not_dump on some records.
     return true;
   }
   auto out = tdd.out();
@@ -365,7 +393,7 @@ bool KlassTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
     out->begin_elem("klass id='%d'", kid);
     out->name(this->name());
     Symbol* ln = this->loader_name();
-    if (ln != nullptr)  out->name(this->name(), "loader_");
+    if (ln != nullptr)  out->name(ln, "loader_");
     ClassState state = ClassState::allocated;
     if (has_holder())  state = holder()->init_state();
     out->print(" state='%s'", ClassState_to_name(state));
@@ -388,10 +416,8 @@ bool KlassTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
 }
 
 bool MethodTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
-  if (_do_not_dump) {
-    return false;
-  }
   if (dp == DP_prepare) {
+    // FIXME: Decide if we should set _do_not_dump on some records.
     if (has_holder()) {
       // FIXME: we might need to clone these two things
       _final_counters = holder()->method_counters();
@@ -414,10 +440,14 @@ bool MethodTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
   }
   assert(dp == DP_detail, "");
   for (auto ctd = _compile; ctd != nullptr; ctd = ctd->next()) {
+    if (ctd->do_not_dump())  continue;
     int cid = ctd->compile_id();
+    int tid = tdd.identify(ctd->top_method());
     out->begin_elem("compile compile_id='%d' level='%d' method='%d'",
                     cid, ctd->level(), mid);
-    if (ctd->is_inlined())  out->print(" is_inlined='1'");
+    if (ctd->is_inlined()) {
+      out->print(" is_inlined='1' top_method='%d'", tid);
+    }
     out->end_elem();
     int depc = ctd->init_dep_count();
     if (depc > 0) {
@@ -445,14 +475,29 @@ void TrainingData::store_results() {
   ResourceMark rm;
   TrainingDataDumper tdd;
 
-  // collect all the training data and prepare to dump or archive
+  // Collect all the training data and prepare to dump or archive.
+  // The first dump phase is preparation, which can mark nodes as
+  // do_not_dump, and/or can generate additional nodes.  The second
+  // phase is identification, where every time a node ID is required,
+  // we call identify; the first such call for each node runs its
+  // identification dump.  The third phase is detail dumping, which
+  // potentially dumps more besides than the one-line summary that
+  // comes out of the identity phase.  The last two phases are
+  // necessary because of the potential for circular references.
+  // Cycles must inherently be broken by first defining nodes and then
+  // defining edges between them, such as (in this case)
+  // initialization dependencies.  The detail phase is where the
+  // edges appear, after the identify phase which assigns id
+  // numbers to nodes.
   GrowableArray<TrainingData*> tda;
   int prev_len = -1, len = 0;
   while (prev_len != len) {
     assert(prev_len < len, "must not shrink the worklist");
     prev_len = len; len = tda.length();
     for (int i = 0; i < len; i++) {
-      tda.at(i)->prepare_to_dump(tdd);
+      auto td = tda.at(i);
+      if (td->do_not_dump())  continue;
+      td->dump(tdd, DP_prepare);
     }
     tda.clear();
     // Since prepare_to_dump might have entered new items into the
@@ -487,13 +532,165 @@ void TrainingData::store_results() {
   xmlStream out(&file);
   tdd.set_out(&out);
   for (int i = 0; i < tda.length(); i++) {
-    tda.at(i)->dump(tdd, DP_prepare);
-  }
-  for (int i = 0; i < tda.length(); i++) {
-    tdd.identify(tda.at(i));
-    tda.at(i)->dump(tdd, DP_detail);
+    auto td = tda.at(i);
+    if (td->do_not_dump())  continue;
+    tdd.identify(td);
+    td->dump(tdd, DP_detail);
   }
   tdd.close();
+}
+
+static bool str_starts(const char* str, const char* start) {
+  return !strncmp(str, start, strlen(start));
+}
+ 
+static bool str_scan(const char* str, const char* fmt, ...)
+  ATTRIBUTE_SCANF(2, 3);
+static bool str_scan(const char* str, const char* fmt, ...) {
+  bool res = false;
+  va_list args;
+  va_start(args, fmt);
+  const char* pct = strchr(fmt, '%');
+  assert(pct != nullptr, "");
+  size_t pfxlen = pct - fmt;  // length of prefix before %
+  const char* sp = str;
+  while ((sp = strchr(sp, fmt[0])) != nullptr) {
+    if (!strncmp(sp, fmt, pfxlen)) {
+      sp += pfxlen;
+      fmt += pfxlen;
+      break;
+    }
+    ++sp;
+  }
+  if (sp != nullptr) {
+    if (str_starts(fmt, "%p%n")) {
+      const char* endq = fmt + strlen("%p%n");
+      const char* ep = *endq ? strstr(sp, endq) : sp + strlen(sp);
+      if (ep != nullptr) {
+        *va_arg(args, const char**) = sp;
+        *va_arg(args, int*) = (int)(ep - sp);
+        res = true;
+      }
+    } else {
+      res = (vsscanf(sp, fmt, args) > 0);
+    }
+  }
+  va_end(args);
+  return res;
+}
+
+void TrainingData::load_profiles() {
+  if (!ReplayTraining)  return;
+  const char* file_name = TrainingFile;
+  if (file_name == nullptr)  file_name = "hs_training.log";
+  fileStream file(file_name, "r");
+  if (!file.is_open()) {
+    warning("Training data not found: cannot open file %s", file_name);
+    return;
+  }
+  // FIXME: add a line-oriented stream API for reading config files
+  const size_t buflen = 4096;
+  char buffer[buflen];
+  GrowableArrayCHeap<TrainingData*, mtCompiler> id2td;
+  #define ID2TD(id) (id >= 0 && id < id2td.length() ? id2td.at(id) : nullptr)
+  char* line;
+  while ((line = file.readln(buffer, buflen)) != nullptr) {
+    if (line == nullptr)  break;
+    typedef char* cstr;
+    cstr name, sig, lname;
+    int nlen, slen, lnlen;
+    int kid, mid, cid, tid, level;
+    if (line == nullptr)  break;
+    if (str_starts(line, "<training_data>") ||
+        str_starts(line, "</training_data>")) {
+      continue;
+    } else if (str_starts(line, "<klass ")) {
+      // <klass id='10' name='Foo' loader_name='bar'/>
+      if (!str_scan(line, " id='%d'", &kid) ||
+          !str_scan(line, " name='%p%n'", &name, &nlen)) {
+        break;
+      }
+      if (!str_scan(line, " loader_name='%p%n'", &lname, &lnlen)) {
+        lname = nullptr;
+      }
+      name[nlen] = '\0';
+      if (lname != nullptr) {
+        lname[lnlen] = '\0';
+        const char* qapos = "&apos;";  //FIXME: do proper unescaping
+        if (str_starts(lname, qapos)) {
+          lname += strlen(qapos);
+          *--lname = '\'';
+        }
+        for (char* sp; (sp = strstr(lname, qapos)); ) {
+          *sp++ = '\'';
+          strcpy(sp, sp + strlen(qapos) - 1);
+        }
+      }
+      auto tdata = KlassTrainingData::make(name, lname);
+      while (id2td.length() <= kid)  id2td.append(nullptr);
+      id2td.at_put(kid, tdata);
+    } else if (str_starts(line, "<method ")) {
+      // <method id='14' klass='13' name='m' signature='()V' level='3'/>
+      if (!str_scan(line, " id='%d'", &mid) ||
+          !str_scan(line, " klass='%d'", &kid) ||
+          !str_scan(line, " name='%p%n'", &name, &nlen) ||
+          !str_scan(line, " signature='%p%n'", &sig, &slen)) {
+        break;
+      }
+      auto kdata = ID2TD(kid);
+      if (kdata == nullptr || !kdata->is_KlassTrainingData())  break;
+      name[nlen] = '\0';
+      if (!strcmp(name, "&lt;init&gt;")) {
+        name = (char*) "<init>";  //FIXME: do proper unescaping
+      }
+      sig[slen] = '\0';
+      auto tdata = MethodTrainingData::make(kdata->as_KlassTrainingData(),
+                                            name, sig);
+      while (id2td.length() <= mid)  id2td.append(nullptr);
+      id2td.at_put(mid, tdata);
+    } else if (str_starts(line, "<compile ")) {
+      // <compile compile_id='1283' level='3' method='1005'/>
+      if (!str_scan(line, " compile_id='%d'", &cid) ||
+          !str_scan(line, " method='%d'", &mid) ||
+          !str_scan(line, " level='%d'", &level)) {
+        break;
+      }
+      if (!str_scan(line, " method='%d'", &tid))  tid = mid;
+      auto md = ID2TD(mid);
+      auto td = ID2TD(tid);
+      if (md == nullptr || td == nullptr)  break;
+      CompileTrainingData::make(md->as_MethodTrainingData(),
+                                td->as_MethodTrainingData(),
+                                level, cid);
+    } else if (str_starts(line, "<klass_deps ") ||
+               str_starts(line, "<compile_deps ")) {
+      // <klass_deps klass='1040' ids='1040'/>
+      // <compile_deps compile_id='1040' ids='1040'/>
+      char* ids; int ilen;
+      if (!str_scan(line, " ids='%p%n'", &ids, &ilen))  break;
+      kid = cid = -1;
+      if (strstr(line, "<klass_deps "))
+        str_scan(line, " klass='%d'", &kid);
+      else
+        str_scan(line, " compile_id='%d'", &cid);
+      if (kid < 0 && cid < 0)  break;
+      ids[ilen] = '\0';
+      for (int dep; *ids; ) {
+        char* tail;
+        dep = strtol(ids, &tail, 10);
+        if (tail == ids)  break;
+        ids = tail;
+        auto dd = ID2TD(dep);
+        if (dd == nullptr)  break;
+      }
+      // FIXME: finish collecting
+    } else {
+      break;
+    }
+  }
+  if (line != nullptr) {
+    warning("unrecognized training line: %s", line);
+  }
 }
 
 using FieldData = KlassTrainingData::FieldData;
@@ -508,6 +705,16 @@ KlassTrainingData* KlassTrainingData::make(Symbol* name, Symbol* loader_name) {
     tdata = training_data_set()->install(tdata)->as_KlassTrainingData();
   }
   return tdata;
+}
+
+KlassTrainingData* KlassTrainingData::make(const char* name, const char* loader_name) {
+  TempNewSymbol n = SymbolTable::new_symbol(name);
+  if (loader_name == nullptr) {
+    return make(n, nullptr);
+  } else {
+    TempNewSymbol l = SymbolTable::new_symbol(loader_name);
+    return make(n, l);
+  }
 }
 
 KlassTrainingData* KlassTrainingData::make(InstanceKlass* holder) {
