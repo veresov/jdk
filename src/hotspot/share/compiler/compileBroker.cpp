@@ -342,10 +342,11 @@ void CompileQueue::add(CompileTask* task) {
     task->log_task_queued();
   }
 
-  if (RecordTraining) {
+  if (TrainingData::need_data()) {
     CompileTrainingData* tdata = CompileTrainingData::make(task);
     if (tdata != nullptr) {
       tdata->record_compilation_queued(task);
+      task->set_training_data(tdata);
     }
   }
 
@@ -2151,7 +2152,8 @@ void CompileBroker::invoke_compiler_on_method(CompileTask* task) {
   bool should_break = false;
   const int task_level = task->comp_level();
   AbstractCompiler* comp = task->compiler();
-  CompileTrainingData* tdata = task->training_data();  //only if RecordTraining
+  CompileTrainingData* tdata = task->training_data();
+  assert(tdata == nullptr || TrainingData::need_data(), "");
   {
     // create the handle inside it's own block so it can't
     // accidentally be referenced once the thread transitions to

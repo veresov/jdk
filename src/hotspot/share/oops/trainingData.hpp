@@ -50,34 +50,37 @@ class TrainingDataSetLocker;
 class TrainingData : public CHeapObj<mtCompiler> {
   friend KlassTrainingData;
   friend MethodTrainingData;
+  friend CompileTrainingData;
 
  public:
   class Key {
-    SymbolHandle _klass_name;   // from Klass::name
-    SymbolHandle _loader_name;  // from Klass::class_loader_name_and_id
-    SymbolHandle _method_name;  // from Method::name, or null
-    SymbolHandle _signature;    // from Method::signature, or null
+    SymbolHandle  const _name1;   // Klass::name or Method::name
+    SymbolHandle  const _name2;   // class_loader_name_and_id or signature
+    const TrainingData* const _holder; // TD for containing klass or method
 
     // These guys can get to my constructors:
     friend TrainingData;
     friend KlassTrainingData;
     friend MethodTrainingData;
+    friend CompileTrainingData;
 
-    Key(Symbol* klass_name, Symbol* loader_name,
-        Symbol* method_name, Symbol* signature) {
+    // The empty key
+    Key() : Key(nullptr, nullptr) { }
+    bool is_empty() const {
+      return _name1 == nullptr && _name2 == nullptr && _holder == nullptr;
+    }
+
+    Key(Symbol* name1, Symbol* name2,
+        const TrainingData* holder = nullptr)
+      : _name1(name1), _name2(name2), _holder(holder)
       // Since we are using SymbolHandles here, the reference counts
       // are incremented here, in this constructor.  We assume that
       // the symbols are already kept alive by some other means, but
       // after this point the Key object keeps them alive as well.
-      _klass_name   = klass_name;
-      _loader_name  = loader_name;
-      _method_name  = method_name;
-      _signature    = signature;
-    }
+    { }
     Key(const KlassTrainingData* klass,
         Symbol* method_name, Symbol* signature);
-    Key(const InstanceKlass* klass,
-        Symbol* method_name = nullptr, Symbol* signature = nullptr);
+    Key(const InstanceKlass* klass);
     Key(const methodHandle& method);
 
   public:
@@ -86,42 +89,38 @@ class TrainingData : public CHeapObj<mtCompiler> {
       // like this where it is very unlikely that any one string might
       // appear in two positions, and even less likely that two
       // strings might trade places in two otherwise equal keys.
-      return (Symbol::identity_hash(k->klass_name()) +
-              Symbol::identity_hash(k->loader_name()) +
-              Symbol::identity_hash(k->method_name()) +
-              Symbol::identity_hash(k->signature()));
+      return (Symbol::identity_hash(k->name1()) +
+              Symbol::identity_hash(k->name2()) +
+              (k->holder() == nullptr ? 0 : hash(k->holder()->key())));
     }
     static bool equals(const Key* const& k1, const Key* const& k2) {
       // We assume that all Symbols come for SymbolTable and therefore are unique.
       // Hence pointer comparison is enough to prove equality.
-      return (k1->klass_name()  == k2->klass_name() &&
-              k1->loader_name() == k2->loader_name() &&
-              k1->method_name() == k2->method_name() &&
-              k1->signature()   == k2->signature());
+      return (k1->name1()   == k2->name1() &&
+              k1->name2()   == k2->name2() &&
+              k1->holder()  == k2->holder());
     }
     int cmp(const Key* that) const {
-      Symbol* k1 = nullptr;
-      Symbol* k2 = nullptr;
-      for (;;) {
-        #define CHECK_COMPONENT(name)   \
-          if ((k1 = this->name()) != (k2 = that->name()))  break;
-        CHECK_COMPONENT(klass_name);
-        CHECK_COMPONENT(loader_name);
-        CHECK_COMPONENT(method_name);
-        CHECK_COMPONENT(signature);
-        #undef CHECK_COMPONENT
-        return 0; // no pair of differing components
+      auto h1 = this->holder();
+      auto h2 = that->holder();
+      #define NULL_CHECKS(x1, x2, cmpx1x2)                      \
+        ((x1) == nullptr ? -1 : (x2) == nullptr ? +1 : cmpx1x2)
+      if (h1 != h2) {
+        return NULL_CHECKS(h1, h2, h1->key()->cmp(h2->key()));
       }
-      // found the first pair of differing components
-      return ((k1 == k2) ? 0 :
-              k1 == nullptr ? -1 :
-              k2 == nullptr ? +1 :
-              k1->cmp(k2));
+      Symbol* k1; Symbol* k2;
+      #define CHECK_COMPONENT(name)                             \
+        if ((k1 = this->name()) != (k2 = that->name()))         \
+          return NULL_CHECKS(k1, k2, k1->cmp(k2))
+      CHECK_COMPONENT(name1);
+      CHECK_COMPONENT(name2);
+      #undef CHECK_COMPONENT
+      #undef NULL_CHECKS
+      return 0; // no pair of differing components
     }
-    Symbol* klass_name() const        { return _klass_name; }
-    Symbol* loader_name() const       { return _loader_name; }
-    Symbol* method_name() const       { return _method_name; }
-    Symbol* signature() const         { return _signature;  }
+    Symbol* name1() const       { return _name1; }
+    Symbol* name2() const       { return _name2; }
+    const TrainingData* holder() const { return _holder; }
   };
 
   class TrainingDataSet {
@@ -172,6 +171,7 @@ class TrainingData : public CHeapObj<mtCompiler> {
     TrainingData* install(TrainingData* tdata) {
       assert(safely_locked(), "use under TrainingDataSetLocker");
       auto key = tdata->key();
+      if (key->is_empty())   return tdata;  // unkeyed TD not installed
       bool created = false;
       auto prior = _table.put_if_absent(key, tdata, &created);
       if (prior == nullptr || *prior == tdata) {
@@ -208,6 +208,8 @@ private:
 public:
   virtual ~TrainingData() = default;
 
+  // Returns the key under which this TD is installed, or else
+  // Key::EMPTY if it is not installed.
   const Key* key() const { return &_key; }
 
   bool do_not_dump() const { return _do_not_dump; }
@@ -218,12 +220,16 @@ public:
 
   static TrainingDataSet* training_data_set() { return &_training_data_set; }
 
-  virtual MethodTrainingData* as_MethodTrainingData() const { return nullptr; }
-  virtual KlassTrainingData*  as_KlassTrainingData()  const { return nullptr; }
-  bool is_MethodTrainingData() const { return as_MethodTrainingData() != nullptr; }
-  bool is_KlassTrainingData()  const { return as_KlassTrainingData()  != nullptr; }
+  virtual MethodTrainingData*   as_MethodTrainingData()  const { return nullptr; }
+  virtual KlassTrainingData*    as_KlassTrainingData()   const { return nullptr; }
+  virtual CompileTrainingData*  as_CompileTrainingData() const { return nullptr; }
+  bool is_MethodTrainingData()  const { return as_MethodTrainingData() != nullptr; }
+  bool is_KlassTrainingData()   const { return as_KlassTrainingData()  != nullptr; }
+  bool is_CompileTrainingData() const { return as_CompileTrainingData()  != nullptr; }
 
   virtual int cmp(const TrainingData* that) const = 0;
+
+  virtual void print_on(outputStream* st, bool name_only = false) const = 0;
 
   enum DumpPhase {
     DP_prepare,   // no output, set final structure
@@ -343,7 +349,7 @@ class KlassTrainingData : public TrainingData {
   }
 
   KlassTrainingData(Symbol* klass_name, Symbol* loader_name)
-    : TrainingData(klass_name, loader_name, nullptr, nullptr)
+    : TrainingData(klass_name, loader_name)
   {
     init();
   }
@@ -369,8 +375,8 @@ class KlassTrainingData : public TrainingData {
   bool record_static_field_init(FieldData* fdata, const char* reason);
 
  public:
-  Symbol* name()                const { return _key.klass_name(); }
-  Symbol* loader_name()         const { return _key.loader_name(); }
+  Symbol* name()                const { return _key.name1(); }
+  Symbol* loader_name()         const { return _key.name2(); }
   bool    has_holder()          const { return _holder != nullptr; }
   InstanceKlass* holder()       const { return _holder; }
 
@@ -459,6 +465,8 @@ class KlassTrainingData : public TrainingData {
   // safe to call this inside the initializing thread.
   bool record_static_field_init(fieldDescriptor* fd, const char* reason);
 
+  virtual void print_on(outputStream* st, bool name_only = false) const;
+
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
 };
 
@@ -500,8 +508,8 @@ class MethodTrainingData : public TrainingData {
   KlassTrainingData* klass()  const { return _klass; }
   bool has_holder()           const { return _holder != nullptr; }
   const Method* holder()      const { return _holder; }
-  Symbol* name()              const { return _key.method_name(); }
-  Symbol* signature()         const { return _key.signature(); }
+  Symbol* name()              const { return _key.name1(); }
+  Symbol* signature()         const { return _key.name2(); }
   bool only_inlined()         const { return !_was_toplevel; }
   bool never_inlined()        const { return !_was_inlined; }
   bool saw_level(CompLevel l) const { return (_level_mask & level_mask(l)) != 0; }
@@ -532,20 +540,20 @@ class MethodTrainingData : public TrainingData {
 
   virtual MethodTrainingData* as_MethodTrainingData() const { return const_cast<MethodTrainingData*>(this); };
 
+  virtual void print_on(outputStream* st, bool name_only = false) const;
+
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
 };
 
 // Information about particular JIT tasks.
-//FIXME: should be class CompileTrainingData : public Metadata
-class CompileTrainingData : public CHeapObj<mtCompiler> {
+class CompileTrainingData : public TrainingData {
   MethodTrainingData* _method;  // inlined method, or same as top method
   MethodTrainingData* _top_method;
   CompileTrainingData* _next;   // singly linked list, latest first
-  short _level;
-  int _compile_id;
+  const short _level;
+  const int _compile_id;
   int _nm_total_size;
   float _qtime, _stime, _etime;   // time queued, started, ended
-  bool _do_not_dump;
 
   // classes that should be initialized before this JIT task runs
   TrainingData::DepList<KlassTrainingData*> _init_deps;
@@ -555,15 +563,14 @@ class CompileTrainingData : public CHeapObj<mtCompiler> {
   CompileTrainingData(MethodTrainingData* method,
                       MethodTrainingData* top_method,
                       int level,
-                      int compile_id) {
-    _method = method;
-    _top_method = top_method;
-    _level = level;
-    _compile_id = compile_id;
+                      int compile_id)
+    : TrainingData(),  // empty key
+      _method(method), _top_method(top_method),
+      _level(level), _compile_id(compile_id)
+  {
     _next = nullptr;
     _qtime = _stime = _etime = 0;
     _nm_total_size = 0;
-    _do_not_dump = false;
   }
 
  public:
@@ -579,6 +586,9 @@ class CompileTrainingData : public CHeapObj<mtCompiler> {
                                    int level, int compile_id) {
     return make(method, method, level, compile_id);
   }
+
+  virtual CompileTrainingData* as_CompileTrainingData() const { return const_cast<CompileTrainingData*>(this); };
+
   MethodTrainingData* method()      const { return _method; }
   MethodTrainingData* top_method()  const { return _top_method; }
   bool                is_inlined()  const { return _method != _top_method; }
@@ -586,13 +596,9 @@ class CompileTrainingData : public CHeapObj<mtCompiler> {
   CompileTrainingData* next() const { return _next; }
 
   int level() const { return _level; }
-  void set_level(int level) { _level = level; }
+  //void set_level(int level) { _level = level; }
 
   int compile_id() const { return _compile_id; }
-  void set_compile_id(int id) { _compile_id = id; }
-
-  bool do_not_dump() const { return _do_not_dump; }
-  void set_do_not_dump(bool z) { _do_not_dump = z; }
 
   int init_dep_count() const { return _init_deps.length(); }
   KlassTrainingData* init_dep(int i) const { return _init_deps.at(i); }
@@ -606,6 +612,12 @@ class CompileTrainingData : public CHeapObj<mtCompiler> {
   // The JIT looks at classes and objects too and can depend on their state.
   // These simple calls just report the *possibility* of an observation.
   void notice_jit_observation(ciEnv* env, ciBaseObject* what);
+
+  virtual int cmp(const TrainingData* that) const;
+
+  virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
+
+  virtual void print_on(outputStream* st, bool name_only = false) const;
 };
 
 inline int MethodTrainingData::last_compile_id() const {

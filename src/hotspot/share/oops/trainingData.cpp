@@ -60,20 +60,20 @@ void TrainingData::initialize() {
 
 TrainingData::Key::Key(const KlassTrainingData* klass,
                        Symbol* method_name, Symbol* signature)
-  : Key(klass->name(), klass->loader_name(),
-        method_name, signature) {
+  : Key(method_name, signature, klass) {
 }
 
-TrainingData::Key::Key(const InstanceKlass* klass,
-                       Symbol* method_name, Symbol* signature)
-  : Key(klass->name(), klass->class_loader_name_and_id(),
-        method_name, signature) {
-  // often the loader is either null or the string "'app'" (w/ extra quotes)
+TrainingData::Key::Key(const InstanceKlass* klass)
+  : Key(klass->name(),
+        klass->class_loader_name_and_id()) {
+  // Often the loader is either null or the string "'app'" (w/ extra quotes).
+  // It can also be "'platform'".
 }
 
 TrainingData::Key::Key(const methodHandle& method)
-  : Key(method->method_holder(),
-        method->name(), method->signature()) {
+  : Key(method->name(), method->signature(),
+        KlassTrainingData::make(method->method_holder()))
+{
 }
 
 MethodTrainingData* MethodTrainingData::make(KlassTrainingData* klass,
@@ -136,6 +136,18 @@ MethodTrainingData* MethodTrainingData::make(const methodHandle& method,
   }
 
   return mtd;
+}
+
+void MethodTrainingData::print_on(outputStream* st, bool name_only) const {
+  _klass->print_on(st, true);
+  st->print(".");
+  name()->print_symbol_on(st);
+  signature()->print_symbol_on(st);
+  if (name_only)  return;
+  if (!has_holder())  st->print("[SYM]");
+  if (_do_not_dump)  st->print("[DND]");
+  if (_level_mask)  st->print(" LM%d", _level_mask);
+  st->cr();
 }
 
 void MethodTrainingData::refresh_from(const Method* method) {
@@ -202,6 +214,27 @@ CompileTrainingData* CompileTrainingData::make(MethodTrainingData* this_method,
   return tdata;
 }
 
+void CompileTrainingData::print_on(outputStream* st, bool name_only) const {
+  _method->print_on(st, true);
+  if (is_inlined()) {
+    st->print("/");
+    _top_method->print_on(st, true);
+  }
+  st->print("#%dL%d", _compile_id, _level);
+  if (name_only)  return;
+  if (_do_not_dump)  st->print("[DND]");
+  #define MAYBE_TIME(Q, _qtime) \
+    if (_qtime != 0)  st->print(" " #Q "%.3f", _qtime)
+  MAYBE_TIME(Q, _qtime);
+  MAYBE_TIME(S, _stime);
+  MAYBE_TIME(E, _etime);
+  for (int i = 0, len = _init_deps.length(); i < len; i++) {
+    st->print(" dep:");
+    _init_deps.at(i)->print_on(st, true);
+  }
+  st->cr();
+}
+
 void CompileTrainingData::record_compilation_queued(CompileTask* task) {
   _qtime = tty->time_stamp().seconds();
 }
@@ -236,14 +269,15 @@ void CompileTrainingData::notice_jit_observation(ciEnv* env, ciBaseObject* what)
     if (md->is_instance_klass()) {
       InstanceKlass* ik = md->as_instance_klass()->get_instanceKlass();
       KlassTrainingData* ktd = ik->training_data_or_null();
-      if (ktd == nullptr)  return;
-      ktd->record_touch_common(env->log(), "jit", task,
-                               compiling_klass, nullptr,
-                               method->name(), method->signature(),
-                               nullptr);
-      // This JIT task is (probably) requesting that ik be initialized,
-      // so add him to my _init_deps list.
-      _init_deps.append_if_missing(ktd);
+      if (ktd != nullptr) {
+        ktd->record_touch_common(env->log(), "jit", task,
+                                 compiling_klass, nullptr,
+                                 method->name(), method->signature(),
+                                 nullptr);
+        // This JIT task is (probably) requesting that ik be initialized,
+        // so add him to my _init_deps list.
+        _init_deps.append_if_missing(ktd);
+      }
     }
   }
 }
@@ -254,8 +288,28 @@ static int cmp_zeroes_to_end(int id1, int id2) {
   return (id1 == 0 || id2 == 0) ? -cmp : cmp;
 }
 
+int CompileTrainingData::cmp(const TrainingData* tdata) const {
+  if (this == tdata)  return 0;
+  if (tdata->is_CompileTrainingData()) {
+    const CompileTrainingData* that = tdata->as_CompileTrainingData();
+    if (this->method() == that->method()) {  // (or top_method?)
+      int cmp = cmp_zeroes_to_end(this->level(),
+                                  that->level());
+      if (cmp != 0)  return cmp;
+      cmp = cmp_zeroes_to_end(this->compile_id(),
+                              that->compile_id());
+      return cmp != 0 ? cmp : this->key()->cmp(that->key());
+    }
+    tdata = that->method();
+  }
+  return this->method()->cmp(tdata) | 1;
+}
+
 int MethodTrainingData::cmp(const TrainingData* tdata) const {
   if (this == tdata)  return 0;
+  if (tdata->is_CompileTrainingData()) {
+    return this->cmp(tdata->as_CompileTrainingData()->method()) | 1;
+  }
   if (tdata->is_MethodTrainingData()) {
     const MethodTrainingData* that = tdata->as_MethodTrainingData();
     if (this->klass() == that->klass()) {
@@ -265,7 +319,7 @@ int MethodTrainingData::cmp(const TrainingData* tdata) const {
     }
     tdata = that->klass();
   }
-  return this->klass()->cmp(tdata);
+  return this->klass()->cmp(tdata) | 1;
 }
 
 int KlassTrainingData::cmp(const TrainingData* tdata) const {
@@ -276,13 +330,23 @@ int KlassTrainingData::cmp(const TrainingData* tdata) const {
                                 that->clinit_sequence_index_or_zero());
     return cmp != 0 ? cmp : this->key()->cmp(that->key());
   }
+  if (tdata->is_CompileTrainingData()) {
+    tdata = tdata->as_CompileTrainingData()->method();
+  }
   assert(tdata->is_MethodTrainingData(), "");
-  return 0 - tdata->cmp(this);
+  return (0 - tdata->cmp(this)) | 1;
 }
 
+// State machine for dumping.  There are three phases for each node:
+// prepare, identify, detail.  All nodes prepare before any of the
+// other phases execute.  A node can recursively prepare another node
+// to ensure it is in the output set.  A node outputs its identify the
+// first time identify is called on it.  Later on it outputs its
+// details.
 class TrainingDataDumper {
   xmlStream* _out;
-  GrowableArray<const TrainingData*> _index;
+  GrowableArray<TrainingData*> _index;
+  GrowableArray<TrainingData*> _nodes;
 
  public:
   TrainingDataDumper() {
@@ -312,18 +376,58 @@ class TrainingDataDumper {
   // Yes, this is quadratic.  No, we don't care about that at the
   // end of a training run.  When deserializing, the corresponding
   // operation uses a similar temporary GrowableArray but is O(1).
-  int id_of(const TrainingData* tdata) {
+  int id_of(TrainingData* tdata) {
     return _index.find(tdata);
+  }
+
+  TrainingData* node_at(int i) {
+    assert(_out == nullptr, "");
+    return _index.at(i);
+  }
+
+  int node_count() {
+    assert(_out == nullptr, "");
+    return _index.length();
+  }
+
+  GrowableArray<TrainingData*> &hand_off_node_list() {
+    assert(_out == nullptr, "");
+    _nodes.swap(&_index);
+    _index.clear();  // for reassigning id numbers in the future
+    return _nodes;
+  }
+
+  void prepare(TrainingData* tdata) {
+    assert(_out == nullptr, "");
+    identify_or_prepare(tdata);
   }
 
   // Make sure this guy get line printed with id='%d'.
   int identify(TrainingData* tdata) {
+    assert(_out != nullptr, "");
+    return identify_or_prepare(tdata);
+  }
+
+ private:
+  int identify_or_prepare(TrainingData* tdata) {
+    bool prepare_only = (_out == nullptr);
     if (tdata == nullptr)  return -1;
     int len = _index.length();
     int id = id_of(tdata);
-    if (id >= 0)  return id;  // already assigned
+    if (id >= 0) {  // already assigned
+      return id;
+    }
     id = _index.append(tdata);
-    if (tdata->dump(*this, TrainingData::DP_identify))  return id;
+    if (prepare_only) {
+      // This can cause recursive calls to prepare,
+      // which will add to the index list.
+      tdata->dump(*this, TrainingData::DP_prepare);
+      return 0;
+    }
+    // At this point we are doing real output, so commit to each ID.
+    if (tdata->dump(*this, TrainingData::DP_identify)) {
+      return id;
+    }
     // this tdata refused to identify itself
     if (id == _index.length() - 1) {
       _index.remove_at(id);
@@ -331,29 +435,6 @@ class TrainingDataDumper {
       _index.at_put(id, nullptr);
     }
     return -1;
-  }
-
-  template<typename DAG, typename ELP>
-  int dump_id_list(int depc, DAG dep_at_get, ELP elem_print) {
-    for (int pass = 0; ; pass++) {
-      int idc = 0;
-      for (int i = 0; i < depc; i++) {
-        auto dep = dep_at_get(i);
-        int id = identify(dep);
-        if (id < 0)  continue;
-        if (pass == 1) {
-          if (idc == 0)
-                out()->print("%d", id);
-          else  out()->print(" %d", id);
-        }
-        idc += 1;
-      }
-      if (pass == 1 || idc == 0) {
-        return idc;
-      }
-      // second pass and idc > 0, so we will print something
-      elem_print();
-    }
   }
 };
 
@@ -401,34 +482,37 @@ bool KlassTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
     return true;
   }
   assert(dp == DP_detail, "");
-  int depc = init_dep_count();
-  if (depc > 0) {
-    auto begin = [&]{
-      out->begin_elem("klass_deps klass='%d' ids='", kid);
-    };
-    int idc = tdd.dump_id_list(depc, [&](int i){ return init_dep(i); }, begin);
-    if (idc > 0) {
-      out->print("'");
-      out->end_elem();
-    }
+  for (int i = 0, depc = init_dep_count(); i < depc; i++) {
+    int did = tdd.identify(init_dep(i));
+    out->elem("init_dep klass='%d' dep='%d'", kid, did);
   }
   return true;
 }
 
 bool MethodTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
+  auto kd = klass();
   if (dp == DP_prepare) {
+    tdd.prepare(kd);
     // FIXME: Decide if we should set _do_not_dump on some records.
     if (has_holder()) {
       // FIXME: we might need to clone these two things
       _final_counters = holder()->method_counters();
       _final_profile  = holder()->method_data();
     }
+    if (_compile != nullptr) {
+      // Just prepare the first one, or prepare them all?  This needs
+      // an option, because it's useful to dump them all for analysis,
+      // but it is likely only the first one (= most recent) matters.
+      for (auto cd = _compile; cd != nullptr; cd = cd->next()) {
+        tdd.prepare(cd);
+      }
+    }
     return true;
   }
-  int mid = tdd.id_of(this);
   auto out = tdd.out();
+  int mid = tdd.id_of(this);
   if (dp == DP_identify) {
-    int kid = tdd.identify(this->klass());
+    int kid = tdd.identify(kd);
     out->begin_elem("method id='%d' klass='%d'", mid, kid);
     out->name(this->name());
     out->signature(this->signature());
@@ -439,28 +523,37 @@ bool MethodTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
     return true;
   }
   assert(dp == DP_detail, "");
-  for (auto ctd = _compile; ctd != nullptr; ctd = ctd->next()) {
-    if (ctd->do_not_dump())  continue;
-    int cid = ctd->compile_id();
-    int tid = tdd.identify(ctd->top_method());
-    out->begin_elem("compile compile_id='%d' level='%d' method='%d'",
-                    cid, ctd->level(), mid);
-    if (ctd->is_inlined()) {
+  return true;
+}
+
+bool CompileTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
+  auto md = method();
+  auto td = top_method();
+  if (dp == DP_prepare) {
+    tdd.prepare(md);
+    tdd.prepare(td);
+    return true;
+  }
+  auto out = tdd.out();
+  int cid = tdd.id_of(this);
+  int mid = tdd.identify(md);
+  int tid = tdd.identify(td);
+  if (dp == DP_identify) {
+    out->begin_elem("compile id='%d' compile_id='%d' level='%d' method='%d'",
+                    cid, compile_id(), level(), mid);
+    if (is_inlined()) {
       out->print(" is_inlined='1' top_method='%d'", tid);
     }
-    out->end_elem();
-    int depc = ctd->init_dep_count();
-    if (depc > 0) {
-      auto begin = [&]{
-        out->begin_elem("compile_deps compile_id='%d' ids='", cid);
-      };
-      int idc = tdd.dump_id_list(depc, [&](int i){ return ctd->init_dep(i); },
-                                 begin);
-      if (idc > 0) {
-        out->print("'");
-        out->end_elem();
-      }
+    if (md->_compile == this) {
+      out->print(" last='1'");
     }
+    out->end_elem();
+    return true;
+  }
+  assert(dp == DP_detail, "");
+  for (int i = 0, depc = init_dep_count(); i < depc; i++) {
+    int did = tdd.identify(init_dep(i));
+    out->elem("init_dep compile='%d' dep='%d'", cid, did);
   }
   return true;
 }
@@ -489,26 +582,22 @@ void TrainingData::store_results() {
   // initialization dependencies.  The detail phase is where the
   // edges appear, after the identify phase which assigns id
   // numbers to nodes.
-  GrowableArray<TrainingData*> tda;
   int prev_len = -1, len = 0;
   while (prev_len != len) {
     assert(prev_len < len, "must not shrink the worklist");
-    prev_len = len; len = tda.length();
-    for (int i = 0; i < len; i++) {
-      auto td = tda.at(i);
-      if (td->do_not_dump())  continue;
-      td->dump(tdd, DP_prepare);
-    }
-    tda.clear();
-    // Since prepare_to_dump might have entered new items into the
+    prev_len = len; len = tdd.node_count();
+    // Since dump(DP_prepare) might have entered new items into the
     // global TD table, we need to enumerate again from scratch.
     {
       TrainingDataSetLocker l;
       training_data_set()->iterate_all([&](const Key* k, TrainingData* td) {
-        tda.append(td);
+        if (td->do_not_dump())  return;
+        tdd.prepare(td);
       });
     }
   }
+
+  auto tda = tdd.hand_off_node_list();
   tda.sort(qsort_compare_tdata);
   // Data is ready to dump now.
 
@@ -593,13 +682,17 @@ void TrainingData::load_profiles() {
   char buffer[buflen];
   GrowableArrayCHeap<TrainingData*, mtCompiler> id2td;
   #define ID2TD(id) (id >= 0 && id < id2td.length() ? id2td.at(id) : nullptr)
+  #define ADD_ID2TD(id, tdata) {                                 \
+      while (id2td.length() <= id)  id2td.append(nullptr);       \
+      id2td.at_put(id, tdata);                                   \
+    }
   char* line;
   while ((line = file.readln(buffer, buflen)) != nullptr) {
     if (line == nullptr)  break;
     typedef char* cstr;
     cstr name, sig, lname;
     int nlen, slen, lnlen;
-    int kid, mid, cid, tid, level;
+    int kid, mid, cid, tid, did;
     if (line == nullptr)  break;
     if (str_starts(line, "<training_data>") ||
         str_starts(line, "</training_data>")) {
@@ -627,8 +720,7 @@ void TrainingData::load_profiles() {
         }
       }
       auto tdata = KlassTrainingData::make(name, lname);
-      while (id2td.length() <= kid)  id2td.append(nullptr);
-      id2td.at_put(kid, tdata);
+      ADD_ID2TD(kid, tdata);
     } else if (str_starts(line, "<method ")) {
       // <method id='14' klass='13' name='m' signature='()V' level='3'/>
       if (!str_scan(line, " id='%d'", &mid) ||
@@ -646,44 +738,45 @@ void TrainingData::load_profiles() {
       sig[slen] = '\0';
       auto tdata = MethodTrainingData::make(kdata->as_KlassTrainingData(),
                                             name, sig);
-      while (id2td.length() <= mid)  id2td.append(nullptr);
-      id2td.at_put(mid, tdata);
+      ADD_ID2TD(mid, tdata);
     } else if (str_starts(line, "<compile ")) {
-      // <compile compile_id='1283' level='3' method='1005'/>
-      if (!str_scan(line, " compile_id='%d'", &cid) ||
-          !str_scan(line, " method='%d'", &mid) ||
-          !str_scan(line, " level='%d'", &level)) {
+      // <compile id='42' compile_id='1283' level='3' method='1005'/>
+      if (!str_scan(line, " id='%d'", &cid) ||
+          !str_scan(line, " method='%d'", &mid)) {
         break;
       }
-      if (!str_scan(line, " method='%d'", &tid))  tid = mid;
+      if (!str_scan(line, " top_method='%d'", &tid))  tid = mid;
+      int task = 0;
+      str_scan(line, " compile_id='%d'", &task);
+      int level = 0;
+      str_scan(line, " level='%d'", &level);
       auto md = ID2TD(mid);
       auto td = ID2TD(tid);
       if (md == nullptr || td == nullptr)  break;
-      CompileTrainingData::make(md->as_MethodTrainingData(),
-                                td->as_MethodTrainingData(),
-                                level, cid);
-    } else if (str_starts(line, "<klass_deps ") ||
-               str_starts(line, "<compile_deps ")) {
-      // <klass_deps klass='1040' ids='1040'/>
-      // <compile_deps compile_id='1040' ids='1040'/>
-      char* ids; int ilen;
-      if (!str_scan(line, " ids='%p%n'", &ids, &ilen))  break;
+      auto tdata = CompileTrainingData::make(md->as_MethodTrainingData(),
+                                             td->as_MethodTrainingData(),
+                                             level, task);
+      ADD_ID2TD(cid, tdata);
+    } else if (str_starts(line, "<init_dep ")) {
+      // <init_dep klass='1040' dep='14'/>
+      // <init_dep compile='1041' dep='14'/>
       kid = cid = -1;
-      if (strstr(line, "<klass_deps "))
-        str_scan(line, " klass='%d'", &kid);
-      else
-        str_scan(line, " compile_id='%d'", &cid);
-      if (kid < 0 && cid < 0)  break;
-      ids[ilen] = '\0';
-      for (int dep; *ids; ) {
-        char* tail;
-        dep = strtol(ids, &tail, 10);
-        if (tail == ids)  break;
-        ids = tail;
-        auto dd = ID2TD(dep);
-        if (dd == nullptr)  break;
+      if (!str_scan(line, " dep='%d'", &did) ||
+          (!str_scan(line, " klass='%d'", &kid) &&
+           !str_scan(line, " compile='%d'", &cid))) {
+        break;
       }
-      // FIXME: finish collecting
+      auto kd = ID2TD(kid);
+      auto cd = ID2TD(cid);
+      auto dd = ID2TD(did);
+      if ((kd == nullptr && cd == nullptr) || dd == nullptr)  break;
+      if (kd != nullptr) {
+        kd->as_KlassTrainingData()
+          ->add_init_dep(dd->as_KlassTrainingData());
+      } else {
+        cd->as_CompileTrainingData()
+          ->add_init_dep(dd->as_KlassTrainingData());
+      }
     } else {
       break;
     }
@@ -728,6 +821,19 @@ KlassTrainingData* KlassTrainingData::make(InstanceKlass* holder) {
     assert(ok, "CAS under mutex cannot fail");
   }
   return tdata;
+}
+
+void KlassTrainingData::print_on(outputStream* st, bool name_only) const {
+  name()->print_symbol_on(st);
+  if (name_only)  return;
+  if (!has_holder())  st->print("[SYM]");
+  if (_do_not_dump)  st->print("[DND]");
+  if (_clinit_sequence_index)  st->print(" IC%d", _clinit_sequence_index);
+  for (int i = 0, len = _init_deps.length(); i < len; i++) {
+    st->print(" dep:");
+    _init_deps.at(i)->print_on(st, true);
+  }
+  st->cr();
 }
 
 void KlassTrainingData::refresh_from(const InstanceKlass* klass) {
