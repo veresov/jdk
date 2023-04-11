@@ -86,7 +86,7 @@ bool CompilationPolicy::must_be_compiled(const methodHandle& m, int comp_level) 
 
 
 void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
-  if (!m->is_native() && !m->has_compiled_code()) {
+  if (!m->is_native() && !m->has_compiled_code() && MethodTrainingData::have_data()) {
     MethodTrainingData* mtd = MethodTrainingData::find(m);
     if (mtd == nullptr) {
       return;              // there is no training data recorded for m

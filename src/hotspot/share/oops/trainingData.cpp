@@ -22,6 +22,7 @@
  *
  */
 
+#include "precompiled.hpp"
 #include "ci/ciEnv.hpp"
 #include "ci/ciMetadata.hpp"
 #include "ci/ciObject.hpp"
@@ -35,7 +36,6 @@
 #include "oops/method.hpp"
 #include "oops/methodCounters.hpp"
 #include "oops/trainingData.hpp"
-#include "precompiled.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/fieldDescriptor.inline.hpp"
 #include "runtime/javaThread.inline.hpp"
@@ -543,7 +543,7 @@ void TrainingData::store_results() {
 static bool str_starts(const char* str, const char* start) {
   return !strncmp(str, start, strlen(start));
 }
- 
+
 static bool str_scan(const char* str, const char* fmt, ...)
   ATTRIBUTE_SCANF(2, 3);
 static bool str_scan(const char* str, const char* fmt, ...) {
