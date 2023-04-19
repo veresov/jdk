@@ -1211,12 +1211,8 @@ void Method::unlink_method() {
   }
   NOT_PRODUCT(set_compiled_invocation_count(0);)
 
-  if (UseNewCode) {
-    // FIXME: iterate over embedded metadata and clear all external refs
-  } else {
-    set_method_data(nullptr);
-    clear_method_counters();
-  }
+  set_method_data(nullptr);
+  clear_method_counters();
 }
 #endif
 
