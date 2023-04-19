@@ -31,6 +31,7 @@
 #include "classfile/symbolTable.hpp"
 #include "compiler/compileTask.hpp"
 #include "memory/metadataFactory.hpp"
+#include "memory/metaspaceClosure.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/fieldStreams.inline.hpp"
 #include "oops/method.hpp"
@@ -58,33 +59,33 @@ void TrainingData::initialize() {
   }
 }
 
-TrainingData::Key::Key(const KlassTrainingData* klass,
-                       Symbol* method_name, Symbol* signature)
-  : Key(method_name, signature, klass) {
-}
+TrainingData::Key::Key(const KlassTrainingData* klass, Symbol* method_name, Symbol* signature)
+  : Key(method_name, signature, klass) {}
 
 TrainingData::Key::Key(const InstanceKlass* klass)
-  : Key(klass->name(),
-        klass->class_loader_name_and_id()) {
+  : Key(klass->name(), klass->class_loader_name_and_id()) {
   // Often the loader is either null or the string "'app'" (w/ extra quotes).
   // It can also be "'platform'".
 }
 
-TrainingData::Key::Key(const methodHandle& method)
-  : Key(method->name(), method->signature(),
-        KlassTrainingData::make(method->method_holder()))
-{
-}
+TrainingData::Key::Key(const Method* method)
+  : Key(method->name(), method->signature(), KlassTrainingData::make(method->method_holder()))
+{}
 
-MethodTrainingData* MethodTrainingData::make(KlassTrainingData* klass,
-                                             Symbol* name, Symbol* signature) {
-  // FIXME: metadata should be allocated in default CLD
-  MethodTrainingData* tdata = new MethodTrainingData(klass, name, signature);
-  if (tdata != nullptr) {
-    TrainingDataSetLocker l;
-    tdata = training_data_set()->install(tdata)->as_MethodTrainingData();
+MethodTrainingData* MethodTrainingData::make(KlassTrainingData* klass, Symbol* name, Symbol* signature) {
+  TrainingDataSetLocker l;
+  Key mkey(klass, name, signature);
+  TrainingData* td = training_data_set()->find(&mkey);
+  MethodTrainingData* mtd = nullptr;
+  if (td != nullptr) {
+    mtd = td->as_MethodTrainingData();
+  } else {
+    mtd = MethodTrainingData::allocate(klass, name, signature);
+    td = training_data_set()->install(mtd);
+    assert(td == mtd, "");
   }
-  return tdata;
+  assert(mtd != nullptr, "");
+  return mtd;
 }
 
 MethodTrainingData* MethodTrainingData::make(KlassTrainingData* klass,
@@ -109,7 +110,7 @@ MethodTrainingData* MethodTrainingData::make(const methodHandle& method,
 
   // No cached value.  Slow path looks in the central hash table.
   if (null_if_not_found) {
-    Key mkey(method);
+    Key mkey(method());
     TrainingDataSetLocker l;
     auto v = training_data_set()->find(&mkey);
     if (v == nullptr)  return nullptr;
@@ -125,16 +126,19 @@ MethodTrainingData* MethodTrainingData::make(const methodHandle& method,
   }
 
   KlassTrainingData* ktd = KlassTrainingData::make(method->method_holder());
-  // FIXME: metadata should be allocated in CLD of holder
-  mtd = new MethodTrainingData(ktd, method->name(), method()->signature());
   {
+    Key mkey(method());
     TrainingDataSetLocker l;
-    mtd = training_data_set()->install(mtd)->as_MethodTrainingData();
+    auto v = training_data_set()->find(&mkey);
+    if (v == nullptr) {
+      mtd = MethodTrainingData::allocate(ktd, method());
+    } else {
+      mtd = v->as_MethodTrainingData();
+    }
     mtd->refresh_from(method());
     // cache for next time
     method->init_training_data(mtd);  // Cache the pointer for next time.
   }
-
   return mtd;
 }
 
@@ -196,9 +200,7 @@ CompileTrainingData* CompileTrainingData::make(MethodTrainingData* this_method,
     }
   }
 
-  // FIXME: metadata should be allocated in CLD of a method holder
-  auto tdata = new CompileTrainingData(this_method, top_method,
-                                       level, compile_id);
+  auto tdata = CompileTrainingData::allocate(this_method, top_method, level, compile_id);
 
   // Link it into the method, under a lock.
   TrainingDataSetLocker l;
@@ -791,13 +793,19 @@ int KlassTrainingData::_clinit_count;  //number <clinit> events in RecordTrainin
 GrowableArrayCHeap<FieldData, mtCompiler>* KlassTrainingData::_no_static_fields;
 
 KlassTrainingData* KlassTrainingData::make(Symbol* name, Symbol* loader_name) {
-  // FIXME: metadata should be allocated in default CLD
-  KlassTrainingData* tdata = new KlassTrainingData(name, loader_name);
-  if (tdata != nullptr) {
-    TrainingDataSetLocker l;
-    tdata = training_data_set()->install(tdata)->as_KlassTrainingData();
+  TrainingDataSetLocker l;
+  Key kkey(name, loader_name);
+  TrainingData* td = training_data_set()->find(&kkey);
+  KlassTrainingData* ktd = nullptr;
+  if (td == nullptr) {
+    ktd = KlassTrainingData::allocate(name, loader_name);
+    td = training_data_set()->install(ktd);
+    assert(ktd == td, "");
+  } else {
+    ktd = td->as_KlassTrainingData();
   }
-  return tdata;
+  assert(ktd != nullptr, "");
+  return ktd;
 }
 
 KlassTrainingData* KlassTrainingData::make(const char* name, const char* loader_name) {
@@ -811,16 +819,22 @@ KlassTrainingData* KlassTrainingData::make(const char* name, const char* loader_
 }
 
 KlassTrainingData* KlassTrainingData::make(InstanceKlass* holder) {
-  // FIXME: metadata should be allocated in CLD of holder
-  KlassTrainingData* tdata = new KlassTrainingData(holder);
-  if (tdata != nullptr) {
-    TrainingDataSetLocker l;
-    tdata = training_data_set()->install(tdata)->as_KlassTrainingData();
-    tdata->refresh_from(holder);
-    bool ok = holder->init_training_data(tdata);
-    assert(ok, "CAS under mutex cannot fail");
+  TrainingDataSetLocker l;
+  Key kkey(holder);
+  TrainingData* td = training_data_set()->find(&kkey);
+  KlassTrainingData* ktd = nullptr;
+  if (td == nullptr) {
+    ktd = KlassTrainingData::allocate(holder);
+    td = training_data_set()->install(ktd);
+    assert(ktd == td, "");
+  } else {
+    ktd = td->as_KlassTrainingData();
   }
-  return tdata;
+  assert(ktd != nullptr, "");
+  ktd->refresh_from(holder);
+  bool ok = holder->init_training_data(ktd);
+  assert(ok, "CAS under mutex cannot fail");
+  return ktd;
 }
 
 void KlassTrainingData::print_on(outputStream* st, bool name_only) const {
@@ -1196,4 +1210,96 @@ void KlassTrainingData::log_initialization(bool is_start) {
     xtty->stamp();
     xtty->end_elem();
   }
+}
+
+// CDS support
+
+void TrainingData::Key::iterate_metaspace_pointers(MetaspaceClosure *iter) {
+  iter->push(&_name1);
+  iter->push(&_name2);
+}
+
+void TrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
+  _key.iterate_metaspace_pointers(iter);
+}
+
+void KlassTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
+  log_trace(cds)("Iter(KlassTrainingData): %p", this);
+  TrainingData::metaspace_pointers_do(iter);
+  iter->push(&_holder);
+}
+
+void MethodTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
+  log_trace(cds)("Iter(MethodTrainingData): %p", this);
+  TrainingData::metaspace_pointers_do(iter);
+  iter->push(&_klass);
+  iter->push((Method**) &(_holder));
+  iter->push(&_compile);
+}
+
+void CompileTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
+  log_trace(cds)("Iter(CompileTrainingData): %p", this);
+  TrainingData::metaspace_pointers_do(iter);
+  iter->push(&_method);
+  iter->push(&_top_method);
+  iter->push(&_next);
+}
+
+KlassTrainingData* KlassTrainingData::allocate(InstanceKlass* holder) {
+  JavaThread* THREAD = JavaThread::current();
+//  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
+
+  int size = align_metadata_size(align_up(sizeof(KlassTrainingData), BytesPerWord) / BytesPerWord);
+
+  ClassLoaderData* loader_data = holder->class_loader_data();
+  return new (loader_data, size, MetaspaceObj::KlassTrainingDataType, THREAD)
+      KlassTrainingData(holder);
+}
+
+KlassTrainingData* KlassTrainingData::allocate(Symbol* name, Symbol* loader_name) {
+  JavaThread* THREAD = JavaThread::current();
+//  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
+
+  int size = align_metadata_size(align_up(sizeof(KlassTrainingData), BytesPerWord) / BytesPerWord);
+
+  assert(SystemDictionary::java_system_loader() != nullptr, "");
+  ClassLoaderData* loader_data = java_lang_ClassLoader::loader_data(SystemDictionary::java_system_loader()); // default CLD
+  return new (loader_data, size, MetaspaceObj::KlassTrainingDataType, THREAD)
+      KlassTrainingData(name, loader_name);
+}
+
+MethodTrainingData* MethodTrainingData::allocate(KlassTrainingData* ktd, Symbol* name, Symbol* signature) {
+  JavaThread* THREAD = JavaThread::current();
+//  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
+
+  int size = align_metadata_size(align_up(sizeof(MethodTrainingData), BytesPerWord) / BytesPerWord);
+
+  assert(SystemDictionary::java_system_loader() != nullptr, "");
+  ClassLoaderData* loader_data = java_lang_ClassLoader::loader_data(SystemDictionary::java_system_loader()); // default CLD
+  return new (loader_data, size, MetaspaceObj::KlassTrainingDataType, THREAD)
+      MethodTrainingData(ktd, name, signature);
+}
+
+MethodTrainingData* MethodTrainingData::allocate(KlassTrainingData* ktd, Method* m) {
+  JavaThread* THREAD = JavaThread::current();
+//  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
+
+  int size = align_metadata_size(align_up(sizeof(MethodTrainingData), BytesPerWord) / BytesPerWord);
+
+  ClassLoaderData* loader_data = m->method_holder()->class_loader_data();
+  return new (loader_data, size, MetaspaceObj::KlassTrainingDataType, THREAD)
+      MethodTrainingData(ktd, m->name(), m->signature());
+}
+
+CompileTrainingData* CompileTrainingData::allocate(MethodTrainingData* this_method,
+                                                   MethodTrainingData* top_method,
+                                                   int level,
+                                                   int compile_id) {
+  JavaThread* THREAD = JavaThread::current();
+//  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
+  int size = align_metadata_size(align_up(sizeof(CompileTrainingData), BytesPerWord) / BytesPerWord);
+
+  ClassLoaderData* loader_data = this_method->klass()->class_loader_data();
+  return new (loader_data, size, MetaspaceObj::KlassTrainingDataType, THREAD)
+      CompileTrainingData(this_method, top_method, level, compile_id);
 }

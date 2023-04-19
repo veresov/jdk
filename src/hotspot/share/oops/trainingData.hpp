@@ -46,16 +46,15 @@ class MethodTrainingData;
 class TrainingDataDumper;
 class TrainingDataSetLocker;
 
-//FIXME: should be class TrainingData : public Metadata
-class TrainingData : public CHeapObj<mtCompiler> {
+class TrainingData : public Metadata {
   friend KlassTrainingData;
   friend MethodTrainingData;
   friend CompileTrainingData;
 
  public:
   class Key {
-    SymbolHandle  const _name1;   // Klass::name or Method::name
-    SymbolHandle  const _name2;   // class_loader_name_and_id or signature
+    Symbol* _name1;   // Klass::name or Method::name
+    Symbol* _name2;   // class_loader_name_and_id or signature
     const TrainingData* const _holder; // TD for containing klass or method
 
     // These guys can get to my constructors:
@@ -78,10 +77,9 @@ class TrainingData : public CHeapObj<mtCompiler> {
       // the symbols are already kept alive by some other means, but
       // after this point the Key object keeps them alive as well.
     { }
-    Key(const KlassTrainingData* klass,
-        Symbol* method_name, Symbol* signature);
+    Key(const KlassTrainingData* klass, Symbol* method_name, Symbol* signature);
     Key(const InstanceKlass* klass);
-    Key(const methodHandle& method);
+    Key(const Method* method);
 
   public:
     static unsigned hash(const Key* const& k) {
@@ -121,6 +119,8 @@ class TrainingData : public CHeapObj<mtCompiler> {
     Symbol* name1() const       { return _name1; }
     Symbol* name2() const       { return _name2; }
     const TrainingData* holder() const { return _holder; }
+
+    void iterate_metaspace_pointers(MetaspaceClosure *iter);
   };
 
   class TrainingDataSet {
@@ -177,13 +177,7 @@ class TrainingData : public CHeapObj<mtCompiler> {
       if (prior == nullptr || *prior == tdata) {
         return tdata;
       }
-      // Problem: We just replaced *prior, and when we delete *prior
-      // its copy of the key will go away, but that's the copy that
-      // the table is holding in its entry node.  Solution: Retain the
-      // original tdata, on the theory that training data should never
-      // be reset.  Other solutions: Throw an assert, or else delete
-      // the old data (with its old key) and insert again.
-      delete tdata;
+      assert(false, "no pre-existing elements allowed");
       return *prior;
     }
     template<typename FN>
@@ -228,8 +222,6 @@ public:
   bool is_CompileTrainingData() const { return as_CompileTrainingData()  != nullptr; }
 
   virtual int cmp(const TrainingData* that) const = 0;
-
-  virtual void print_on(outputStream* st, bool name_only = false) const = 0;
 
   enum DumpPhase {
     DP_prepare,   // no output, set final structure
@@ -290,6 +282,8 @@ public:
       }
     }
   };
+
+  void metaspace_pointers_do(MetaspaceClosure *iter);
 };
 
 class TrainingDataSetLocker {
@@ -465,9 +459,28 @@ class KlassTrainingData : public TrainingData {
   // safe to call this inside the initializing thread.
   bool record_static_field_init(fieldDescriptor* fd, const char* reason);
 
-  virtual void print_on(outputStream* st, bool name_only = false) const;
+  virtual void print_on(outputStream* st, bool name_only) const;
+  virtual void print_on(outputStream* st) const { print_on(st, false); }
+  void print_value_on(outputStream* st) const { Unimplemented(); }
 
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
+
+  MetaspaceObj::Type type() const {
+    return KlassTrainingDataType;
+  }
+
+  void metaspace_pointers_do(MetaspaceClosure *iter);
+
+  int size() const {
+    return align_metadata_size(align_up(sizeof(KlassTrainingData), BytesPerWord)/BytesPerWord);
+  }
+
+  const char* internal_name() const {
+    return "{ klass training data }";
+  };
+
+  static KlassTrainingData* allocate(InstanceKlass* holder);
+  static KlassTrainingData* allocate(Symbol* name, Symbol* loader_name);
 };
 
 // Record information about a method at the time compilation is requested.
@@ -540,9 +553,25 @@ class MethodTrainingData : public TrainingData {
 
   virtual MethodTrainingData* as_MethodTrainingData() const { return const_cast<MethodTrainingData*>(this); };
 
-  virtual void print_on(outputStream* st, bool name_only = false) const;
+  virtual void print_on(outputStream* st, bool name_only) const;
+  virtual void print_on(outputStream* st) const { print_on(st, false); }
+  virtual void print_value_on(outputStream* st) const { Unimplemented(); }
 
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
+
+  virtual void metaspace_pointers_do(MetaspaceClosure* iter);
+  virtual MetaspaceObj::Type type() const { return MethodTrainingDataType; }
+
+  virtual int size() const {
+    return align_metadata_size(align_up(sizeof(MethodTrainingData), BytesPerWord)/BytesPerWord);
+  }
+
+  virtual const char* internal_name() const {
+    return "{ method training data }";
+  };
+
+  static MethodTrainingData* allocate(KlassTrainingData* ktd, Method* m);
+  static MethodTrainingData* allocate(KlassTrainingData* ktd, Symbol* name, Symbol* signature);
 };
 
 // Information about particular JIT tasks.
@@ -617,7 +646,25 @@ class CompileTrainingData : public TrainingData {
 
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
 
-  virtual void print_on(outputStream* st, bool name_only = false) const;
+  virtual void print_on(outputStream* st, bool name_only) const;
+
+  virtual void print_on(outputStream* st) const { print_on(st, false); }
+  virtual void print_value_on(outputStream* st) const { Unimplemented(); }
+
+  virtual void metaspace_pointers_do(MetaspaceClosure* iter);
+  virtual MetaspaceObj::Type type() const { return CompileTrainingDataType; }
+
+  virtual const char* internal_name() const {
+    return "{ compile training data }";
+  };
+
+  virtual int size() const {
+    return align_metadata_size(align_up(sizeof(CompileTrainingData), BytesPerWord)/BytesPerWord);
+  }
+
+  static CompileTrainingData* allocate(MethodTrainingData* this_method,
+                                       MethodTrainingData* top_method,
+                                       int level, int compile_id);
 };
 
 inline int MethodTrainingData::last_compile_id() const {
