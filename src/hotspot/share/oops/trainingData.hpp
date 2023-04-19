@@ -120,7 +120,7 @@ class TrainingData : public Metadata {
     Symbol* name2() const       { return _name2; }
     const TrainingData* holder() const { return _holder; }
 
-    void iterate_metaspace_pointers(MetaspaceClosure *iter);
+    void metaspace_pointers_do(MetaspaceClosure *iter);
   };
 
   class TrainingDataSet {
@@ -281,9 +281,21 @@ public:
         return _deps_dyn->append_if_missing(dep);
       }
     }
+#if INCLUDE_CDS
+    void remove_unshareable_info() {
+      _deps_dyn = nullptr;
+    }
+    void restore_unshareable_info(TRAPS) {}
+#endif
+    void metaspace_pointers_do(MetaspaceClosure *iter);
   };
 
   void metaspace_pointers_do(MetaspaceClosure *iter);
+
+#if INCLUDE_CDS
+  void remove_unshareable_info() {}
+  void restore_unshareable_info(TRAPS) {}
+#endif
 };
 
 class TrainingDataSetLocker {
@@ -298,6 +310,11 @@ class TrainingDataSetLocker {
 
 class KlassTrainingData : public TrainingData {
   friend TrainingData;
+
+  // Used by CDS. These classes need to access the private default constructor.
+  template <class T> friend class CppVtableTesterA;
+  template <class T> friend class CppVtableTesterB;
+  template <class T> friend class CppVtableCloner;
 
  public:
   // Tracking field initialization, when RecordTraining is enabled.
@@ -340,6 +357,10 @@ class KlassTrainingData : public TrainingData {
     _static_fields = nullptr;
     _fieldinit_count = 0;
     _clinit_is_done = false;
+  }
+
+  KlassTrainingData() {
+    assert(DumpSharedSpaces || UseSharedSpaces, "only for CDS");
   }
 
   KlassTrainingData(Symbol* klass_name, Symbol* loader_name)
@@ -461,13 +482,18 @@ class KlassTrainingData : public TrainingData {
 
   virtual void print_on(outputStream* st, bool name_only) const;
   virtual void print_on(outputStream* st) const { print_on(st, false); }
-  void print_value_on(outputStream* st) const { Unimplemented(); }
+  void print_value_on(outputStream* st) const { print_on(st, true); }
 
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
 
   MetaspaceObj::Type type() const {
     return KlassTrainingDataType;
   }
+
+#if INCLUDE_CDS
+  void remove_unshareable_info();
+  void restore_unshareable_info(TRAPS);
+#endif
 
   void metaspace_pointers_do(MetaspaceClosure *iter);
 
@@ -487,6 +513,11 @@ class KlassTrainingData : public TrainingData {
 class MethodTrainingData : public TrainingData {
   friend CompileTrainingData;
 
+  // Used by CDS. These classes need to access the private default constructor.
+  template <class T> friend class CppVtableTesterA;
+  template <class T> friend class CppVtableTesterB;
+  template <class T> friend class CppVtableCloner;
+
   KlassTrainingData* _klass;
   const Method* _holder;  // can be null
   CompileTrainingData* _compile;   // singly linked list, latest first
@@ -496,6 +527,10 @@ class MethodTrainingData : public TrainingData {
   // metadata snapshots of final state:
   MethodCounters* _final_counters;
   MethodData*     _final_profile;
+
+  MethodTrainingData() {
+    assert(DumpSharedSpaces || UseSharedSpaces, "only for CDS");
+  }
 
   MethodTrainingData(KlassTrainingData* klass,
                      Symbol* name, Symbol* signature)
@@ -519,6 +554,7 @@ class MethodTrainingData : public TrainingData {
 
  public:
   KlassTrainingData* klass()  const { return _klass; }
+  CompileTrainingData* compile() const { return _compile; }
   bool has_holder()           const { return _holder != nullptr; }
   const Method* holder()      const { return _holder; }
   Symbol* name()              const { return _key.name1(); }
@@ -555,12 +591,17 @@ class MethodTrainingData : public TrainingData {
 
   virtual void print_on(outputStream* st, bool name_only) const;
   virtual void print_on(outputStream* st) const { print_on(st, false); }
-  virtual void print_value_on(outputStream* st) const { Unimplemented(); }
+  virtual void print_value_on(outputStream* st) const { print_on(st, true); }
 
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
 
   virtual void metaspace_pointers_do(MetaspaceClosure* iter);
   virtual MetaspaceObj::Type type() const { return MethodTrainingDataType; }
+
+#if INCLUDE_CDS
+  void remove_unshareable_info();
+  void restore_unshareable_info(TRAPS);
+#endif
 
   virtual int size() const {
     return align_metadata_size(align_up(sizeof(MethodTrainingData), BytesPerWord)/BytesPerWord);
@@ -576,6 +617,11 @@ class MethodTrainingData : public TrainingData {
 
 // Information about particular JIT tasks.
 class CompileTrainingData : public TrainingData {
+  // Used by CDS. These classes need to access the private default constructor.
+  template <class T> friend class CppVtableTesterA;
+  template <class T> friend class CppVtableTesterB;
+  template <class T> friend class CppVtableCloner;
+
   MethodTrainingData* _method;  // inlined method, or same as top method
   MethodTrainingData* _top_method;
   CompileTrainingData* _next;   // singly linked list, latest first
@@ -586,6 +632,10 @@ class CompileTrainingData : public TrainingData {
 
   // classes that should be initialized before this JIT task runs
   TrainingData::DepList<KlassTrainingData*> _init_deps;
+
+  CompileTrainingData() : _level(-1), _compile_id (-1) {
+    assert(DumpSharedSpaces || UseSharedSpaces, "only for CDS");
+  }
 
   // (should we also capture counters or MDO state or replay data?)
 
@@ -649,7 +699,12 @@ class CompileTrainingData : public TrainingData {
   virtual void print_on(outputStream* st, bool name_only) const;
 
   virtual void print_on(outputStream* st) const { print_on(st, false); }
-  virtual void print_value_on(outputStream* st) const { Unimplemented(); }
+  virtual void print_value_on(outputStream* st) const { print_on(st, true); }
+
+#if INCLUDE_CDS
+  void remove_unshareable_info();
+  void restore_unshareable_info(TRAPS);
+#endif
 
   virtual void metaspace_pointers_do(MetaspaceClosure* iter);
   virtual MetaspaceObj::Type type() const { return CompileTrainingDataType; }

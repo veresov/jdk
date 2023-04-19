@@ -160,6 +160,9 @@ public:
     log_info(cds)("Adjust lambda proxy class dictionary");
     SystemDictionaryShared::adjust_lambda_proxy_class_dictionary();
 
+    log_info(cds)("Adjust method info dictionary");
+    SystemDictionaryShared::adjust_method_info_dictionary();
+
     relocate_to_requested();
 
     write_archive(serialized_data);

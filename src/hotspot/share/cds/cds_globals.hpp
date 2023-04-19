@@ -95,6 +95,9 @@
            "(2) always map at preferred address, and if unsuccessful, "     \
            "do not map the archive")                                        \
            range(0, 2)                                                      \
+                                                                            \
+  product(bool, DumpTrainingData, false, DIAGNOSTIC,                        \
+          "Dump training and profiling data")                               \
 // end of CDS_FLAGS
 
 DECLARE_FLAGS(CDS_FLAGS)

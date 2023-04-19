@@ -388,8 +388,12 @@ Symbol* Method::klass_name() const {
 }
 
 void Method::metaspace_pointers_do(MetaspaceClosure* it) {
-  log_trace(cds)("Iter(Method): %p", this);
-
+  LogStreamHandle(Trace, cds) lsh;
+  if (lsh.is_enabled()) {
+    lsh.print("Iter(Method): %p ", this);
+    print_external_name(&lsh);
+    lsh.cr();
+  }
   if (!method_holder()->is_rewritten()) {
     it->push(&_constMethod, MetaspaceClosure::_writable);
   } else {
@@ -408,11 +412,17 @@ void Method::metaspace_pointers_do(MetaspaceClosure* it) {
 
 void Method::remove_unshareable_info() {
   unlink_method();
+  if (method_data() != nullptr) {
+    method_data()->remove_unshareable_info();
+  }
   JFR_ONLY(REMOVE_METHOD_ID(this);)
 }
 
 void Method::restore_unshareable_info(TRAPS) {
   assert(is_method() && is_valid_method(this), "ensure C++ vtable is restored");
+  if (method_data() != nullptr) {
+    method_data()->restore_unshareable_info(CHECK);
+  }
 }
 #endif
 
@@ -602,7 +612,16 @@ void Method::build_profiling_method_data(const methodHandle& method, TRAPS) {
     return;
   }
 
-  if (PrintMethodData && (Verbose || WizardMode)) {
+  /*
+  LogStreamHandle(Info, mdo) lsh;
+  if (lsh.is_enabled()) {
+    ResourceMark rm(THREAD);
+    lsh.print("build_profiling_method_data for ");
+    method->print_name(&lsh);
+    lsh.cr();
+  }
+  */
+  if (PrintMethodData) {
     ResourceMark rm(THREAD);
     tty->print("build_profiling_method_data for ");
     method->print_name(tty);
@@ -1192,8 +1211,12 @@ void Method::unlink_method() {
   }
   NOT_PRODUCT(set_compiled_invocation_count(0);)
 
-  set_method_data(nullptr);
-  clear_method_counters();
+  if (UseNewCode) {
+    // FIXME: iterate over embedded metadata and clear all external refs
+  } else {
+    set_method_data(nullptr);
+    clear_method_counters();
+  }
 }
 #endif
 

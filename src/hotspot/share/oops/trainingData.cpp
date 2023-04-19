@@ -1214,18 +1214,25 @@ void KlassTrainingData::log_initialization(bool is_start) {
 
 // CDS support
 
-void TrainingData::Key::iterate_metaspace_pointers(MetaspaceClosure *iter) {
+void TrainingData::Key::metaspace_pointers_do(MetaspaceClosure *iter) {
   iter->push(&_name1);
   iter->push(&_name2);
+  iter->push((TrainingData**)&_holder);
 }
 
 void TrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
-  _key.iterate_metaspace_pointers(iter);
+  _key.metaspace_pointers_do(iter);
+}
+
+template <typename T>
+void TrainingData::DepList<T>::metaspace_pointers_do(MetaspaceClosure* iter) {
+  iter->push(&_deps);
 }
 
 void KlassTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   log_trace(cds)("Iter(KlassTrainingData): %p", this);
   TrainingData::metaspace_pointers_do(iter);
+  _init_deps.metaspace_pointers_do(iter);
   iter->push(&_holder);
 }
 
@@ -1233,13 +1240,14 @@ void MethodTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   log_trace(cds)("Iter(MethodTrainingData): %p", this);
   TrainingData::metaspace_pointers_do(iter);
   iter->push(&_klass);
-  iter->push((Method**) &(_holder));
+  iter->push((Method**)&_holder);
   iter->push(&_compile);
 }
 
 void CompileTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   log_trace(cds)("Iter(CompileTrainingData): %p", this);
   TrainingData::metaspace_pointers_do(iter);
+  _init_deps.metaspace_pointers_do(iter);
   iter->push(&_method);
   iter->push(&_top_method);
   iter->push(&_next);
@@ -1303,3 +1311,36 @@ CompileTrainingData* CompileTrainingData::allocate(MethodTrainingData* this_meth
   return new (loader_data, size, MetaspaceObj::KlassTrainingDataType, THREAD)
       CompileTrainingData(this_method, top_method, level, compile_id);
 }
+
+#if INCLUDE_CDS
+void KlassTrainingData::remove_unshareable_info() {
+  TrainingData::remove_unshareable_info();
+  _static_fields = nullptr;
+  _no_static_fields = nullptr;
+  _init_deps.remove_unshareable_info();
+}
+
+void KlassTrainingData::restore_unshareable_info(TRAPS) {
+  TrainingData::restore_unshareable_info(THREAD);
+  _init_deps.restore_unshareable_info(THREAD);
+}
+
+void MethodTrainingData::remove_unshareable_info() {
+  TrainingData::remove_unshareable_info();
+}
+
+void MethodTrainingData::restore_unshareable_info(TRAPS) {
+  TrainingData::restore_unshareable_info(THREAD);
+}
+
+void CompileTrainingData::remove_unshareable_info() {
+  TrainingData::remove_unshareable_info();
+  _init_deps.remove_unshareable_info();
+}
+
+void CompileTrainingData::restore_unshareable_info(TRAPS) {
+  TrainingData::restore_unshareable_info(THREAD);
+  _init_deps.restore_unshareable_info(THREAD);
+}
+
+#endif // INCLUDE_CDS

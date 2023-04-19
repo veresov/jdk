@@ -111,7 +111,8 @@ class outputStream;
   LOG_TAG(malloc) \
   LOG_TAG(map) \
   LOG_TAG(mark) \
-  LOG_TAG(marking) \
+  LOG_TAG(marking)   \
+  LOG_TAG(mdo) \
   LOG_TAG(membername) \
   LOG_TAG(memops) \
   LOG_TAG(metadata) \

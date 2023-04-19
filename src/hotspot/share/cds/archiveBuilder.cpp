@@ -527,8 +527,11 @@ ArchiveBuilder::FollowMode ArchiveBuilder::get_follow_mode(MetaspaceClosure::Ref
     // Don't dump existing shared metadata again.
     return point_to_it;
   } else if (ref->msotype() == MetaspaceObj::MethodDataType ||
-             ref->msotype() == MetaspaceObj::MethodCountersType) {
-    return set_to_null;
+             ref->msotype() == MetaspaceObj::MethodCountersType ||
+             ref->msotype() == MetaspaceObj::KlassTrainingDataType ||
+             ref->msotype() == MetaspaceObj::MethodTrainingDataType ||
+             ref->msotype() == MetaspaceObj::CompileTrainingDataType) {
+      return (DumpTrainingData ? make_a_copy : set_to_null);
   } else {
     if (ref->msotype() == MetaspaceObj::ClassType) {
       Klass* klass = (Klass*)ref->obj();

@@ -23,8 +23,9 @@
  */
 #include "precompiled.hpp"
 #include "compiler/compiler_globals.hpp"
-#include "oops/method.hpp"
+#include "memory/metaspaceClosure.hpp"
 #include "oops/methodCounters.hpp"
+#include "oops/trainingData.hpp"
 #include "runtime/handles.inline.hpp"
 
 MethodCounters::MethodCounters(const methodHandle& mh) :
@@ -66,6 +67,36 @@ void MethodCounters::clear_counters() {
   set_rate(0);
   set_highest_comp_level(0);
   set_highest_osr_comp_level(0);
+}
+
+void MethodCounters::metaspace_pointers_do(MetaspaceClosure* it) {
+  log_trace(cds)("Iter(MethodCounters): %p", this);
+  it->push(&_method_training_data);
+}
+
+void MethodCounters::print_on(outputStream* st) const {
+  assert(is_methodCounters(), "should be method counters");
+  st->print("method counters");
+  print_data_on(st);
+}
+
+void MethodCounters::print_data_on(outputStream* st) const {
+  ResourceMark rm;
+  st->print_cr("  - invocation_counter: %d carry=%d", _invocation_counter.count(), _invocation_counter.carry());
+  st->print_cr("  - backedge_counter: %d carry=%d",   _backedge_counter.count(), _backedge_counter.carry());
+  st->print_cr("  - prev_time: %ld",         _prev_time);
+  st->print_cr("  - rate: %.3f",             _rate);
+  st->print_cr("  - invoke_mask: %d",        _invoke_mask);
+  st->print_cr("  - backedge_mask: %d",      _backedge_mask);
+  st->print_cr("  - prev_event_count: %d",   _prev_event_count);
+#if COMPILER2_OR_JVMCI
+  st->print_cr("  - interpreter_throwout_count: %u", _interpreter_throwout_count);
+#endif
+#if INCLUDE_JVMTI
+  st->print_cr("  - number_of_breakpoints: %u", _number_of_breakpoints);
+#endif
+  st->print_cr("  - highest_comp_level: %u", _highest_comp_level);
+  st->print_cr("  - highest_osr_comp_level: %u", _highest_osr_comp_level);
 }
 
 void MethodCounters::print_value_on(outputStream* st) const {

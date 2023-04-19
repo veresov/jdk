@@ -2613,6 +2613,8 @@ void InstanceKlass::metaspace_pointers_do(MetaspaceClosure* it) {
   it->push(&_nest_members);
   it->push(&_permitted_subclasses);
   it->push(&_record_components);
+
+  it->push(&_training_data);
 }
 
 #if INCLUDE_CDS

@@ -29,7 +29,8 @@
 void MetaspaceClosure::Ref::update(address new_loc) const {
   log_trace(cds)("Ref: [" PTR_FORMAT "] -> " PTR_FORMAT " => " PTR_FORMAT,
                  p2i(mpp()), p2i(obj()), p2i(new_loc));
-  *addr() = new_loc;
+  intptr_t tag = (intptr_t(*addr()) & 0x3); // FIXME: keep the tag just in case
+  *addr() = address(intptr_t(new_loc) | tag);
 }
 
 void MetaspaceClosure::push_impl(MetaspaceClosure::Ref* ref) {

@@ -34,6 +34,7 @@
 #include "cds/dumpTimeClassInfo.inline.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "cds/runTimeClassInfo.hpp"
+#include "cds/methodDataDictionary.hpp"
 #include "classfile/classFileStream.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/classLoaderData.inline.hpp"
@@ -60,6 +61,8 @@
 #include "memory/universe.hpp"
 #include "oops/instanceKlass.hpp"
 #include "oops/klass.inline.hpp"
+#include "oops/methodData.hpp"
+#include "oops/trainingData.hpp"
 #include "oops/objArrayKlass.hpp"
 #include "oops/objArrayOop.inline.hpp"
 #include "oops/oop.inline.hpp"
@@ -80,6 +83,9 @@ DumpTimeSharedClassTable* SystemDictionaryShared::_dumptime_table = nullptr;
 DumpTimeSharedClassTable* SystemDictionaryShared::_cloned_dumptime_table = nullptr;
 DumpTimeLambdaProxyClassDictionary* SystemDictionaryShared::_dumptime_lambda_proxy_class_dictionary = nullptr;
 DumpTimeLambdaProxyClassDictionary* SystemDictionaryShared::_cloned_dumptime_lambda_proxy_class_dictionary = nullptr;
+
+DumpTimeMethodInfoDictionary* SystemDictionaryShared::_dumptime_method_info_dictionary = nullptr;
+DumpTimeMethodInfoDictionary* SystemDictionaryShared::_cloned_dumptime_method_info_dictionary = nullptr;
 
 // Used by NoClassLoadingMark
 DEBUG_ONLY(bool SystemDictionaryShared::_class_loading_may_happen = true;)
@@ -503,6 +509,7 @@ void SystemDictionaryShared::initialize() {
     _dumptime_table = new (mtClass) DumpTimeSharedClassTable;
     _dumptime_lambda_proxy_class_dictionary =
                       new (mtClass) DumpTimeLambdaProxyClassDictionary;
+    _dumptime_method_info_dictionary = new (mtClass) DumpTimeMethodInfoDictionary;
   }
 }
 
@@ -536,6 +543,23 @@ void SystemDictionaryShared::handle_class_unloading(InstanceKlass* klass) {
   if (ClassListWriter::is_enabled()) {
     ClassListWriter cw;
     cw.handle_class_unloading((const InstanceKlass*)klass);
+  }
+}
+
+void SystemDictionaryShared::init_dumptime_info(Method* m) {
+  Arguments::assert_is_dumping_archive();
+  assert_lock_strong(DumpTimeTable_lock);
+
+  if (m->method_data() != nullptr || m->method_counters() != nullptr) {
+    const MethodDataKey key(m);
+    const DumpTimeMethodDataInfo info(m->method_data(), m->method_counters());
+
+    bool created;
+    _dumptime_method_info_dictionary->put_if_absent(key, info, &created);
+    assert(created, "");
+    if (created) {
+      ++_dumptime_method_info_dictionary->_count;
+    }
   }
 }
 
@@ -639,6 +663,8 @@ void SystemDictionaryShared::check_excluded_classes() {
   _dumptime_table->update_counts();
 
   cleanup_lambda_proxy_class_dictionary();
+
+  cleanup_method_info_dictionary();
 }
 
 bool SystemDictionaryShared::is_excluded_class(InstanceKlass* k) {
@@ -691,6 +717,12 @@ void SystemDictionaryShared::dumptime_classes_do(class MetaspaceClosure* it) {
     }
   };
   _dumptime_lambda_proxy_class_dictionary->iterate_all(do_lambda);
+
+  auto do_method_info = [&] (MethodDataKey& key, DumpTimeMethodDataInfo& info) {
+    info.metaspace_pointers_do(it);
+    key.metaspace_pointers_do(it);
+  };
+  _dumptime_method_info_dictionary->iterate_all(do_method_info);
 }
 
 bool SystemDictionaryShared::add_verification_constraint(InstanceKlass* k, Symbol* name,
@@ -1110,6 +1142,11 @@ size_t SystemDictionaryShared::estimate_size_for_archive() {
       (bytesize * _dumptime_lambda_proxy_class_dictionary->_count) +
       CompactHashtableWriter::estimate_size(_dumptime_lambda_proxy_class_dictionary->_count);
 
+  size_t method_info_byte_size = align_up(sizeof(RunTimeMethodDataInfo), SharedSpaceObjectAlignment);
+  total_size +=
+      (method_info_byte_size * _dumptime_method_info_dictionary->_count) +
+      CompactHashtableWriter::estimate_size(_dumptime_method_info_dictionary->_count);
+
   return total_size;
 }
 
@@ -1228,6 +1265,40 @@ void SystemDictionaryShared::write_lambda_proxy_class_dictionary(LambdaProxyClas
   writer.dump(dictionary, "lambda proxy class dictionary");
 }
 
+class CopyMethodDataInfoToArchive : StackObj {
+  CompactHashtableWriter* _writer;
+  ArchiveBuilder* _builder;
+public:
+  CopyMethodDataInfoToArchive(CompactHashtableWriter* writer)
+      : _writer(writer), _builder(ArchiveBuilder::current()) {}
+
+  bool do_entry(MethodDataKey& key, DumpTimeMethodDataInfo& info) {
+    Method* holder = key.method();
+    log_info(cds,dynamic)("Archiving method info for %s", holder->external_name());
+
+    size_t byte_size = sizeof(RunTimeMethodDataInfo);
+    RunTimeMethodDataInfo* record = (RunTimeMethodDataInfo*)ArchiveBuilder::ro_region_alloc(byte_size);
+
+    DumpTimeMethodDataInfo data(info.method_data(), info.method_counters());
+    record->init(key, data);
+
+    uint hash = SystemDictionaryShared::hash_for_shared_dictionary((address)holder);
+    u4 delta = _builder->buffer_to_offset_u4((address)record);
+    _writer->add(hash, delta);
+
+    return true;
+  }
+};
+
+void SystemDictionaryShared::write_method_info_dictionary(MethodDataInfoDictionary* dictionary) {
+  CompactHashtableStats stats;
+  dictionary->reset();
+  CompactHashtableWriter writer(_dumptime_method_info_dictionary->_count, &stats);
+  CopyMethodDataInfoToArchive copy(&writer);
+  _dumptime_method_info_dictionary->iterate(&copy);
+  writer.dump(dictionary, "method info dictionary");
+}
+
 void SystemDictionaryShared::write_dictionary(RunTimeSharedDictionary* dictionary,
                                               bool is_builtin) {
   CompactHashtableStats stats;
@@ -1246,11 +1317,36 @@ void SystemDictionaryShared::write_to_archive(bool is_static_archive) {
   write_dictionary(&archive->_unregistered_dictionary, false);
 
   write_lambda_proxy_class_dictionary(&archive->_lambda_proxy_class_dictionary);
+
+  write_method_info_dictionary(&archive->_method_info_dictionary);
 }
 
 void SystemDictionaryShared::adjust_lambda_proxy_class_dictionary() {
   AdjustLambdaProxyClassInfo adjuster;
   _dumptime_lambda_proxy_class_dictionary->iterate(&adjuster);
+}
+
+class AdjustMethodInfo : StackObj {
+public:
+  AdjustMethodInfo() {}
+  bool do_entry(MethodDataKey& key, DumpTimeMethodDataInfo& info) {
+    // TODO: is it possible for the data to become stale/invalid?
+    Method*         m  = key.method();
+    MethodData*     md = info.method_data();
+    MethodCounters* mc = info.method_counters();
+    assert(MetaspaceShared::is_in_shared_metaspace(m) || ArchiveBuilder::current()->is_in_buffer_space(m), "");
+    assert(ArchiveBuilder::current()->is_in_buffer_space(md) || md == nullptr, "must be");
+    assert(ArchiveBuilder::current()->is_in_buffer_space(mc) || mc == nullptr, "must be");
+    if (md != nullptr) {
+      md->remove_unshareable_info();
+    }
+    return true;
+  }
+};
+
+void SystemDictionaryShared::adjust_method_info_dictionary() {
+  AdjustMethodInfo adjuster;
+  _dumptime_method_info_dictionary->iterate(&adjuster);
 }
 
 void SystemDictionaryShared::serialize_dictionary_headers(SerializeClosure* soc,
@@ -1260,6 +1356,7 @@ void SystemDictionaryShared::serialize_dictionary_headers(SerializeClosure* soc,
   archive->_builtin_dictionary.serialize_header(soc);
   archive->_unregistered_dictionary.serialize_header(soc);
   archive->_lambda_proxy_class_dictionary.serialize_header(soc);
+  archive->_method_info_dictionary.serialize_header(soc);
 }
 
 void SystemDictionaryShared::serialize_vm_classes(SerializeClosure* soc) {
@@ -1379,6 +1476,108 @@ public:
   }
 };
 
+class SharedMethodInfoDictionaryPrinter : StackObj {
+  outputStream* _st;
+  int _index;
+
+private:
+  static const char* tag(void* p) {
+    if (p == nullptr) {
+      return "   ";
+    } else if (MetaspaceShared::is_shared_dynamic(p)) {
+      return "<D>";
+    } else if (MetaspaceShared::is_in_shared_metaspace(p)) {
+      return "<S>";
+    } else {
+      return "???";
+    }
+  }
+public:
+  SharedMethodInfoDictionaryPrinter(outputStream* st) : _st(st), _index(0) {}
+
+  void do_value(const RunTimeMethodDataInfo* record) {
+    ResourceMark rm;
+    Method*         m  = record->method();
+    MethodCounters* mc = record->method_counters();
+    MethodData*     md = record->method_data();
+
+    _st->print_cr("%4d: %s" PTR_FORMAT " %s" PTR_FORMAT " %s" PTR_FORMAT " %s", _index++,
+                  tag(m), p2i(m),
+                  tag(mc), p2i(mc),
+                  tag(md), p2i(md),
+                  m->external_name());
+    if (Verbose) {
+      if (mc != nullptr) {
+        mc->print_on(_st);
+      }
+      if (md != nullptr) {
+        md->print_on(_st);
+      }
+      _st->cr();
+    }
+  }
+};
+
+class TrainingDataPrinter : StackObj {
+  outputStream* _st;
+  int _index;
+
+private:
+  static const char* tag(void* p) {
+    if (p == nullptr) {
+      return "   ";
+    } else if (MetaspaceShared::is_shared_dynamic(p)) {
+      return "<D>";
+    } else if (MetaspaceShared::is_in_shared_metaspace(p)) {
+      return "<S>";
+    } else {
+      return "???";
+    }
+  }
+public:
+  TrainingDataPrinter(outputStream* st) : _st(st), _index(0) {}
+
+  void do_value(const RunTimeClassInfo* record) {
+    ResourceMark rm;
+    KlassTrainingData* ktd = record->_klass->training_data_or_null();
+    if (ktd != nullptr) {
+      _st->print("%4d: KTD %s%p for %s %s", _index++, tag(ktd), ktd, record->_klass->external_name(),
+                 class_loader_name_for_shared(record->_klass));
+      if (Verbose) {
+        ktd->print_on(_st);
+      } else {
+        ktd->print_value_on(_st);
+      }
+      _st->cr();
+    }
+  }
+
+  void do_value(const RunTimeMethodDataInfo* record) {
+    ResourceMark rm;
+    MethodCounters* mc = record->method_counters();
+    if (mc != nullptr) {
+      MethodTrainingData* mtd = mc->method_training_data();
+      if (mtd != nullptr) {
+        _st->print("%4d: MTD %s%p ", _index++, tag(mtd), mtd);
+        if (Verbose) {
+          mtd->print_on(_st);
+        } else {
+          mtd->print_value_on(_st);
+        }
+        _st->cr();
+
+        if (Verbose) {
+          for (CompileTrainingData* ctd = mtd->compile(); ctd != nullptr; ctd = ctd->next()) {
+            _st->print("    => CTD: ");
+            ctd->print_on(_st);
+            _st->cr();
+          }
+        }
+      }
+    }
+  }
+};
+
 void SystemDictionaryShared::ArchiveInfo::print_on(const char* prefix,
                                                    outputStream* st) {
   st->print_cr("%sShared Dictionary", prefix);
@@ -1392,6 +1591,15 @@ void SystemDictionaryShared::ArchiveInfo::print_on(const char* prefix,
     SharedLambdaDictionaryPrinter ldp(st, p.index());
     _lambda_proxy_class_dictionary.iterate(&ldp);
   }
+  if (!_method_info_dictionary.empty()) {
+    st->print_cr("%sShared MethodData Dictionary", prefix);
+    SharedMethodInfoDictionaryPrinter mdp(st);
+    _method_info_dictionary.iterate(&mdp);
+  }
+  st->print_cr("%sTraining Data", prefix);
+  TrainingDataPrinter tdp(st);
+  _builtin_dictionary.iterate(&tdp);
+  _method_info_dictionary.iterate(&tdp);
 }
 
 void SystemDictionaryShared::ArchiveInfo::print_table_statistics(const char* prefix,
@@ -1400,6 +1608,7 @@ void SystemDictionaryShared::ArchiveInfo::print_table_statistics(const char* pre
   _builtin_dictionary.print_table_statistics(st, "Builtin Shared Dictionary");
   _unregistered_dictionary.print_table_statistics(st, "Unregistered Shared Dictionary");
   _lambda_proxy_class_dictionary.print_table_statistics(st, "Lambda Shared Dictionary");
+  _method_info_dictionary.print_table_statistics(st, "MethodData Dictionary");
 }
 
 void SystemDictionaryShared::print_shared_archive(outputStream* st, bool is_static) {
@@ -1476,6 +1685,29 @@ class CloneDumpTimeLambdaProxyClassTable: StackObj {
   }
 };
 
+class CloneDumpTimeMethodInfoTable: StackObj {
+  DumpTimeMethodInfoDictionary* _table;
+  DumpTimeMethodInfoDictionary* _cloned_table;
+public:
+  CloneDumpTimeMethodInfoTable(DumpTimeMethodInfoDictionary* table,
+                               DumpTimeMethodInfoDictionary* clone) :
+      _table(table), _cloned_table(clone) {
+    assert(_table != nullptr, "missing");
+    assert(_cloned_table != nullptr, "missing");
+  }
+
+  bool do_entry(MethodDataKey& key, DumpTimeMethodDataInfo& info) {
+    assert_lock_strong(DumpTimeTable_lock);
+    bool created;
+    // make copies then store in _clone_table
+    MethodDataKey keyCopy = key;
+    _cloned_table->put_if_absent(keyCopy, info, &created);
+    assert(created, "must be");
+    ++ _cloned_table->_count;
+    return true; // keep on iterating
+  }
+};
+
 // When dumping the CDS archive, the ArchiveBuilder will irrecoverably modify the
 // _dumptime_table and _dumptime_lambda_proxy_class_dictionary (e.g., metaspace
 // pointers are changed to use "buffer" addresses.)
@@ -1487,6 +1719,31 @@ class CloneDumpTimeLambdaProxyClassTable: StackObj {
 // We use the copy constructors to clone the values in these tables. The copy constructors
 // must make a deep copy, as internal data structures such as the contents of
 // DumpTimeClassInfo::_loader_constraints are also modified by the ArchiveBuilder.
+
+class DumpMethodInfo : StackObj {
+
+  void do_klass(InstanceKlass* ik) {
+    Array<Method*>* methods = ik->methods();
+    for (int i = 0; i < methods->length(); i++) {
+      Method* m = methods->at(i);
+      SystemDictionaryShared::init_dumptime_info(m);
+    }
+  }
+
+public:
+  DumpMethodInfo() {}
+
+  void do_entry(InstanceKlass* k, DumpTimeClassInfo& info) {
+    if (!info.is_excluded()) {
+      do_klass(k);
+    }
+  }
+
+  void do_value(const RunTimeClassInfo* record) {
+    do_klass(record->_klass);
+  }
+};
+
 
 void SystemDictionaryShared::clone_dumptime_tables() {
   Arguments::assert_is_dumping_archive();
@@ -1505,6 +1762,17 @@ void SystemDictionaryShared::clone_dumptime_tables() {
   CloneDumpTimeLambdaProxyClassTable copy_proxy_classes(_dumptime_lambda_proxy_class_dictionary,
                                                         _cloned_dumptime_lambda_proxy_class_dictionary);
   _dumptime_lambda_proxy_class_dictionary->iterate(&copy_proxy_classes);
+
+  assert(_cloned_dumptime_method_info_dictionary == nullptr, "must be cleaned");
+  _cloned_dumptime_method_info_dictionary = new (mtClass) DumpTimeMethodInfoDictionary;
+  CloneDumpTimeMethodInfoTable copy_method_info(_dumptime_method_info_dictionary,
+                                                _cloned_dumptime_method_info_dictionary);
+  _dumptime_method_info_dictionary->iterate(&copy_method_info);
+
+  // FIXME: find a better place to initialize _dumptime_method_info_dictionary
+  DumpMethodInfo init_method_info;
+  _dumptime_table->iterate_all_live_classes(&init_method_info);
+  _static_archive._builtin_dictionary.iterate(&init_method_info);
 }
 
 void SystemDictionaryShared::restore_dumptime_tables() {
@@ -1516,6 +1784,10 @@ void SystemDictionaryShared::restore_dumptime_tables() {
   delete _dumptime_lambda_proxy_class_dictionary;
   _dumptime_lambda_proxy_class_dictionary = _cloned_dumptime_lambda_proxy_class_dictionary;
   _cloned_dumptime_lambda_proxy_class_dictionary = nullptr;
+
+  delete _dumptime_method_info_dictionary;
+  _dumptime_method_info_dictionary = _cloned_dumptime_method_info_dictionary;
+  _cloned_dumptime_method_info_dictionary = nullptr;
 }
 
 class CleanupDumpTimeLambdaProxyClassTable: StackObj {
@@ -1545,4 +1817,20 @@ void SystemDictionaryShared::cleanup_lambda_proxy_class_dictionary() {
   assert_lock_strong(DumpTimeTable_lock);
   CleanupDumpTimeLambdaProxyClassTable cleanup_proxy_classes;
   _dumptime_lambda_proxy_class_dictionary->unlink(&cleanup_proxy_classes);
+}
+
+class CleanupDumpTimeMethodInfoTable : StackObj {
+public:
+  bool do_entry(MethodDataKey& key, DumpTimeMethodDataInfo& info) {
+    assert_lock_strong(DumpTimeTable_lock);
+    assert(MetaspaceShared::is_in_shared_metaspace(key.method()), "");
+    return true;
+  }
+};
+
+void SystemDictionaryShared::cleanup_method_info_dictionary() {
+  assert_lock_strong(DumpTimeTable_lock);
+
+  CleanupDumpTimeMethodInfoTable cleanup_method_info;
+  _dumptime_method_info_dictionary->unlink(&cleanup_method_info);
 }

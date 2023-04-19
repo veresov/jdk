@@ -36,6 +36,12 @@ class MethodTrainingData;
 class MethodCounters : public Metadata {
  friend class VMStructs;
  friend class JVMCIVMStructs;
+
+ // Used by CDS. These classes need to access the private default constructor.
+ template <class T> friend class CppVtableTesterA;
+ template <class T> friend class CppVtableTesterB;
+ template <class T> friend class CppVtableCloner;
+
  private:
   InvocationCounter   _invocation_counter;         // Incremented before each activation of the method - used to trigger frequency-based optimizations
   InvocationCounter   _backedge_counter;           // Incremented before each backedge taken - used to trigger frequency-based optimizations
@@ -55,6 +61,10 @@ class MethodCounters : public Metadata {
   u1                  _highest_osr_comp_level;      // Same for OSR level
 
   MethodCounters(const methodHandle& mh);
+
+  MethodCounters() {
+    assert(DumpSharedSpaces || UseSharedSpaces, "only for CDS");
+  }
  public:
   virtual bool is_methodCounters() const { return true; }
 
@@ -70,6 +80,8 @@ class MethodCounters : public Metadata {
     return method_counters_size();
   }
   MetaspaceObj::Type type() const { return MethodCountersType; }
+  virtual void metaspace_pointers_do(MetaspaceClosure* iter);
+
   void clear_counters();
 
 #if COMPILER2_OR_JVMCI
@@ -133,12 +145,16 @@ class MethodCounters : public Metadata {
   }
 
   virtual const char* internal_name() const { return "{method counters}"; }
-  virtual void print_value_on(outputStream* st) const;
 
   MethodTrainingData* method_training_data() const { return _method_training_data; }
   bool init_method_training_data(MethodTrainingData* tdata) {
     return (_method_training_data == tdata ||
             Atomic::replace_if_null(&_method_training_data, tdata));
   }
+
+  // Printing
+  void print_on      (outputStream* st) const;
+  void print_value_on(outputStream* st) const;
+  void print_data_on(outputStream* st) const;
 };
 #endif // SHARE_OOPS_METHODCOUNTERS_HPP
