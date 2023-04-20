@@ -1213,6 +1213,12 @@ void Method::unlink_method() {
 
   set_method_data(nullptr);
   clear_method_counters();
+
+  clear_not_c1_compilable();
+  clear_not_c1_osr_compilable();
+  clear_not_c2_compilable();
+  clear_not_c2_osr_compilable();
+  clear_queued_for_compilation();
 }
 #endif
 
