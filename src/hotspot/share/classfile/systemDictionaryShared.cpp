@@ -1827,7 +1827,9 @@ public:
   bool do_entry(MethodDataKey& key, DumpTimeMethodDataInfo& info) {
     assert_lock_strong(DumpTimeTable_lock);
     assert(MetaspaceShared::is_in_shared_metaspace(key.method()), "");
-    return true;
+    InstanceKlass* holder =key.method()->method_holder();
+    bool is_excluded = SystemDictionaryShared::check_for_exclusion(holder, nullptr);
+    return is_excluded;
   }
 };
 
