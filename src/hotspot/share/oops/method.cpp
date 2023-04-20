@@ -415,6 +415,9 @@ void Method::remove_unshareable_info() {
   if (method_data() != nullptr) {
     method_data()->remove_unshareable_info();
   }
+  if (method_counters() != nullptr) {
+    method_counters()->remove_unshareable_info();
+  }
   JFR_ONLY(REMOVE_METHOD_ID(this);)
 }
 
@@ -422,6 +425,9 @@ void Method::restore_unshareable_info(TRAPS) {
   assert(is_method() && is_valid_method(this), "ensure C++ vtable is restored");
   if (method_data() != nullptr) {
     method_data()->restore_unshareable_info(CHECK);
+  }
+  if (method_counters() != nullptr) {
+    method_counters()->restore_unshareable_info(CHECK);
   }
 }
 #endif

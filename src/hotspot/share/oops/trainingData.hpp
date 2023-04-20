@@ -200,8 +200,6 @@ private:
   static TrainingDataSet _training_data_set;
 
 public:
-  virtual ~TrainingData() = default;
-
   // Returns the key under which this TD is installed, or else
   // Key::EMPTY if it is not installed.
   const Key* key() const { return &_key; }
@@ -480,9 +478,9 @@ class KlassTrainingData : public TrainingData {
   // safe to call this inside the initializing thread.
   bool record_static_field_init(fieldDescriptor* fd, const char* reason);
 
-  virtual void print_on(outputStream* st, bool name_only) const;
+  void print_on(outputStream* st, bool name_only) const;
   virtual void print_on(outputStream* st) const { print_on(st, false); }
-  void print_value_on(outputStream* st) const { print_on(st, true); }
+  virtual void print_value_on(outputStream* st) const { print_on(st, true); }
 
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
 
@@ -589,7 +587,7 @@ class MethodTrainingData : public TrainingData {
 
   virtual MethodTrainingData* as_MethodTrainingData() const { return const_cast<MethodTrainingData*>(this); };
 
-  virtual void print_on(outputStream* st, bool name_only) const;
+  void print_on(outputStream* st, bool name_only) const;
   virtual void print_on(outputStream* st) const { print_on(st, false); }
   virtual void print_value_on(outputStream* st) const { print_on(st, true); }
 
@@ -696,8 +694,7 @@ class CompileTrainingData : public TrainingData {
 
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
 
-  virtual void print_on(outputStream* st, bool name_only) const;
-
+  void print_on(outputStream* st, bool name_only) const;
   virtual void print_on(outputStream* st) const { print_on(st, false); }
   virtual void print_value_on(outputStream* st) const { print_on(st, true); }
 

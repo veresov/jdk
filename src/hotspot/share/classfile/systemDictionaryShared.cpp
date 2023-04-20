@@ -1340,6 +1340,9 @@ public:
     if (md != nullptr) {
       md->remove_unshareable_info();
     }
+    if (mc != nullptr) {
+      mc->remove_unshareable_info();
+    }
     return true;
   }
 };

@@ -2678,7 +2678,11 @@ void InstanceKlass::remove_unshareable_info() {
   init_shared_package_entry();
   _dep_context_last_cleaned = 0;
   _init_monitor = nullptr;
-  _training_data = nullptr;
+
+  if (_training_data != nullptr) {
+    _training_data->remove_unshareable_info();
+    // _training_data = nullptr; // FIXME: link through table
+  }
 }
 
 void InstanceKlass::remove_java_mirror() {
@@ -2761,6 +2765,10 @@ void InstanceKlass::restore_unshareable_info(ClassLoaderData* loader_data, Handl
 
   // restore the monitor
   _init_monitor = create_init_monitor("InstanceKlassInitMonitorRestored_lock");
+
+  if (_training_data != nullptr) {
+    _training_data->restore_unshareable_info(CHECK);
+  }
 }
 
 // Check if a class or any of its supertypes has a version older than 50.

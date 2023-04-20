@@ -74,6 +74,20 @@ void MethodCounters::metaspace_pointers_do(MetaspaceClosure* it) {
   it->push(&_method_training_data);
 }
 
+#if INCLUDE_CDS
+void MethodCounters::remove_unshareable_info() {
+  if (_method_training_data != nullptr) {
+    _method_training_data->remove_unshareable_info(); // FIXME: perform through TD table
+  }
+}
+
+void MethodCounters::restore_unshareable_info(TRAPS) {
+  if (_method_training_data != nullptr) {
+    _method_training_data->restore_unshareable_info(CHECK); // FIXME: perform through TD table
+  }
+}
+#endif // INCLUDE_CDS
+
 void MethodCounters::print_on(outputStream* st) const {
   assert(is_methodCounters(), "should be method counters");
   st->print("method counters");

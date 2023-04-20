@@ -151,7 +151,6 @@ void MethodTrainingData::print_on(outputStream* st, bool name_only) const {
   if (!has_holder())  st->print("[SYM]");
   if (_do_not_dump)  st->print("[DND]");
   if (_level_mask)  st->print(" LM%d", _level_mask);
-  st->cr();
 }
 
 void MethodTrainingData::refresh_from(const Method* method) {
@@ -234,7 +233,6 @@ void CompileTrainingData::print_on(outputStream* st, bool name_only) const {
     st->print(" dep:");
     _init_deps.at(i)->print_on(st, true);
   }
-  st->cr();
 }
 
 void CompileTrainingData::record_compilation_queued(CompileTask* task) {
@@ -847,7 +845,6 @@ void KlassTrainingData::print_on(outputStream* st, bool name_only) const {
     st->print(" dep:");
     _init_deps.at(i)->print_on(st, true);
   }
-  st->cr();
 }
 
 void KlassTrainingData::refresh_from(const InstanceKlass* klass) {
@@ -1321,16 +1318,22 @@ void KlassTrainingData::remove_unshareable_info() {
 }
 
 void KlassTrainingData::restore_unshareable_info(TRAPS) {
-  TrainingData::restore_unshareable_info(THREAD);
-  _init_deps.restore_unshareable_info(THREAD);
+  TrainingData::restore_unshareable_info(CHECK);
+  _init_deps.restore_unshareable_info(CHECK);
 }
 
 void MethodTrainingData::remove_unshareable_info() {
   TrainingData::remove_unshareable_info();
+  for (CompileTrainingData* ctd = _compile; ctd != nullptr; ctd = ctd->next()) {
+    ctd->remove_unshareable_info();
+  }
 }
 
 void MethodTrainingData::restore_unshareable_info(TRAPS) {
-  TrainingData::restore_unshareable_info(THREAD);
+  TrainingData::restore_unshareable_info(CHECK);
+  for (CompileTrainingData* ctd = _compile; ctd != nullptr; ctd = ctd->next()) {
+    ctd->restore_unshareable_info(CHECK);
+  }
 }
 
 void CompileTrainingData::remove_unshareable_info() {
@@ -1339,8 +1342,8 @@ void CompileTrainingData::remove_unshareable_info() {
 }
 
 void CompileTrainingData::restore_unshareable_info(TRAPS) {
-  TrainingData::restore_unshareable_info(THREAD);
-  _init_deps.restore_unshareable_info(THREAD);
+  TrainingData::restore_unshareable_info(CHECK);
+  _init_deps.restore_unshareable_info(CHECK);
 }
 
 #endif // INCLUDE_CDS
