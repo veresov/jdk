@@ -301,6 +301,7 @@ public:
     }
     void restore_unshareable_info(TRAPS) {}
 #endif
+    void prepare(ClassLoaderData* loader_data);
     void metaspace_pointers_do(MetaspaceClosure *iter);
   };
 
@@ -311,7 +312,7 @@ public:
   virtual void restore_unshareable_info(TRAPS) {}
 #endif
 
-  static void init_dumptime_table();
+  static void init_dumptime_table(TRAPS);
   static void iterate_roots(MetaspaceClosure* it);
   static void dump_training_data();
   static void cleanup_training_data();

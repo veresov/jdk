@@ -107,8 +107,6 @@ public:
     verify_universe("Before CDS dynamic dump");
     DEBUG_ONLY(SystemDictionaryShared::NoClassLoadingMark nclm);
 
-    TrainingData::init_dumptime_table(); // captures TrainingDataSetLocker
-
     // Block concurrent class unloading from changing the _dumptime_table
     MutexLocker ml(DumpTimeTable_lock, Mutex::_no_safepoint_check_flag);
     SystemDictionaryShared::check_excluded_classes();
@@ -414,6 +412,7 @@ void DynamicArchive::dump_for_jcmd(const char* archive_name, TRAPS) {
 void DynamicArchive::dump(const char* archive_name, TRAPS) {
   // copy shared path table to saved.
   FileMapInfo::clone_shared_path_table(CHECK);
+  TrainingData::init_dumptime_table(CHECK); // captures TrainingDataSetLocker
 
   VM_PopulateDynamicDumpSharedSpace op(archive_name);
   VMThread::execute(&op);

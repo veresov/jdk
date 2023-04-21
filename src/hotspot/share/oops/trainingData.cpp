@@ -401,7 +401,7 @@ class TrainingDataDumper {
     return _nodes;
   }
 
-  void prepare(TrainingData::TrainingDataSet* tds) {
+  void prepare(TrainingData::TrainingDataSet* tds, TRAPS) {
     TrainingDataSetLocker l;
     int prev_len = -1, len = 0;
     while (prev_len != len) {
@@ -409,7 +409,7 @@ class TrainingDataDumper {
       prev_len = len; len = node_count();
       tds->iterate_all([&](const TrainingData::Key* k, TrainingData* td) {
         if (!td->do_not_dump()) {
-          prepare(td);
+          prepare(td); // FIXME: may allocate in metaspace and hence throw an exception
         }
       });
     }
@@ -484,6 +484,13 @@ static int name_to_ClassState(const char* n) {
 bool KlassTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
   if (dp == DP_prepare) {
     // FIXME: Decide if we should set _do_not_dump on some records.
+    ClassLoaderData* loader_data = nullptr;
+    if (_holder != nullptr) {
+      loader_data = _holder->class_loader_data();
+    } else {
+      loader_data = java_lang_ClassLoader::loader_data(SystemDictionary::java_system_loader()); // default CLD
+    }
+    _init_deps.prepare(loader_data);
     return true;
   }
   auto out = tdd.out();
@@ -550,6 +557,7 @@ bool CompileTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
   if (dp == DP_prepare) {
     tdd.prepare(md);
     tdd.prepare(td);
+    _init_deps.prepare(_method->klass()->class_loader_data());
     return true;
   }
   auto out = tdd.out();
@@ -647,10 +655,10 @@ void TrainingData::store_results() {
   tdd.close();
 }
 
-void TrainingData::init_dumptime_table() {
+void TrainingData::init_dumptime_table(TRAPS) {
   ResourceMark rm;
   TrainingDataDumper tdd;
-  tdd.prepare(training_data_set());
+  tdd.prepare(training_data_set(), CHECK);
   GrowableArray<TrainingData*>& tda = tdd.hand_off_node_list();
   tda.sort(qsort_compare_tdata); // FIXME: needed?
   int num_of_entries = tda.length();
@@ -1328,6 +1336,18 @@ void CompileTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   iter->push(&_method);
   iter->push(&_top_method);
   iter->push(&_next);
+}
+
+template <typename T>
+void TrainingData::DepList<T>::prepare(ClassLoaderData* loader_data) {
+  if (_deps == nullptr && _deps_dyn != nullptr) {
+    JavaThread* THREAD = JavaThread::current();
+    int len = _deps_dyn->length();
+    _deps = MetadataFactory::new_array<T>(loader_data, len, THREAD);
+    for (int i = 0; i < len; i++) {
+      _deps->at_put(i, _deps_dyn->at(i)); // copy
+    }
+  }
 }
 
 KlassTrainingData* KlassTrainingData::allocate(InstanceKlass* holder) {
