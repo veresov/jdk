@@ -308,7 +308,8 @@ size_t ArchiveBuilder::estimate_archive_size() {
   // size of the symbol table and two dictionaries, plus the RunTimeClassInfo's
   size_t symbol_table_est = SymbolTable::estimate_size_for_archive();
   size_t dictionary_est = SystemDictionaryShared::estimate_size_for_archive();
-  _estimated_hashtable_bytes = symbol_table_est + dictionary_est;
+  size_t training_data_est = TrainingData::estimate_size_for_archive();
+  _estimated_hashtable_bytes = symbol_table_est + dictionary_est + training_data_est;
 
   if (DynamicDumpSharedSpaces) {
     // Some extra space for traning data. Be generous. Unused areas will be trimmed from the archive file.

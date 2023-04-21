@@ -1430,7 +1430,7 @@ void SystemDictionaryShared::update_shared_entry(InstanceKlass* k, int id) {
   info->_id = id;
 }
 
-const char* class_loader_name_for_shared(Klass* k) {
+const char* SystemDictionaryShared::class_loader_name_for_shared(Klass* k) {
   assert(k != nullptr, "Sanity");
   assert(k->is_shared(), "Must be");
   assert(k->is_instance_klass(), "Must be");
@@ -1457,7 +1457,7 @@ public:
   void do_value(const RunTimeClassInfo* record) {
     ResourceMark rm;
     _st->print_cr("%4d: %s %s", _index++, record->_klass->external_name(),
-        class_loader_name_for_shared(record->_klass));
+        SystemDictionaryShared::class_loader_name_for_shared(record->_klass));
   }
   int index() const { return _index; }
 };
@@ -1474,7 +1474,7 @@ public:
       Klass* k = record->proxy_klass_head();
       while (k != nullptr) {
         _st->print_cr("%4d: %s %s", _index++, k->external_name(),
-                      class_loader_name_for_shared(k));
+                      SystemDictionaryShared::class_loader_name_for_shared(k));
         k = k->next_link();
       }
     }
@@ -1519,65 +1519,6 @@ public:
         md->print_on(_st);
       }
       _st->cr();
-    }
-  }
-};
-
-class TrainingDataPrinter : StackObj {
-  outputStream* _st;
-  int _index;
-
-private:
-  static const char* tag(void* p) {
-    if (p == nullptr) {
-      return "   ";
-    } else if (MetaspaceShared::is_shared_dynamic(p)) {
-      return "<D>";
-    } else if (MetaspaceShared::is_in_shared_metaspace(p)) {
-      return "<S>";
-    } else {
-      return "???";
-    }
-  }
-public:
-  TrainingDataPrinter(outputStream* st) : _st(st), _index(0) {}
-
-  void do_value(const RunTimeClassInfo* record) {
-    ResourceMark rm;
-    KlassTrainingData* ktd = record->_klass->training_data_or_null();
-    if (ktd != nullptr) {
-      _st->print("%4d: KTD %s%p for %s %s", _index++, tag(ktd), ktd, record->_klass->external_name(),
-                 class_loader_name_for_shared(record->_klass));
-      if (Verbose) {
-        ktd->print_on(_st);
-      } else {
-        ktd->print_value_on(_st);
-      }
-      _st->cr();
-    }
-  }
-
-  void do_value(const RunTimeMethodDataInfo* record) {
-    ResourceMark rm;
-    MethodCounters* mc = record->method_counters();
-    if (mc != nullptr) {
-      MethodTrainingData* mtd = mc->method_training_data();
-      if (mtd != nullptr) {
-        _st->print("%4d: MTD %s%p ", _index++, tag(mtd), mtd);
-        if (Verbose) {
-          mtd->print_on(_st);
-        } else {
-          mtd->print_value_on(_st);
-        }
-        _st->cr();
-
-        int i = 0;
-        for (CompileTrainingData* ctd = mtd->compile(); ctd != nullptr; ctd = ctd->next()) {
-          _st->print("  CTD[%d]: ", i++);
-          ctd->print_on(_st);
-          _st->cr();
-        }
-      }
     }
   }
 };

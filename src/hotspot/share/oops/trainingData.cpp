@@ -49,6 +49,7 @@
 
 TrainingData::TrainingDataSet TrainingData::_training_data_set(1024);
 Array<TrainingData*>* TrainingData::_archived_training_data_set = nullptr;
+TrainingDataDictionary TrainingData::_archived_training_data_dictionary;
 GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* TrainingData::_dumptime_training_data_dictionary = nullptr;
 
 int TrainingData::TrainingDataSet::_lock_mode;
@@ -655,68 +656,6 @@ void TrainingData::store_results() {
   tdd.close();
 }
 
-void TrainingData::init_dumptime_table(TRAPS) {
-  ResourceMark rm;
-  TrainingDataDumper tdd;
-  tdd.prepare(training_data_set(), CHECK);
-  GrowableArray<TrainingData*>& tda = tdd.hand_off_node_list();
-  tda.sort(qsort_compare_tdata); // FIXME: needed?
-  int num_of_entries = tda.length();
-  _dumptime_training_data_dictionary = new GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>();
-  for (int i = 0; i < num_of_entries; i++) {
-    TrainingData* td = tda.at(i);
-    // TODO: filter TD
-    // if (SystemDictionaryShared::check_for_exclusion(), nullptr);
-    _dumptime_training_data_dictionary->append(td);
-  }
-}
-
-void TrainingData::iterate_roots(MetaspaceClosure* it) {
-  for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
-    _dumptime_training_data_dictionary->at(i).metaspace_pointers_do(it);
-  }
-}
-
-void TrainingData::dump_training_data() {
-  int num_of_entries = _dumptime_training_data_dictionary->length();
-  _archived_training_data_set = ArchiveBuilder::new_ro_array<TrainingData*>(num_of_entries);
-  for (int i = 0; i < num_of_entries; i++) {
-    auto td = _dumptime_training_data_dictionary->at(i).training_data();
-    assert(td->do_not_dump() == false, "");
-    _archived_training_data_set->at_put(i, td);
-    ArchivePtrMarker::mark_pointer(_archived_training_data_set->adr_at(i)); // must mark the pointer
-  }
-}
-
-void TrainingData::cleanup_training_data() {
-  // FIXME: anything to do here?
-}
-
-void TrainingData::serialize_training_data(SerializeClosure* soc) {
-  soc->do_ptr((void**)&_archived_training_data_set);
-}
-
-void TrainingData::adjust_training_data_dictionary() {
-  for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
-    TrainingData* td = _dumptime_training_data_dictionary->at(i).training_data();
-    assert(MetaspaceShared::is_in_shared_metaspace(td) || ArchiveBuilder::current()->is_in_buffer_space(td), "");
-    td->remove_unshareable_info();
-  }
-}
-
-void TrainingData::print_archived_training_data_on(outputStream* st) {
-  tty->print_cr("_archived_training_data = " INTPTR_FORMAT, p2i(_archived_training_data_set));
-  if (_archived_training_data_set != nullptr) {
-    for (int i = 0; i < _archived_training_data_set->length(); i++) {
-      ResourceMark rm;
-      TrainingData* td = _archived_training_data_set->at(i);
-      tty->print("_archived_training_data[%2d] = %p ", i, td);
-      td->print_on(tty);
-      tty->cr();
-    }
-  }
-}
-
 static bool str_starts(const char* str, const char* start) {
   return !strncmp(str, start, strlen(start));
 }
@@ -1299,6 +1238,73 @@ void KlassTrainingData::log_initialization(bool is_start) {
 
 // CDS support
 
+void TrainingData::init_dumptime_table(TRAPS) {
+  ResourceMark rm;
+  TrainingDataDumper tdd;
+  tdd.prepare(training_data_set(), CHECK);
+  GrowableArray<TrainingData*>& tda = tdd.hand_off_node_list();
+  tda.sort(qsort_compare_tdata); // FIXME: needed?
+  int num_of_entries = tda.length();
+  _dumptime_training_data_dictionary = new GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>();
+  for (int i = 0; i < num_of_entries; i++) {
+    TrainingData* td = tda.at(i);
+    // TODO: filter TD
+    // if (SystemDictionaryShared::check_for_exclusion(), nullptr);
+    _dumptime_training_data_dictionary->append(td);
+  }
+}
+
+void TrainingData::iterate_roots(MetaspaceClosure* it) {
+  for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
+    _dumptime_training_data_dictionary->at(i).metaspace_pointers_do(it);
+  }
+}
+
+void TrainingData::dump_training_data() {
+  int num_of_entries = _dumptime_training_data_dictionary->length();
+  _archived_training_data_set = ArchiveBuilder::new_ro_array<TrainingData*>(num_of_entries);
+  for (int i = 0; i < num_of_entries; i++) {
+    auto td = _dumptime_training_data_dictionary->at(i).training_data();
+    assert(td->do_not_dump() == false, "");
+    _archived_training_data_set->at_put(i, td);
+    ArchivePtrMarker::mark_pointer(_archived_training_data_set->adr_at(i)); // must mark the pointer
+  }
+  write_training_data_dictionary(&_archived_training_data_dictionary);
+}
+
+void TrainingData::cleanup_training_data() {
+  // FIXME: anything to do here?
+}
+
+void TrainingData::serialize_training_data(SerializeClosure* soc) {
+  soc->do_ptr((void**)&_archived_training_data_set);
+  _archived_training_data_dictionary.serialize_header(soc);
+}
+
+void TrainingData::adjust_training_data_dictionary() {
+  for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
+    TrainingData* td = _dumptime_training_data_dictionary->at(i).training_data();
+    assert(MetaspaceShared::is_in_shared_metaspace(td) || ArchiveBuilder::current()->is_in_buffer_space(td), "");
+    td->remove_unshareable_info();
+  }
+}
+
+void TrainingData::print_archived_training_data_on(outputStream* st) {
+  st->print_cr("_archived_training_data = " INTPTR_FORMAT, p2i(_archived_training_data_set));
+  if (_archived_training_data_set != nullptr) {
+    for (int i = 0; i < _archived_training_data_set->length(); i++) {
+      ResourceMark rm;
+      TrainingData* td = _archived_training_data_set->at(i);
+      st->print("_archived_training_data[%2d] = %p ", i, td);
+      td->print_on(st);
+      st->cr();
+    }
+  }
+  st->print_cr("Archived TrainingData Dictionary");
+  TrainingDataPrinter tdp(st);
+  _archived_training_data_dictionary.iterate(&tdp);
+}
+
 void TrainingData::Key::metaspace_pointers_do(MetaspaceClosure *iter) {
   iter->push(&_name1);
   iter->push(&_name2);
@@ -1307,6 +1313,28 @@ void TrainingData::Key::metaspace_pointers_do(MetaspaceClosure *iter) {
 
 void TrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   _key.metaspace_pointers_do(iter);
+}
+
+void TrainingData::write_training_data_dictionary(TrainingDataDictionary* dictionary) {
+  CompactHashtableStats stats;
+  dictionary->reset();
+  CompactHashtableWriter writer(_dumptime_training_data_dictionary->length(), &stats);
+  for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
+    TrainingData* td = _dumptime_training_data_dictionary->at(i).training_data();
+    uint hash = SystemDictionaryShared::hash_for_shared_dictionary((address)td->key());
+    u4 delta = ArchiveBuilder::current()->buffer_to_offset_u4((address)td);
+    writer.add(hash, delta);
+  }
+  writer.dump(dictionary, "training data dictionary");
+}
+
+size_t TrainingData::estimate_size_for_archive() {
+  if (_dumptime_training_data_dictionary != nullptr) {
+    return CompactHashtableWriter::estimate_size(_dumptime_training_data_dictionary->length());
+  } else {
+    assert(!DynamicDumpSharedSpaces, "");
+  }
+  return 0;
 }
 
 template <typename T>
@@ -1409,6 +1437,64 @@ CompileTrainingData* CompileTrainingData::allocate(MethodTrainingData* this_meth
       CompileTrainingData(this_method, top_method, level, compile_id);
 }
 
+static const char* tag(void* p) {
+  if (p == nullptr) {
+    return "   ";
+  } else if (MetaspaceShared::is_shared_dynamic(p)) {
+    return "<D>";
+  } else if (MetaspaceShared::is_in_shared_metaspace(p)) {
+    return "<S>";
+  } else {
+    return "???";
+  }
+}
+
+void TrainingDataPrinter::do_value(const RunTimeClassInfo* record) {
+  ResourceMark rm;
+  KlassTrainingData* ktd = record->_klass->training_data_or_null();
+  if (ktd != nullptr) {
+    _st->print("%4d: KTD %s%p for %s %s", _index++, tag(ktd), ktd, record->_klass->external_name(),
+               SystemDictionaryShared::class_loader_name_for_shared(record->_klass));
+    if (Verbose) {
+      ktd->print_on(_st);
+    } else {
+      ktd->print_value_on(_st);
+    }
+    _st->cr();
+  }
+}
+
+void TrainingDataPrinter::do_value(const RunTimeMethodDataInfo* record) {
+  ResourceMark rm;
+  MethodCounters* mc = record->method_counters();
+  if (mc != nullptr) {
+    MethodTrainingData* mtd = mc->method_training_data();
+    if (mtd != nullptr) {
+      _st->print("%4d: MTD %s%p ", _index++, tag(mtd), mtd);
+      if (Verbose) {
+        mtd->print_on(_st);
+      } else {
+        mtd->print_value_on(_st);
+      }
+      _st->cr();
+
+      int i = 0;
+      for (CompileTrainingData* ctd = mtd->compile(); ctd != nullptr; ctd = ctd->next()) {
+        _st->print("  CTD[%d]: ", i++);
+        ctd->print_on(_st);
+        _st->cr();
+      }
+    }
+  }
+}
+
+void TrainingDataPrinter::do_value(TrainingData* td) {
+  _st->print("%4d: %p ", _index++, td);
+  td->print_on(_st);
+  _st->cr();
+}
+
+
 #if INCLUDE_CDS
 void KlassTrainingData::remove_unshareable_info() {
   TrainingData::remove_unshareable_info();
@@ -1445,16 +1531,4 @@ void CompileTrainingData::restore_unshareable_info(TRAPS) {
   TrainingData::restore_unshareable_info(CHECK);
   _init_deps.restore_unshareable_info(CHECK);
 }
-
-
-//void SystemDictionaryShared::write_training_data_dictionary(TrainingData::TrainingDataDictionary* dictionary) {
-//  CompactHashtableStats stats;
-//  dictionary->reset();
-//  CompactHashtableWriter writer(TrainingData::training_data_set()->number_of_entries(), &stats);
-//  // FIXME
-//
-////  CopyTrainingDataToArchive copy(&writer);
-////  _dumptime_method_info_dictionary->iterate(&copy);
-////  writer.dump(dictionary, "method info dictionary");
-//}
 #endif // INCLUDE_CDS

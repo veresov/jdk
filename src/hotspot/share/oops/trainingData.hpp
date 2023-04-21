@@ -49,6 +49,9 @@ class MethodTrainingData;
 class TrainingDataDumper;
 class TrainingDataSetLocker;
 class DumpTimeTrainingDataInfo;
+class TrainingDataDictionary;
+class RunTimeClassInfo;
+class RunTimeMethodDataInfo;
 
 class TrainingData : public Metadata {
   friend KlassTrainingData;
@@ -86,16 +89,6 @@ class TrainingData : public Metadata {
     Key(const Method* method);
 
   public:
-    static inline unsigned int DUMPTIME_HASH(Key const& key) {
-      return Symbol::identity_hash(key.name1()) +
-             Symbol::identity_hash(key.name2());
-    }
-
-    static inline bool DUMPTIME_EQUALS(Key const& k1, Key const& k2) {
-      return k1.name1() == k2.name1() &&
-             k1.name2() == k2.name2();
-    }
-
     static unsigned hash(const Key* const& k) {
       // A symmetric hash code is usually a bad idea, except in cases
       // like this where it is very unlikely that any one string might
@@ -111,6 +104,9 @@ class TrainingData : public Metadata {
       return (k1->name1()   == k2->name1() &&
               k1->name2()   == k2->name2() &&
               k1->holder()  == k2->holder());
+    }
+    static inline bool equals(TrainingData* value, TrainingData::Key* key, int unused) {
+      return equals(value->key(), key);
     }
     int cmp(const Key* that) const {
       auto h1 = this->holder();
@@ -213,8 +209,9 @@ private:
 
   static TrainingDataSet _training_data_set;
   static Array<TrainingData*>* _archived_training_data_set;
-  static GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* _dumptime_training_data_dictionary;
+  static TrainingDataDictionary _archived_training_data_dictionary;
 
+  static GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* _dumptime_training_data_dictionary;
 public:
   // Returns the key under which this TD is installed, or else
   // Key::EMPTY if it is not installed.
@@ -319,8 +316,8 @@ public:
   static void serialize_training_data(SerializeClosure* soc);
   static void adjust_training_data_dictionary();
   static void print_archived_training_data_on(outputStream* st);
-//  static void write_training_data_dictionary(TrainingData::TrainingDataDictionary* dictionary);
-//  static void cleanup_training_data_dictionary();
+  static void write_training_data_dictionary(TrainingDataDictionary* dictionary);
+  static size_t estimate_size_for_archive();
 };
 
 class TrainingDataSetLocker {
@@ -750,15 +747,6 @@ inline int MethodTrainingData::last_compile_id() const {
   return (_compile == nullptr ? 0 : _compile->compile_id());
 }
 
-//  // Used by TrainingDataDictionary to implement OffsetCompactHashtable::EQUALS
-//  static inline bool EQUALS(TrainingData* data, const Key* key, int unused) {
-//    return Key::equals(data->key(), key);
-//  }
-//
-//  class TrainingDataDictionary : public OffsetCompactHashtable<
-//      const Key*, TrainingData*,
-//      TrainingData::EQUALS> {};
-
 class DumpTimeTrainingDataInfo {
   TrainingData* _training_data;
 public:
@@ -776,45 +764,20 @@ public:
   }
 };
 
-class RunTimeTrainingDataInfo {
-  TrainingData* _training_data;
-public:
-  RunTimeTrainingDataInfo(TrainingData* training_data) :
-      _training_data(training_data) {}
-
-  // Used by TrainingDataDictionary to implement OffsetCompactHashtable::EQUALS
-  static inline bool EQUALS(
-      const RunTimeTrainingDataInfo* value, TrainingData::Key* key, int unused) {
-    return TrainingData::Key::equals(value->_training_data->key(), key);
-  }
-  void init(DumpTimeTrainingDataInfo& info) {
-    _training_data = info.training_data();
-    ArchivePtrMarker::mark_pointer(&_training_data);
-  }
-
-  unsigned int hash() const {
-    return TrainingData::Key::hash(_training_data->key());
-  }
-
-  TrainingData* training_data() { return _training_data; }
-};
-
-class DumpTimeTrainingDataDictionary
-: public ResourceHashtable<TrainingData::Key,
-        DumpTimeTrainingDataInfo,
-        1559, // prime number
-        AnyObj::C_HEAP,
-        mtClassShared,
-        TrainingData::Key::DUMPTIME_HASH,
-        TrainingData::Key::DUMPTIME_EQUALS> {
-public:
-  DumpTimeTrainingDataDictionary() : _count(0) {}
-  int _count;
-};
-
 class TrainingDataDictionary : public OffsetCompactHashtable<
-    TrainingData::Key*,
-    const RunTimeTrainingDataInfo*,
-    RunTimeTrainingDataInfo::EQUALS> {};
+    TrainingData::Key*, TrainingData*,
+    TrainingData::Key::equals> {};
+
+class TrainingDataPrinter : StackObj {
+  outputStream* _st;
+  int _index;
+
+public:
+  TrainingDataPrinter(outputStream* st) : _st(st), _index(0) {}
+
+  void do_value(TrainingData* record);
+  void do_value(const RunTimeClassInfo* record);
+  void do_value(const RunTimeMethodDataInfo* record);
+};
 
 #endif // SHARE_OOPS_TRAININGDATA_HPP

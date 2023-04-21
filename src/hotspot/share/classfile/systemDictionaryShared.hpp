@@ -141,6 +141,7 @@ class SharedClassLoadingMark {
 
 class SystemDictionaryShared: public SystemDictionary {
   friend class ExcludeDumpTimeSharedClasses;
+
   friend class CleanupDumpTimeLambdaProxyClassTable;
 
   struct ArchiveInfo {
@@ -150,119 +151,139 @@ class SystemDictionaryShared: public SystemDictionary {
     MethodDataInfoDictionary _method_info_dictionary;
 //    TrainingData::TrainingDataDictionary _training_data_dictionary;
 
-    const RunTimeLambdaProxyClassInfo* lookup_lambda_proxy_class(LambdaProxyClassKey* key) {
+    const RunTimeLambdaProxyClassInfo *lookup_lambda_proxy_class(LambdaProxyClassKey *key) {
       return _lambda_proxy_class_dictionary.lookup(key, key->hash(), 0);
     }
 
-    const RunTimeMethodDataInfo* lookup_method_info(Method* m) {
+    const RunTimeMethodDataInfo *lookup_method_info(Method *m) {
       MethodDataKey key(m);
       return _method_info_dictionary.lookup(&key, key.hash(), 0);
     }
 
-    void print_on(const char* prefix, outputStream* st);
-    void print_table_statistics(const char* prefix, outputStream* st);
+    void print_on(const char *prefix, outputStream *st);
+
+    void print_table_statistics(const char *prefix, outputStream *st);
   };
 
 public:
   enum {
     FROM_FIELD_IS_PROTECTED = 1 << 0,
-    FROM_IS_ARRAY           = 1 << 1,
-    FROM_IS_OBJECT          = 1 << 2
+    FROM_IS_ARRAY = 1 << 1,
+    FROM_IS_OBJECT = 1 << 2
   };
 
 private:
 
-  static DumpTimeSharedClassTable* _dumptime_table;
-  static DumpTimeSharedClassTable* _cloned_dumptime_table;
-  static DumpTimeLambdaProxyClassDictionary* _dumptime_lambda_proxy_class_dictionary;
-  static DumpTimeLambdaProxyClassDictionary* _cloned_dumptime_lambda_proxy_class_dictionary;
+  static DumpTimeSharedClassTable *_dumptime_table;
+  static DumpTimeSharedClassTable *_cloned_dumptime_table;
+  static DumpTimeLambdaProxyClassDictionary *_dumptime_lambda_proxy_class_dictionary;
+  static DumpTimeLambdaProxyClassDictionary *_cloned_dumptime_lambda_proxy_class_dictionary;
 
-  static DumpTimeMethodInfoDictionary* _dumptime_method_info_dictionary;
-  static DumpTimeMethodInfoDictionary* _cloned_dumptime_method_info_dictionary;
+  static DumpTimeMethodInfoDictionary *_dumptime_method_info_dictionary;
+  static DumpTimeMethodInfoDictionary *_cloned_dumptime_method_info_dictionary;
 
   static ArchiveInfo _static_archive;
   static ArchiveInfo _dynamic_archive;
 
-  static ArchiveInfo* get_archive(bool is_static_archive) {
+  static ArchiveInfo *get_archive(bool is_static_archive) {
     return is_static_archive ? &_static_archive : &_dynamic_archive;
   }
 
-  static InstanceKlass* load_shared_class_for_builtin_loader(
-                                               Symbol* class_name,
-                                               Handle class_loader,
-                                               TRAPS);
-  static InstanceKlass* acquire_class_for_current_thread(
-                                 InstanceKlass *ik,
-                                 Handle class_loader,
-                                 Handle protection_domain,
-                                 const ClassFileStream* cfs,
-                                 TRAPS);
+  static InstanceKlass *load_shared_class_for_builtin_loader(
+      Symbol *class_name,
+      Handle class_loader,
+      TRAPS);
+
+  static InstanceKlass *acquire_class_for_current_thread(
+      InstanceKlass *ik,
+      Handle class_loader,
+      Handle protection_domain,
+      const ClassFileStream *cfs,
+      TRAPS);
 
   // Guaranteed to return non-null value for non-shared classes.
   // k must not be a shared class.
-  static DumpTimeClassInfo* get_info(InstanceKlass* k);
-  static DumpTimeClassInfo* get_info_locked(InstanceKlass* k);
+  static DumpTimeClassInfo *get_info(InstanceKlass *k);
 
-  static void write_dictionary(RunTimeSharedDictionary* dictionary,
+  static DumpTimeClassInfo *get_info_locked(InstanceKlass *k);
+
+  static void write_dictionary(RunTimeSharedDictionary *dictionary,
                                bool is_builtin);
-  static void write_lambda_proxy_class_dictionary(LambdaProxyClassDictionary* dictionary);
-  static void write_method_info_dictionary(MethodDataInfoDictionary* dictionary);
+
+  static void write_lambda_proxy_class_dictionary(LambdaProxyClassDictionary *dictionary);
+
+  static void write_method_info_dictionary(MethodDataInfoDictionary *dictionary);
+
   static void cleanup_lambda_proxy_class_dictionary();
+
   static void cleanup_method_info_dictionary();
-  static void reset_registered_lambda_proxy_class(InstanceKlass* ik);
+
+  static void reset_registered_lambda_proxy_class(InstanceKlass *ik);
+
   static bool is_jfr_event_class(InstanceKlass *k);
-  static bool is_registered_lambda_proxy_class(InstanceKlass* ik);
-  static bool check_for_exclusion_impl(InstanceKlass* k);
-  static void remove_dumptime_info(InstanceKlass* k) NOT_CDS_RETURN;
-  static bool has_been_redefined(InstanceKlass* k);
+
+  static bool is_registered_lambda_proxy_class(InstanceKlass *ik);
+
+  static bool check_for_exclusion_impl(InstanceKlass *k);
+
+  static void remove_dumptime_info(InstanceKlass *k) NOT_CDS_RETURN;
+
+  static bool has_been_redefined(InstanceKlass *k);
 
   DEBUG_ONLY(static bool _class_loading_may_happen;)
 
 public:
-  static bool is_hidden_lambda_proxy(InstanceKlass* ik);
-  static bool is_early_klass(InstanceKlass* k);   // Was k loaded while JvmtiExport::is_early_phase()==true
-  static bool has_archived_enum_objs(InstanceKlass* ik);
-  static void set_has_archived_enum_objs(InstanceKlass* ik);
+  static bool is_hidden_lambda_proxy(InstanceKlass *ik);
 
-  static InstanceKlass* find_builtin_class(Symbol* class_name);
+  static bool is_early_klass(InstanceKlass *k);   // Was k loaded while JvmtiExport::is_early_phase()==true
+  static bool has_archived_enum_objs(InstanceKlass *ik);
 
-  static const RunTimeClassInfo* find_record(RunTimeSharedDictionary* static_dict,
-                                                   RunTimeSharedDictionary* dynamic_dict,
-                                                   Symbol* name);
+  static void set_has_archived_enum_objs(InstanceKlass *ik);
+
+  static InstanceKlass *find_builtin_class(Symbol *class_name);
+
+  static const RunTimeClassInfo *find_record(RunTimeSharedDictionary *static_dict,
+                                             RunTimeSharedDictionary *dynamic_dict,
+                                             Symbol *name);
 
   static bool has_platform_or_app_classes();
 
   // Called by PLATFORM/APP loader only
-  static InstanceKlass* find_or_load_shared_class(Symbol* class_name,
-                                               Handle class_loader,
-                                               TRAPS);
+  static InstanceKlass *find_or_load_shared_class(Symbol *class_name,
+                                                  Handle class_loader,
+                                                  TRAPS);
+
   static void preload_archived_classes(TRAPS);
 
   static void allocate_shared_data_arrays(int size, TRAPS);
 
-  static bool is_builtin_loader(ClassLoaderData* loader_data);
+  static bool is_builtin_loader(ClassLoaderData *loader_data);
 
-  static InstanceKlass* lookup_super_for_unregistered_class(Symbol* class_name,
-                                                            Symbol* super_name,  bool is_superclass);
+  static InstanceKlass *lookup_super_for_unregistered_class(Symbol *class_name,
+                                                            Symbol *super_name, bool is_superclass);
 
   static void initialize() NOT_CDS_RETURN;
-  static void init_dumptime_info(InstanceKlass* k) NOT_CDS_RETURN;
-  static void handle_class_unloading(InstanceKlass* k) NOT_CDS_RETURN;
 
-  static void init_dumptime_info(Method* m) NOT_CDS_RETURN;
+  static void init_dumptime_info(InstanceKlass *k) NOT_CDS_RETURN;
 
-  static Dictionary* boot_loader_dictionary() {
+  static void handle_class_unloading(InstanceKlass *k) NOT_CDS_RETURN;
+
+  static void init_dumptime_info(Method *m) NOT_CDS_RETURN;
+
+  static Dictionary *boot_loader_dictionary() {
     return ClassLoaderData::the_null_class_loader_data()->dictionary();
   }
 
-  static void update_shared_entry(InstanceKlass* klass, int id);
-  static void set_shared_class_misc_info(InstanceKlass* k, ClassFileStream* cfs);
+  static void update_shared_entry(InstanceKlass *klass, int id);
 
-  static InstanceKlass* lookup_from_stream(Symbol* class_name,
+  static void set_shared_class_misc_info(InstanceKlass *k, ClassFileStream *cfs);
+
+  static InstanceKlass *lookup_from_stream(Symbol *class_name,
                                            Handle class_loader,
                                            Handle protection_domain,
-                                           const ClassFileStream* st,
+                                           const ClassFileStream *st,
                                            TRAPS);
+
   // "verification_constraints" are a set of checks performed by
   // VerificationType::is_reference_assignable_from when verifying a shared class during
   // dump time.
@@ -272,39 +293,52 @@ public:
   // ensures that you cannot load a shared class if its super type(s) are changed. However,
   // we need an additional check to ensure that the verification_constraints did not change
   // between dump time and runtime.
-  static bool add_verification_constraint(InstanceKlass* k, Symbol* name,
-                  Symbol* from_name, bool from_field_is_protected,
-                  bool from_is_array, bool from_is_object) NOT_CDS_RETURN_(false);
-  static void check_verification_constraints(InstanceKlass* klass,
+  static bool add_verification_constraint(InstanceKlass *k, Symbol *name,
+                                          Symbol *from_name, bool from_field_is_protected,
+                                          bool from_is_array, bool from_is_object) NOT_CDS_RETURN_(false);
+
+  static void check_verification_constraints(InstanceKlass *klass,
                                              TRAPS) NOT_CDS_RETURN;
-  static void add_enum_klass_static_field(InstanceKlass* ik, int root_index);
-  static void set_class_has_failed_verification(InstanceKlass* ik) NOT_CDS_RETURN;
-  static bool has_class_failed_verification(InstanceKlass* ik) NOT_CDS_RETURN_(false);
-  static void add_lambda_proxy_class(InstanceKlass* caller_ik,
-                                     InstanceKlass* lambda_ik,
-                                     Symbol* invoked_name,
-                                     Symbol* invoked_type,
-                                     Symbol* method_type,
-                                     Method* member_method,
-                                     Symbol* instantiated_method_type, TRAPS) NOT_CDS_RETURN;
-  static void add_to_dump_time_lambda_proxy_class_dictionary(LambdaProxyClassKey& key,
-                                                             InstanceKlass* proxy_klass) NOT_CDS_RETURN;
-  static InstanceKlass* get_shared_lambda_proxy_class(InstanceKlass* caller_ik,
-                                                      Symbol* invoked_name,
-                                                      Symbol* invoked_type,
-                                                      Symbol* method_type,
-                                                      Method* member_method,
-                                                      Symbol* instantiated_method_type) NOT_CDS_RETURN_(nullptr);
-  static InstanceKlass* get_shared_nest_host(InstanceKlass* lambda_ik) NOT_CDS_RETURN_(nullptr);
-  static InstanceKlass* prepare_shared_lambda_proxy_class(InstanceKlass* lambda_ik,
-                                                          InstanceKlass* caller_ik, TRAPS) NOT_CDS_RETURN_(nullptr);
-  static bool check_linking_constraints(Thread* current, InstanceKlass* klass) NOT_CDS_RETURN_(false);
-  static void record_linking_constraint(Symbol* name, InstanceKlass* klass,
-                                     Handle loader1, Handle loader2) NOT_CDS_RETURN;
-  static bool is_builtin(InstanceKlass* k) {
+
+  static void add_enum_klass_static_field(InstanceKlass *ik, int root_index);
+
+  static void set_class_has_failed_verification(InstanceKlass *ik) NOT_CDS_RETURN;
+
+  static bool has_class_failed_verification(InstanceKlass *ik) NOT_CDS_RETURN_(false);
+
+  static void add_lambda_proxy_class(InstanceKlass *caller_ik,
+                                     InstanceKlass *lambda_ik,
+                                     Symbol *invoked_name,
+                                     Symbol *invoked_type,
+                                     Symbol *method_type,
+                                     Method *member_method,
+                                     Symbol *instantiated_method_type, TRAPS) NOT_CDS_RETURN;
+
+  static void add_to_dump_time_lambda_proxy_class_dictionary(LambdaProxyClassKey &key,
+                                                             InstanceKlass *proxy_klass) NOT_CDS_RETURN;
+
+  static InstanceKlass *get_shared_lambda_proxy_class(InstanceKlass *caller_ik,
+                                                      Symbol *invoked_name,
+                                                      Symbol *invoked_type,
+                                                      Symbol *method_type,
+                                                      Method *member_method,
+                                                      Symbol *instantiated_method_type) NOT_CDS_RETURN_(nullptr);
+
+  static InstanceKlass *get_shared_nest_host(InstanceKlass *lambda_ik) NOT_CDS_RETURN_(nullptr);
+
+  static InstanceKlass *prepare_shared_lambda_proxy_class(InstanceKlass *lambda_ik,
+                                                          InstanceKlass *caller_ik, TRAPS) NOT_CDS_RETURN_(nullptr);
+
+  static bool check_linking_constraints(Thread *current, InstanceKlass *klass) NOT_CDS_RETURN_(false);
+
+  static void record_linking_constraint(Symbol *name, InstanceKlass *klass,
+                                        Handle loader1, Handle loader2) NOT_CDS_RETURN;
+
+  static bool is_builtin(InstanceKlass *k) {
     return (k->shared_classpath_index() != UNREGISTERED_INDEX);
   }
-  static bool add_unregistered_class(Thread* current, InstanceKlass* k);
+
+  static bool add_unregistered_class(Thread *current, InstanceKlass *k);
 
   // For repeatable dumping, we
   //   1. clone DumpTimeSharedClassTable, same for DumpTimeLambdaProxyClassDictionary
@@ -313,41 +347,62 @@ public:
   //   3. restore DumpTimeSharedClassTable, DumpTimeLambdaProxyClassDictionary and SharedClassPathTable
   //      from cloned versions.
   static void clone_dumptime_tables();
+
   static void restore_dumptime_tables();
 
   static void check_excluded_classes();
-  static bool check_for_exclusion(InstanceKlass* k, DumpTimeClassInfo* info);
-  static void validate_before_archiving(InstanceKlass* k);
-  static bool is_excluded_class(InstanceKlass* k);
-  static void set_excluded(InstanceKlass* k);
-  static void set_excluded_locked(InstanceKlass* k);
-  static bool warn_excluded(InstanceKlass* k, const char* reason);
-  static void dumptime_classes_do(class MetaspaceClosure* it);
-  static size_t estimate_size_for_archive();
-  static void write_to_archive(bool is_static_archive = true);
-  static void adjust_lambda_proxy_class_dictionary();
-  static void adjust_method_info_dictionary();
-  static void serialize_dictionary_headers(class SerializeClosure* soc,
-                                           bool is_static_archive = true);
-  static void serialize_vm_classes(class SerializeClosure* soc);
-  static void print() { return print_on(tty); }
-  static void print_on(outputStream* st) NOT_CDS_RETURN;
-  static void print_shared_archive(outputStream* st, bool is_static = true) NOT_CDS_RETURN;
-  static void print_table_statistics(outputStream* st) NOT_CDS_RETURN;
-  static bool is_dumptime_table_empty() NOT_CDS_RETURN_(true);
-  static bool is_supported_invokedynamic(BootstrapInfo* bsi) NOT_CDS_RETURN_(false);
-  DEBUG_ONLY(static bool class_loading_may_happen() {return _class_loading_may_happen;})
 
-  static MethodData* lookup_method_data(Method* m) {
-    const RunTimeMethodDataInfo* info = _dynamic_archive.lookup_method_info(m);
+  static bool check_for_exclusion(InstanceKlass *k, DumpTimeClassInfo *info);
+
+  static void validate_before_archiving(InstanceKlass *k);
+
+  static bool is_excluded_class(InstanceKlass *k);
+
+  static void set_excluded(InstanceKlass *k);
+
+  static void set_excluded_locked(InstanceKlass *k);
+
+  static bool warn_excluded(InstanceKlass *k, const char *reason);
+
+  static void dumptime_classes_do(class MetaspaceClosure *it);
+
+  static size_t estimate_size_for_archive();
+
+  static void write_to_archive(bool is_static_archive = true);
+
+  static void adjust_lambda_proxy_class_dictionary();
+
+  static void adjust_method_info_dictionary();
+
+  static void serialize_dictionary_headers(class SerializeClosure *soc,
+                                           bool is_static_archive = true);
+
+  static void serialize_vm_classes(class SerializeClosure *soc);
+
+  static void print() { return print_on(tty); }
+
+  static void print_on(outputStream *st) NOT_CDS_RETURN;
+
+  static void print_shared_archive(outputStream *st, bool is_static = true) NOT_CDS_RETURN;
+
+  static void print_table_statistics(outputStream *st) NOT_CDS_RETURN;
+
+  static bool is_dumptime_table_empty() NOT_CDS_RETURN_(true);
+
+  static bool is_supported_invokedynamic(BootstrapInfo *bsi) NOT_CDS_RETURN_(false);
+
+  DEBUG_ONLY(static bool class_loading_may_happen() { return _class_loading_may_happen; })
+
+  static MethodData *lookup_method_data(Method *m) {
+    const RunTimeMethodDataInfo *info = _dynamic_archive.lookup_method_info(m);
     if (info != nullptr) {
       return info->method_data();
     }
     return nullptr;
   }
 
-  static MethodCounters* lookup_method_counters(Method* m) {
-    const RunTimeMethodDataInfo* info = _dynamic_archive.lookup_method_info(m);
+  static MethodCounters *lookup_method_counters(Method *m) {
+    const RunTimeMethodDataInfo *info = _dynamic_archive.lookup_method_info(m);
     if (info != nullptr) {
       return info->method_counters();
     }
@@ -355,30 +410,34 @@ public:
   }
 
 #ifdef ASSERT
+
   // This object marks a critical period when writing the CDS archive. During this
   // period, the JVM must not load any new classes, so as to avoid adding new
   // items in the SystemDictionaryShared::_dumptime_table.
-  class NoClassLoadingMark: public StackObj {
+  class NoClassLoadingMark : public StackObj {
   public:
     NoClassLoadingMark() {
       assert(_class_loading_may_happen, "must not be nested");
       _class_loading_may_happen = false;
     }
+
     ~NoClassLoadingMark() {
       _class_loading_may_happen = true;
     }
   };
+
 #endif
 
-  template <typename T>
-  static unsigned int hash_for_shared_dictionary_quick(T* ptr) {
-    assert(MetaspaceObj::is_shared((const MetaspaceObj*)ptr), "must be");
-    assert(ptr > (T*)SharedBaseAddress, "must be");
+  template<typename T>
+  static unsigned int hash_for_shared_dictionary_quick(T *ptr) {
+    assert(MetaspaceObj::is_shared((const MetaspaceObj *) ptr), "must be");
+    assert(ptr > (T *) SharedBaseAddress, "must be");
     uintx offset = uintx(ptr) - uintx(SharedBaseAddress);
     return primitive_hash<uintx>(offset);
   }
 
   static unsigned int hash_for_shared_dictionary(address ptr);
-};
 
+  static const char* class_loader_name_for_shared(Klass *k);
+};
 #endif // SHARE_CLASSFILE_SYSTEMDICTIONARYSHARED_HPP
