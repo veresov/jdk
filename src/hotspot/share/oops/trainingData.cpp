@@ -22,6 +22,8 @@
  *
  */
 
+#include <cds/archiveBuilder.hpp>
+#include <classfile/systemDictionaryShared.hpp>
 #include "precompiled.hpp"
 #include "ci/ciEnv.hpp"
 #include "ci/ciMetadata.hpp"
@@ -46,6 +48,8 @@
 #include "utilities/xmlstream.hpp"
 
 TrainingData::TrainingDataSet TrainingData::_training_data_set(1024);
+Array<TrainingData*>* TrainingData::_archived_training_data_set = nullptr;
+GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* TrainingData::_dumptime_training_data_dictionary = nullptr;
 
 int TrainingData::TrainingDataSet::_lock_mode;
 
@@ -397,6 +401,20 @@ class TrainingDataDumper {
     return _nodes;
   }
 
+  void prepare(TrainingData::TrainingDataSet* tds) {
+    TrainingDataSetLocker l;
+    int prev_len = -1, len = 0;
+    while (prev_len != len) {
+      assert(prev_len < len, "must not shrink the worklist");
+      prev_len = len; len = node_count();
+      tds->iterate_all([&](const TrainingData::Key* k, TrainingData* td) {
+        if (!td->do_not_dump()) {
+          prepare(td);
+        }
+      });
+    }
+  }
+
   void prepare(TrainingData* tdata) {
     assert(_out == nullptr, "");
     identify_or_prepare(tdata);
@@ -627,6 +645,68 @@ void TrainingData::store_results() {
     td->dump(tdd, DP_detail);
   }
   tdd.close();
+}
+
+void TrainingData::init_dumptime_table() {
+  ResourceMark rm;
+  TrainingDataDumper tdd;
+  tdd.prepare(training_data_set());
+  GrowableArray<TrainingData*>& tda = tdd.hand_off_node_list();
+  tda.sort(qsort_compare_tdata); // FIXME: needed?
+  int num_of_entries = tda.length();
+  _dumptime_training_data_dictionary = new GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>();
+  for (int i = 0; i < num_of_entries; i++) {
+    TrainingData* td = tda.at(i);
+    // TODO: filter TD
+    // if (SystemDictionaryShared::check_for_exclusion(), nullptr);
+    _dumptime_training_data_dictionary->append(td);
+  }
+}
+
+void TrainingData::iterate_roots(MetaspaceClosure* it) {
+  for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
+    _dumptime_training_data_dictionary->at(i).metaspace_pointers_do(it);
+  }
+}
+
+void TrainingData::dump_training_data() {
+  int num_of_entries = _dumptime_training_data_dictionary->length();
+  _archived_training_data_set = ArchiveBuilder::new_ro_array<TrainingData*>(num_of_entries);
+  for (int i = 0; i < num_of_entries; i++) {
+    auto td = _dumptime_training_data_dictionary->at(i).training_data();
+    assert(td->do_not_dump() == false, "");
+    _archived_training_data_set->at_put(i, td);
+    ArchivePtrMarker::mark_pointer(_archived_training_data_set->adr_at(i)); // must mark the pointer
+  }
+}
+
+void TrainingData::cleanup_training_data() {
+  // FIXME: anything to do here?
+}
+
+void TrainingData::serialize_training_data(SerializeClosure* soc) {
+  soc->do_ptr((void**)&_archived_training_data_set);
+}
+
+void TrainingData::adjust_training_data_dictionary() {
+  for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
+    TrainingData* td = _dumptime_training_data_dictionary->at(i).training_data();
+    assert(MetaspaceShared::is_in_shared_metaspace(td) || ArchiveBuilder::current()->is_in_buffer_space(td), "");
+    td->remove_unshareable_info();
+  }
+}
+
+void TrainingData::print_archived_training_data_on(outputStream* st) {
+  tty->print_cr("_archived_training_data = " INTPTR_FORMAT, p2i(_archived_training_data_set));
+  if (_archived_training_data_set != nullptr) {
+    for (int i = 0; i < _archived_training_data_set->length(); i++) {
+      ResourceMark rm;
+      TrainingData* td = _archived_training_data_set->at(i);
+      tty->print("_archived_training_data[%2d] = %p ", i, td);
+      td->print_on(tty);
+      tty->cr();
+    }
+  }
 }
 
 static bool str_starts(const char* str, const char* start) {
@@ -1346,4 +1426,15 @@ void CompileTrainingData::restore_unshareable_info(TRAPS) {
   _init_deps.restore_unshareable_info(CHECK);
 }
 
+
+//void SystemDictionaryShared::write_training_data_dictionary(TrainingData::TrainingDataDictionary* dictionary) {
+//  CompactHashtableStats stats;
+//  dictionary->reset();
+//  CompactHashtableWriter writer(TrainingData::training_data_set()->number_of_entries(), &stats);
+//  // FIXME
+//
+////  CopyTrainingDataToArchive copy(&writer);
+////  _dumptime_method_info_dictionary->iterate(&copy);
+////  writer.dump(dictionary, "method info dictionary");
+//}
 #endif // INCLUDE_CDS

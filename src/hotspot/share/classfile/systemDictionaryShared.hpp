@@ -36,6 +36,7 @@
 #include "classfile/systemDictionary.hpp"
 #include "oops/klass.hpp"
 #include "oops/oopHandle.hpp"
+#include "oops/trainingData.hpp"
 
 
 /*===============================================================================
@@ -147,6 +148,7 @@ class SystemDictionaryShared: public SystemDictionary {
     RunTimeSharedDictionary _unregistered_dictionary;
     LambdaProxyClassDictionary _lambda_proxy_class_dictionary;
     MethodDataInfoDictionary _method_info_dictionary;
+//    TrainingData::TrainingDataDictionary _training_data_dictionary;
 
     const RunTimeLambdaProxyClassInfo* lookup_lambda_proxy_class(LambdaProxyClassKey* key) {
       return _lambda_proxy_class_dictionary.lookup(key, key->hash(), 0);

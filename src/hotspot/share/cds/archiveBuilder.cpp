@@ -310,6 +310,10 @@ size_t ArchiveBuilder::estimate_archive_size() {
   size_t dictionary_est = SystemDictionaryShared::estimate_size_for_archive();
   _estimated_hashtable_bytes = symbol_table_est + dictionary_est;
 
+  if (DynamicDumpSharedSpaces) {
+    // Some extra space for traning data. Be generous. Unused areas will be trimmed from the archive file.
+    _estimated_hashtable_bytes += 200 * 1024 * 1024;
+  }
   size_t total = 0;
 
   total += _estimated_metaspaceobj_bytes;

@@ -665,6 +665,8 @@ void SystemDictionaryShared::check_excluded_classes() {
   cleanup_lambda_proxy_class_dictionary();
 
   cleanup_method_info_dictionary();
+
+  TrainingData::cleanup_training_data();
 }
 
 bool SystemDictionaryShared::is_excluded_class(InstanceKlass* k) {
@@ -1569,12 +1571,11 @@ public:
         }
         _st->cr();
 
-        if (Verbose) {
-          for (CompileTrainingData* ctd = mtd->compile(); ctd != nullptr; ctd = ctd->next()) {
-            _st->print("    => CTD: ");
-            ctd->print_on(_st);
-            _st->cr();
-          }
+        int i = 0;
+        for (CompileTrainingData* ctd = mtd->compile(); ctd != nullptr; ctd = ctd->next()) {
+          _st->print("  CTD[%d]: ", i++);
+          ctd->print_on(_st);
+          _st->cr();
         }
       }
     }
@@ -1827,7 +1828,7 @@ public:
   bool do_entry(MethodDataKey& key, DumpTimeMethodDataInfo& info) {
     assert_lock_strong(DumpTimeTable_lock);
     assert(MetaspaceShared::is_in_shared_metaspace(key.method()), "");
-    InstanceKlass* holder =key.method()->method_holder();
+    InstanceKlass* holder = key.method()->method_holder();
     bool is_excluded = SystemDictionaryShared::check_for_exclusion(holder, nullptr);
     return is_excluded;
   }

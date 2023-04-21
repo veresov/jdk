@@ -107,6 +107,8 @@ public:
     verify_universe("Before CDS dynamic dump");
     DEBUG_ONLY(SystemDictionaryShared::NoClassLoadingMark nclm);
 
+    TrainingData::init_dumptime_table(); // captures TrainingDataSetLocker
+
     // Block concurrent class unloading from changing the _dumptime_table
     MutexLocker ml(DumpTimeTable_lock, Mutex::_no_safepoint_check_flag);
     SystemDictionaryShared::check_excluded_classes();
@@ -143,11 +145,13 @@ public:
 
       ArchiveBuilder::OtherROAllocMark mark;
       SystemDictionaryShared::write_to_archive(false);
+      TrainingData::dump_training_data();
 
       serialized_data = ro_region()->top();
       WriteClosure wc(ro_region());
       SymbolTable::serialize_shared_table_header(&wc, false);
       SystemDictionaryShared::serialize_dictionary_headers(&wc, false);
+      TrainingData::serialize_training_data(&wc);
     }
 
     verify_estimate_size(_estimated_hashtable_bytes, "Hashtables");
@@ -162,6 +166,9 @@ public:
 
     log_info(cds)("Adjust method info dictionary");
     SystemDictionaryShared::adjust_method_info_dictionary();
+
+    log_info(cds)("Adjust training data dictionary");
+    TrainingData::adjust_training_data_dictionary();
 
     relocate_to_requested();
 
@@ -180,6 +187,7 @@ public:
   virtual void iterate_roots(MetaspaceClosure* it, bool is_relocating_pointers) {
     FileMapInfo::metaspace_pointers_do(it);
     SystemDictionaryShared::dumptime_classes_do(it);
+    TrainingData::iterate_roots(it);
   }
 };
 

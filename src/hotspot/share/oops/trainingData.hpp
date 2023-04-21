@@ -25,9 +25,12 @@
 #ifndef SHARE_OOPS_TRAININGDATA_HPP
 #define SHARE_OOPS_TRAININGDATA_HPP
 
+#include "cds/archiveUtils.hpp"
+#include "classfile/compactHashtable.hpp"
 #include "compiler/compilerDefinitions.hpp"
 #include "compiler/compiler_globals.hpp"
 #include "memory/allocation.hpp"
+#include "memory/metaspaceClosure.hpp"
 #include "oops/instanceKlass.hpp"
 #include "oops/symbolHandle.hpp"
 #include "runtime/fieldDescriptor.inline.hpp"
@@ -45,6 +48,7 @@ class KlassTrainingData;
 class MethodTrainingData;
 class TrainingDataDumper;
 class TrainingDataSetLocker;
+class DumpTimeTrainingDataInfo;
 
 class TrainingData : public Metadata {
   friend KlassTrainingData;
@@ -82,6 +86,16 @@ class TrainingData : public Metadata {
     Key(const Method* method);
 
   public:
+    static inline unsigned int DUMPTIME_HASH(Key const& key) {
+      return Symbol::identity_hash(key.name1()) +
+             Symbol::identity_hash(key.name2());
+    }
+
+    static inline bool DUMPTIME_EQUALS(Key const& k1, Key const& k2) {
+      return k1.name1() == k2.name1() &&
+             k1.name2() == k2.name2();
+    }
+
     static unsigned hash(const Key* const& k) {
       // A symmetric hash code is usually a bad idea, except in cases
       // like this where it is very unlikely that any one string might
@@ -198,6 +212,8 @@ private:
   }
 
   static TrainingDataSet _training_data_set;
+  static Array<TrainingData*>* _archived_training_data_set;
+  static GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* _dumptime_training_data_dictionary;
 
 public:
   // Returns the key under which this TD is installed, or else
@@ -291,9 +307,19 @@ public:
   void metaspace_pointers_do(MetaspaceClosure *iter);
 
 #if INCLUDE_CDS
-  void remove_unshareable_info() {}
-  void restore_unshareable_info(TRAPS) {}
+  virtual void remove_unshareable_info() {}
+  virtual void restore_unshareable_info(TRAPS) {}
 #endif
+
+  static void init_dumptime_table();
+  static void iterate_roots(MetaspaceClosure* it);
+  static void dump_training_data();
+  static void cleanup_training_data();
+  static void serialize_training_data(SerializeClosure* soc);
+  static void adjust_training_data_dictionary();
+  static void print_archived_training_data_on(outputStream* st);
+//  static void write_training_data_dictionary(TrainingData::TrainingDataDictionary* dictionary);
+//  static void cleanup_training_data_dictionary();
 };
 
 class TrainingDataSetLocker {
@@ -489,8 +515,8 @@ class KlassTrainingData : public TrainingData {
   }
 
 #if INCLUDE_CDS
-  void remove_unshareable_info();
-  void restore_unshareable_info(TRAPS);
+  virtual void remove_unshareable_info();
+  virtual void restore_unshareable_info(TRAPS);
 #endif
 
   void metaspace_pointers_do(MetaspaceClosure *iter);
@@ -597,8 +623,8 @@ class MethodTrainingData : public TrainingData {
   virtual MetaspaceObj::Type type() const { return MethodTrainingDataType; }
 
 #if INCLUDE_CDS
-  void remove_unshareable_info();
-  void restore_unshareable_info(TRAPS);
+  virtual void remove_unshareable_info();
+  virtual void restore_unshareable_info(TRAPS);
 #endif
 
   virtual int size() const {
@@ -699,8 +725,8 @@ class CompileTrainingData : public TrainingData {
   virtual void print_value_on(outputStream* st) const { print_on(st, true); }
 
 #if INCLUDE_CDS
-  void remove_unshareable_info();
-  void restore_unshareable_info(TRAPS);
+  virtual void remove_unshareable_info();
+  virtual void restore_unshareable_info(TRAPS);
 #endif
 
   virtual void metaspace_pointers_do(MetaspaceClosure* iter);
@@ -722,5 +748,72 @@ class CompileTrainingData : public TrainingData {
 inline int MethodTrainingData::last_compile_id() const {
   return (_compile == nullptr ? 0 : _compile->compile_id());
 }
+
+//  // Used by TrainingDataDictionary to implement OffsetCompactHashtable::EQUALS
+//  static inline bool EQUALS(TrainingData* data, const Key* key, int unused) {
+//    return Key::equals(data->key(), key);
+//  }
+//
+//  class TrainingDataDictionary : public OffsetCompactHashtable<
+//      const Key*, TrainingData*,
+//      TrainingData::EQUALS> {};
+
+class DumpTimeTrainingDataInfo {
+  TrainingData* _training_data;
+public:
+  DumpTimeTrainingDataInfo() : DumpTimeTrainingDataInfo(nullptr) {}
+
+  DumpTimeTrainingDataInfo(TrainingData* training_data)
+      : _training_data(training_data) {}
+
+  void metaspace_pointers_do(MetaspaceClosure* it) {
+    it->push(&_training_data);
+  }
+
+  TrainingData* training_data() {
+    return _training_data;
+  }
+};
+
+class RunTimeTrainingDataInfo {
+  TrainingData* _training_data;
+public:
+  RunTimeTrainingDataInfo(TrainingData* training_data) :
+      _training_data(training_data) {}
+
+  // Used by TrainingDataDictionary to implement OffsetCompactHashtable::EQUALS
+  static inline bool EQUALS(
+      const RunTimeTrainingDataInfo* value, TrainingData::Key* key, int unused) {
+    return TrainingData::Key::equals(value->_training_data->key(), key);
+  }
+  void init(DumpTimeTrainingDataInfo& info) {
+    _training_data = info.training_data();
+    ArchivePtrMarker::mark_pointer(&_training_data);
+  }
+
+  unsigned int hash() const {
+    return TrainingData::Key::hash(_training_data->key());
+  }
+
+  TrainingData* training_data() { return _training_data; }
+};
+
+class DumpTimeTrainingDataDictionary
+: public ResourceHashtable<TrainingData::Key,
+        DumpTimeTrainingDataInfo,
+        1559, // prime number
+        AnyObj::C_HEAP,
+        mtClassShared,
+        TrainingData::Key::DUMPTIME_HASH,
+        TrainingData::Key::DUMPTIME_EQUALS> {
+public:
+  DumpTimeTrainingDataDictionary() : _count(0) {}
+  int _count;
+};
+
+class TrainingDataDictionary : public OffsetCompactHashtable<
+    TrainingData::Key*,
+    const RunTimeTrainingDataInfo*,
+    RunTimeTrainingDataInfo::EQUALS> {};
 
 #endif // SHARE_OOPS_TRAININGDATA_HPP

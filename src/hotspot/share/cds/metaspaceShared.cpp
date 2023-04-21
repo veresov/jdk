@@ -67,6 +67,7 @@
 #include "oops/objArrayOop.hpp"
 #include "oops/oop.inline.hpp"
 #include "oops/oopHandle.hpp"
+#include "oops/trainingData.hpp"
 #include "prims/jvmtiExport.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/globals_extension.hpp"
@@ -1458,6 +1459,7 @@ void MetaspaceShared::initialize_shared_spaces() {
     ReadClosure rc(&buffer);
     SymbolTable::serialize_shared_table_header(&rc, false);
     SystemDictionaryShared::serialize_dictionary_headers(&rc, false);
+    TrainingData::serialize_training_data(&rc);
     dynamic_mapinfo->close();
     dynamic_mapinfo->unmap_region(MetaspaceShared::bm);
   }
@@ -1484,6 +1486,7 @@ void MetaspaceShared::initialize_shared_spaces() {
       tty->print_cr("Dynamic archive version %d", dynamic_mapinfo->version());
       SystemDictionaryShared::print_shared_archive(tty, false/*dynamic*/);
     }
+    TrainingData::print_archived_training_data_on(tty);
 
     // collect shared symbols and strings
     CountSharedSymbols cl;
