@@ -105,7 +105,7 @@ class TrainingData : public Metadata {
               k1->name2()   == k2->name2() &&
               k1->holder()  == k2->holder());
     }
-    static inline bool equals(TrainingData* value, TrainingData::Key* key, int unused) {
+    static inline bool equals(TrainingData* value, const TrainingData::Key* key, int unused) {
       return equals(value->key(), key);
     }
     int cmp(const Key* that) const {
@@ -208,7 +208,6 @@ private:
   }
 
   static TrainingDataSet _training_data_set;
-  static Array<TrainingData*>* _archived_training_data_set;
   static TrainingDataDictionary _archived_training_data_dictionary;
 
   static GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* _dumptime_training_data_dictionary;
@@ -318,6 +317,8 @@ public:
   static void print_archived_training_data_on(outputStream* st);
   static void write_training_data_dictionary(TrainingDataDictionary* dictionary);
   static size_t estimate_size_for_archive();
+
+  static TrainingData* lookup_archived_training_data(const Key* k);
 };
 
 class TrainingDataSetLocker {
@@ -747,6 +748,8 @@ inline int MethodTrainingData::last_compile_id() const {
   return (_compile == nullptr ? 0 : _compile->compile_id());
 }
 
+// CDS support
+
 class DumpTimeTrainingDataInfo {
   TrainingData* _training_data;
 public:
@@ -765,7 +768,7 @@ public:
 };
 
 class TrainingDataDictionary : public OffsetCompactHashtable<
-    TrainingData::Key*, TrainingData*,
+    const TrainingData::Key*, TrainingData*,
     TrainingData::Key::equals> {};
 
 class TrainingDataPrinter : StackObj {

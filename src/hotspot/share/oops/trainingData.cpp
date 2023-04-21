@@ -48,7 +48,6 @@
 #include "utilities/xmlstream.hpp"
 
 TrainingData::TrainingDataSet TrainingData::_training_data_set(1024);
-Array<TrainingData*>* TrainingData::_archived_training_data_set = nullptr;
 TrainingDataDictionary TrainingData::_archived_training_data_dictionary;
 GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* TrainingData::_dumptime_training_data_dictionary = nullptr;
 
@@ -1261,14 +1260,6 @@ void TrainingData::iterate_roots(MetaspaceClosure* it) {
 }
 
 void TrainingData::dump_training_data() {
-  int num_of_entries = _dumptime_training_data_dictionary->length();
-  _archived_training_data_set = ArchiveBuilder::new_ro_array<TrainingData*>(num_of_entries);
-  for (int i = 0; i < num_of_entries; i++) {
-    auto td = _dumptime_training_data_dictionary->at(i).training_data();
-    assert(td->do_not_dump() == false, "");
-    _archived_training_data_set->at_put(i, td);
-    ArchivePtrMarker::mark_pointer(_archived_training_data_set->adr_at(i)); // must mark the pointer
-  }
   write_training_data_dictionary(&_archived_training_data_dictionary);
 }
 
@@ -1277,8 +1268,10 @@ void TrainingData::cleanup_training_data() {
 }
 
 void TrainingData::serialize_training_data(SerializeClosure* soc) {
-  soc->do_ptr((void**)&_archived_training_data_set);
   _archived_training_data_dictionary.serialize_header(soc);
+  if (soc->reading()) {
+
+  }
 }
 
 void TrainingData::adjust_training_data_dictionary() {
@@ -1290,16 +1283,6 @@ void TrainingData::adjust_training_data_dictionary() {
 }
 
 void TrainingData::print_archived_training_data_on(outputStream* st) {
-  st->print_cr("_archived_training_data = " INTPTR_FORMAT, p2i(_archived_training_data_set));
-  if (_archived_training_data_set != nullptr) {
-    for (int i = 0; i < _archived_training_data_set->length(); i++) {
-      ResourceMark rm;
-      TrainingData* td = _archived_training_data_set->at(i);
-      st->print("_archived_training_data[%2d] = %p ", i, td);
-      td->print_on(st);
-      st->cr();
-    }
-  }
   st->print_cr("Archived TrainingData Dictionary");
   TrainingDataPrinter tdp(st);
   _archived_training_data_dictionary.iterate(&tdp);
@@ -1335,6 +1318,11 @@ size_t TrainingData::estimate_size_for_archive() {
     assert(!DynamicDumpSharedSpaces, "");
   }
   return 0;
+}
+
+TrainingData* TrainingData::lookup_archived_training_data(const Key* k) {
+  uint hash = SystemDictionaryShared::hash_for_shared_dictionary((address)k); // Key::hash(k);
+  return _archived_training_data_dictionary.lookup(k, hash, -1 /*unused*/);
 }
 
 template <typename T>
@@ -1489,6 +1477,7 @@ void TrainingDataPrinter::do_value(const RunTimeMethodDataInfo* record) {
 }
 
 void TrainingDataPrinter::do_value(TrainingData* td) {
+  assert(td == TrainingData::lookup_archived_training_data(td->key()), "");
   _st->print("%4d: %p ", _index++, td);
   td->print_on(_st);
   _st->cr();
