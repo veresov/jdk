@@ -1238,6 +1238,9 @@ void KlassTrainingData::log_initialization(bool is_start) {
 // CDS support
 
 void TrainingData::init_dumptime_table(TRAPS) {
+  if (!need_data()) {
+    return;
+  }
   ResourceMark rm;
   TrainingDataDumper tdd;
   tdd.prepare(training_data_set(), CHECK);
@@ -1254,12 +1257,19 @@ void TrainingData::init_dumptime_table(TRAPS) {
 }
 
 void TrainingData::iterate_roots(MetaspaceClosure* it) {
+  if (!need_data()) {
+    return;
+  }
+  assert(_dumptime_training_data_dictionary != nullptr, "");
   for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
     _dumptime_training_data_dictionary->at(i).metaspace_pointers_do(it);
   }
 }
 
 void TrainingData::dump_training_data() {
+  if (!need_data()) {
+    return;
+  }
   write_training_data_dictionary(&_archived_training_data_dictionary);
 }
 
@@ -1268,13 +1278,17 @@ void TrainingData::cleanup_training_data() {
 }
 
 void TrainingData::serialize_training_data(SerializeClosure* soc) {
-  _archived_training_data_dictionary.serialize_header(soc);
-  if (soc->reading()) {
-
+  if ((soc->reading() && !have_data()) || (soc->writing() && !need_data())) {
+    return;
   }
+  _archived_training_data_dictionary.serialize_header(soc);
 }
 
 void TrainingData::adjust_training_data_dictionary() {
+  if (!need_data()) {
+    return;
+  }
+  assert(_dumptime_training_data_dictionary != nullptr, "");
   for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
     TrainingData* td = _dumptime_training_data_dictionary->at(i).training_data();
     assert(MetaspaceShared::is_in_shared_metaspace(td) || ArchiveBuilder::current()->is_in_buffer_space(td), "");
@@ -1299,6 +1313,10 @@ void TrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
 }
 
 void TrainingData::write_training_data_dictionary(TrainingDataDictionary* dictionary) {
+  if (!need_data()) {
+    return;
+  }
+  assert(_dumptime_training_data_dictionary != nullptr, "");
   CompactHashtableStats stats;
   dictionary->reset();
   CompactHashtableWriter writer(_dumptime_training_data_dictionary->length(), &stats);
@@ -1315,12 +1333,13 @@ size_t TrainingData::estimate_size_for_archive() {
   if (_dumptime_training_data_dictionary != nullptr) {
     return CompactHashtableWriter::estimate_size(_dumptime_training_data_dictionary->length());
   } else {
-    assert(!DynamicDumpSharedSpaces, "");
+    assert(!need_data(), "");
   }
   return 0;
 }
 
 TrainingData* TrainingData::lookup_archived_training_data(const Key* k) {
+  assert(have_data(), "");
   uint hash = SystemDictionaryShared::hash_for_shared_dictionary((address)k); // Key::hash(k);
   return _archived_training_data_dictionary.lookup(k, hash, -1 /*unused*/);
 }
@@ -1367,6 +1386,7 @@ void TrainingData::DepList<T>::prepare(ClassLoaderData* loader_data) {
 }
 
 KlassTrainingData* KlassTrainingData::allocate(InstanceKlass* holder) {
+  assert(need_data() || have_data(), "");
   JavaThread* THREAD = JavaThread::current();
 //  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
 
@@ -1378,6 +1398,7 @@ KlassTrainingData* KlassTrainingData::allocate(InstanceKlass* holder) {
 }
 
 KlassTrainingData* KlassTrainingData::allocate(Symbol* name, Symbol* loader_name) {
+  assert(need_data() || have_data(), "");
   JavaThread* THREAD = JavaThread::current();
 //  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
 
@@ -1390,6 +1411,7 @@ KlassTrainingData* KlassTrainingData::allocate(Symbol* name, Symbol* loader_name
 }
 
 MethodTrainingData* MethodTrainingData::allocate(KlassTrainingData* ktd, Symbol* name, Symbol* signature) {
+  assert(need_data() || have_data(), "");
   JavaThread* THREAD = JavaThread::current();
 //  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
 
@@ -1402,6 +1424,7 @@ MethodTrainingData* MethodTrainingData::allocate(KlassTrainingData* ktd, Symbol*
 }
 
 MethodTrainingData* MethodTrainingData::allocate(KlassTrainingData* ktd, Method* m) {
+  assert(need_data() || have_data(), "");
   JavaThread* THREAD = JavaThread::current();
 //  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
 
@@ -1416,6 +1439,7 @@ CompileTrainingData* CompileTrainingData::allocate(MethodTrainingData* this_meth
                                                    MethodTrainingData* top_method,
                                                    int level,
                                                    int compile_id) {
+  assert(need_data() || have_data(), "");
   JavaThread* THREAD = JavaThread::current();
 //  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
   int size = align_metadata_size(align_up(sizeof(CompileTrainingData), BytesPerWord) / BytesPerWord);
