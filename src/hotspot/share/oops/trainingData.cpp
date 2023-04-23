@@ -46,15 +46,22 @@
 
 TrainingData::TrainingDataSet TrainingData::_training_data_set(1024);
 
-int TrainingData::TrainingDataSet::_lock_mode;
+int TrainingData::TrainingDataLocker::_lock_mode;
 
 void TrainingData::initialize() {
   // this is a nop if training modes are not enabled
   if (have_data() || need_data()) {
-    TrainingDataSet::initialize();
+    TrainingDataLocker::initialize();
   }
   if (have_data()) {
     load_profiles();
+
+    // Initialize dependency tracking
+    TrainingData::training_data_set()->iterate_all([](const Key* k, TrainingData* td) {
+      if (td->is_MethodTrainingData()) {
+        td->as_MethodTrainingData()->initialize();
+      }
+    });
   }
 }
 
@@ -81,7 +88,7 @@ MethodTrainingData* MethodTrainingData::make(KlassTrainingData* klass,
   // FIXME: metadata should be allocated in default CLD
   MethodTrainingData* tdata = new MethodTrainingData(klass, name, signature);
   if (tdata != nullptr) {
-    TrainingDataSetLocker l;
+    TrainingDataLocker l;
     tdata = training_data_set()->install(tdata)->as_MethodTrainingData();
   }
   return tdata;
@@ -110,7 +117,7 @@ MethodTrainingData* MethodTrainingData::make(const methodHandle& method,
   // No cached value.  Slow path looks in the central hash table.
   if (null_if_not_found) {
     Key mkey(method);
-    TrainingDataSetLocker l;
+    TrainingDataLocker l;
     auto v = training_data_set()->find(&mkey);
     if (v == nullptr)  return nullptr;
     mtd = v->as_MethodTrainingData();
@@ -128,7 +135,7 @@ MethodTrainingData* MethodTrainingData::make(const methodHandle& method,
   // FIXME: metadata should be allocated in CLD of holder
   mtd = new MethodTrainingData(ktd, method->name(), method()->signature());
   {
-    TrainingDataSetLocker l;
+    TrainingDataLocker l;
     mtd = training_data_set()->install(mtd)->as_MethodTrainingData();
     mtd->refresh_from(method());
     // cache for next time
@@ -179,6 +186,7 @@ CompileTrainingData* CompileTrainingData::make(CompileTask* task,
 CompileTrainingData* CompileTrainingData::make(MethodTrainingData* this_method,
                                                MethodTrainingData* top_method,
                                                int level, int compile_id) {
+  assert(level > CompLevel_none, "not a compiled level");
   top_method->notice_compilation(level);
   if (this_method != top_method) {
     this_method->notice_compilation(level, true);
@@ -201,7 +209,7 @@ CompileTrainingData* CompileTrainingData::make(MethodTrainingData* this_method,
                                        level, compile_id);
 
   // Link it into the method, under a lock.
-  TrainingDataSetLocker l;
+  TrainingDataLocker l;
   while ((*insp) != nullptr && (*insp)->compile_id() == compile_id) {
     if ((*insp)->method() == this_method &&
         (*insp)->top_method() == top_method) {
@@ -211,6 +219,9 @@ CompileTrainingData* CompileTrainingData::make(MethodTrainingData* this_method,
   }
   tdata->_next = (*insp);
   (*insp) = tdata;
+  if (top_method->_last_toplevel_compiles[level - 1] == nullptr || top_method->_last_toplevel_compiles[level - 1]->compile_id() < compile_id) {
+    top_method->_last_toplevel_compiles[level - 1] = tdata;
+  }
   return tdata;
 }
 
@@ -255,6 +266,7 @@ void CompileTrainingData::notice_inlined_method(CompileTask* task,
   if (mtd != nullptr)  mtd->notice_compilation(task->comp_level(), true);
 }
 
+
 void CompileTrainingData::notice_jit_observation(ciEnv* env, ciBaseObject* what) {
   // A JIT is starting to look at class k.
   // We could follow the queries that it is making, but it is
@@ -276,7 +288,8 @@ void CompileTrainingData::notice_jit_observation(ciEnv* env, ciBaseObject* what)
                                  nullptr);
         // This JIT task is (probably) requesting that ik be initialized,
         // so add him to my _init_deps list.
-        _init_deps.append_if_missing(ktd);
+        TrainingDataLocker l;
+        add_init_dep(ktd);
       }
     }
   }
@@ -482,6 +495,7 @@ bool KlassTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
     return true;
   }
   assert(dp == DP_detail, "");
+  TrainingDataLocker l;
   for (int i = 0, depc = init_dep_count(); i < depc; i++) {
     int did = tdd.identify(init_dep(i));
     out->elem("init_dep klass='%d' dep='%d'", kid, did);
@@ -551,6 +565,7 @@ bool CompileTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
     return true;
   }
   assert(dp == DP_detail, "");
+  TrainingDataLocker l;
   for (int i = 0, depc = init_dep_count(); i < depc; i++) {
     int did = tdd.identify(init_dep(i));
     out->elem("init_dep compile='%d' dep='%d'", cid, did);
@@ -589,7 +604,7 @@ void TrainingData::store_results() {
     // Since dump(DP_prepare) might have entered new items into the
     // global TD table, we need to enumerate again from scratch.
     {
-      TrainingDataSetLocker l;
+      TrainingDataLocker l;
       training_data_set()->iterate_all([&](const Key* k, TrainingData* td) {
         if (td->do_not_dump())  return;
         tdd.prepare(td);
@@ -771,9 +786,11 @@ void TrainingData::load_profiles() {
       auto dd = ID2TD(did);
       if ((kd == nullptr && cd == nullptr) || dd == nullptr)  break;
       if (kd != nullptr) {
+        TrainingDataLocker l;
         kd->as_KlassTrainingData()
           ->add_init_dep(dd->as_KlassTrainingData());
       } else {
+        TrainingDataLocker l;
         cd->as_CompileTrainingData()
           ->add_init_dep(dd->as_KlassTrainingData());
       }
@@ -794,7 +811,7 @@ KlassTrainingData* KlassTrainingData::make(Symbol* name, Symbol* loader_name) {
   // FIXME: metadata should be allocated in default CLD
   KlassTrainingData* tdata = new KlassTrainingData(name, loader_name);
   if (tdata != nullptr) {
-    TrainingDataSetLocker l;
+    TrainingDataLocker l;
     tdata = training_data_set()->install(tdata)->as_KlassTrainingData();
   }
   return tdata;
@@ -810,17 +827,37 @@ KlassTrainingData* KlassTrainingData::make(const char* name, const char* loader_
   }
 }
 
-KlassTrainingData* KlassTrainingData::make(InstanceKlass* holder) {
+KlassTrainingData* KlassTrainingData::make(InstanceKlass* holder, bool null_if_not_found) {
+  KlassTrainingData* ktd = nullptr;
+  if (!have_data() && !need_data()) {
+    return ktd;
+  }
+  ktd = holder->training_data_or_null();
+  if (ktd != nullptr) {
+    return ktd;
+  }
+  // No cached value.  Slow path looks in the central hash table.
+  if (null_if_not_found) {
+    Key mkey(holder);
+    TrainingDataLocker l;
+    auto v = training_data_set()->find(&mkey);
+    if (v == nullptr)  return nullptr;
+    ktd = v->as_KlassTrainingData();
+    ktd->refresh_from(holder);
+    bool ok = holder->init_training_data(ktd);
+    assert(ok, "CAS under mutex cannot fail");
+    return ktd;
+  }
   // FIXME: metadata should be allocated in CLD of holder
-  KlassTrainingData* tdata = new KlassTrainingData(holder);
-  if (tdata != nullptr) {
-    TrainingDataSetLocker l;
-    tdata = training_data_set()->install(tdata)->as_KlassTrainingData();
-    tdata->refresh_from(holder);
-    bool ok = holder->init_training_data(tdata);
+  ktd = new KlassTrainingData(holder);
+  if (ktd != nullptr) {
+    TrainingDataLocker l;
+    ktd = training_data_set()->install(ktd)->as_KlassTrainingData();
+    ktd->refresh_from(holder);
+    bool ok = holder->init_training_data(ktd);
     assert(ok, "CAS under mutex cannot fail");
   }
-  return tdata;
+  return ktd;
 }
 
 void KlassTrainingData::print_on(outputStream* st, bool name_only) const {
@@ -910,7 +947,8 @@ bool KlassTrainingData::add_initialization_touch(Klass* requester) {
   if (rtd != nullptr) {
     // The requester is asking that I be initialized; this means
     // that I should be added to his _init_deps list.up
-    rtd->_init_deps.append_if_missing(this);
+    TrainingDataLocker l;
+    rtd->add_init_dep(this);
   }
   return true;
 }
@@ -918,6 +956,14 @@ bool KlassTrainingData::add_initialization_touch(Klass* requester) {
 void KlassTrainingData::record_initialization_end() {
   _clinit_is_done = true;  // we know this now
   log_initialization(false);
+}
+
+void KlassTrainingData::notice_fully_initialized() {
+  TrainingDataLocker l; // Not a real lock if we don't collect the data,
+                        // that's why we need the atomic decrement below.
+  for (int i = 0; i < comp_dep_count(); i++) {
+    comp_dep(i)->dec_init_deps_left();
+  }
 }
 
 GrowableArrayCHeap<FieldData, mtCompiler>*

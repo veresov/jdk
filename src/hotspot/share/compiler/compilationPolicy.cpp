@@ -96,7 +96,6 @@ void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
         mtd->only_inlined()) {
       return;
     }
-
     CompLevel level = CompLevel_full_profile;
     if (mtd->saw_level(CompLevel_simple)) {
       level = CompLevel_simple;

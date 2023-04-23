@@ -1200,6 +1200,10 @@ void InstanceKlass::initialize_impl(TRAPS) {
   DTRACE_CLASSINIT_PROBE_WAIT(end, -1, wait);
 
   if (TrainingData::have_data()) {
+    KlassTrainingData* ktd = KlassTrainingData::find(this);
+    if (ktd != nullptr) {
+      ktd->notice_fully_initialized();
+    }
     int len = methods()->length();
     for (int i = 0; i < len; i++) {
       const methodHandle mh(THREAD, methods()->at(i));

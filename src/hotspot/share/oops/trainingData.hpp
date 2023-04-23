@@ -44,7 +44,6 @@ class CompileTrainingData;
 class KlassTrainingData;
 class MethodTrainingData;
 class TrainingDataDumper;
-class TrainingDataSetLocker;
 
 //FIXME: should be class TrainingData : public Metadata
 class TrainingData : public CHeapObj<mtCompiler> {
@@ -122,21 +121,10 @@ class TrainingData : public CHeapObj<mtCompiler> {
     Symbol* name2() const       { return _name2; }
     const TrainingData* holder() const { return _holder; }
   };
-
-  class TrainingDataSet {
-    friend TrainingData;
-    friend TrainingDataSetLocker;
-    ResizeableResourceHashtable<const Key*, TrainingData*,
-                                AnyObj::C_HEAP, MEMFLAGS::mtCompiler,
-                                &TrainingData::Key::hash,
-                                &TrainingData::Key::equals>
-      _table;
+  class TrainingDataLocker {
     static int _lock_mode;
-    static void initialize() {
-      _lock_mode = need_data() ? +1 : -1;   // if -1, we go lock-free
-    }
     static void lock() {
-      assert(_lock_mode != 0, "Forgot to call TrainingDataSet::initialize()");
+      assert(_lock_mode != 0, "Forgot to call TrainingDataLocker::initialize()");
       if (_lock_mode > 0) {
         TrainingData_lock->lock_without_safepoint_check();
       }
@@ -147,13 +135,34 @@ class TrainingData : public CHeapObj<mtCompiler> {
       }
     }
     static bool safely_locked() {
-      assert(_lock_mode != 0, "Forgot to call TrainingDataSet::initialize()");
+      assert(_lock_mode != 0, "Forgot to call TrainingDataLocker::initialize()");
       if (_lock_mode > 0) {
         return TrainingData_lock->owned_by_self();
       } else {
         return true;
       }
     }
+  public:
+    static void initialize() {
+      _lock_mode = need_data() ? +1 : -1;   // if -1, we go lock-free
+    }
+    static void assert_locked() {
+      assert(TrainingDataLocker::safely_locked(), "use under TrainingDataLocker");
+    }
+    TrainingDataLocker() {
+      lock();
+    }
+    ~TrainingDataLocker() {
+      unlock();
+    }
+  };
+  class TrainingDataSet {
+    friend TrainingData;
+    ResizeableResourceHashtable<const Key*, TrainingData*,
+                                AnyObj::C_HEAP, MEMFLAGS::mtCompiler,
+                                &TrainingData::Key::hash,
+                                &TrainingData::Key::equals>
+      _table;
 
   public:
     template<typename... Arg>
@@ -161,7 +170,7 @@ class TrainingData : public CHeapObj<mtCompiler> {
       : _table(arg...) {
     }
     TrainingData* find(const Key* key) const {
-      assert(safely_locked(), "use under TrainingDataSetLocker");
+      TrainingDataLocker::assert_locked();
       auto res = _table.get(key);
       return res == nullptr ? nullptr : *res;
     }
@@ -169,7 +178,7 @@ class TrainingData : public CHeapObj<mtCompiler> {
       return _table.remove(key);
     }
     TrainingData* install(TrainingData* tdata) {
-      assert(safely_locked(), "use under TrainingDataSetLocker");
+      TrainingDataLocker::assert_locked();
       auto key = tdata->key();
       if (key->is_empty())   return tdata;  // unkeyed TD not installed
       bool created = false;
@@ -254,11 +263,9 @@ public:
   // possibly cyclic.
   template<typename E>
   class DepList : public StackObj {
-  private:
     GrowableArrayCHeap<E, mtCompiler>* _deps_dyn;
     Array<E>*                          _deps;
     // (hmm, could we have state-selected union of these two?)
-
   public:
     DepList() {
       _deps_dyn = nullptr;
@@ -282,7 +289,7 @@ public:
     bool append_if_missing(E dep) {
       assert(_deps == nullptr, "must be growable");
       if (_deps_dyn == nullptr) {
-        _deps_dyn = new GrowableArrayCHeap<KlassTrainingData*, mtCompiler>(10);
+        _deps_dyn = new GrowableArrayCHeap<E, mtCompiler>(10);
         _deps_dyn->append(dep);
         return true;
       } else {
@@ -292,18 +299,11 @@ public:
   };
 };
 
-class TrainingDataSetLocker {
- public:
-  TrainingDataSetLocker() {
-    TrainingData::TrainingDataSet::lock();
-  }
-  ~TrainingDataSetLocker() {
-    TrainingData::TrainingDataSet::unlock();
-  }
-};
+
 
 class KlassTrainingData : public TrainingData {
   friend TrainingData;
+  friend CompileTrainingData;
 
  public:
   // Tracking field initialization, when RecordTraining is enabled.
@@ -316,7 +316,7 @@ class KlassTrainingData : public TrainingData {
     void init_from(fieldDescriptor& fd) {
       _name = fd.name();
       _index = fd.index();
-      _offset = fd.offset(); 
+      _offset = fd.offset();
       _type = fd.field_type();
       _fieldinit_sequence_index = 0;
     }
@@ -334,7 +334,7 @@ class KlassTrainingData : public TrainingData {
   int _fieldinit_count;  // count <= _static_fields.length()
   bool _clinit_is_done;
   DepList<KlassTrainingData*> _init_deps;  // classes to initialize before me
-
+  DepList<CompileTrainingData*> _comp_deps; // compiles that depend on me
   static GrowableArrayCHeap<FieldData, mtCompiler>* _no_static_fields;
   static int _clinit_count;  // global count (so far) of clinit events
 
@@ -359,9 +359,31 @@ class KlassTrainingData : public TrainingData {
     init();
   }
 
-  int init_dep_count() const { return _init_deps.length(); }
-  KlassTrainingData* init_dep(int i) const { return _init_deps.at(i); }
-  bool add_init_dep(KlassTrainingData* k) { return _init_deps.append_if_missing(k); }
+  int init_dep_count() const {
+    TrainingDataLocker::assert_locked();
+    return _init_deps.length();
+  }
+  KlassTrainingData* init_dep(int i) const {
+    TrainingDataLocker::assert_locked();
+    return _init_deps.at(i);
+  }
+  void add_init_dep(KlassTrainingData* ktd) {
+    TrainingDataLocker::assert_locked();
+    _init_deps.append_if_missing(ktd);
+  }
+
+  int comp_dep_count() const {
+    TrainingDataLocker::assert_locked();
+    return _comp_deps.length();
+  }
+  CompileTrainingData* comp_dep(int i) const {
+    TrainingDataLocker::assert_locked();
+    return _comp_deps.at(i);
+  }
+  void add_comp_dep(CompileTrainingData* ctd) {
+    TrainingDataLocker::assert_locked();
+     _comp_deps.append_if_missing(ctd);
+  }
 
   static GrowableArrayCHeap<FieldData, mtCompiler>* no_static_fields();
   static int next_clinit_count() {
@@ -389,8 +411,11 @@ class KlassTrainingData : public TrainingData {
   // factories from live class and from symbols:
   static KlassTrainingData* make(Symbol* name, Symbol* loader_name);
   static KlassTrainingData* make(const char* name, const char* loader_name);
-  static KlassTrainingData* make(InstanceKlass* holder);
-
+  static KlassTrainingData* make(InstanceKlass* holder,
+                                 bool null_if_not_found = false);
+  static KlassTrainingData* find(InstanceKlass* holder) {
+    return make(holder, true);
+  }
   virtual int cmp(const TrainingData* that) const;
 
   virtual KlassTrainingData* as_KlassTrainingData() const { return const_cast<KlassTrainingData*>(this); };
@@ -458,87 +483,12 @@ class KlassTrainingData : public TrainingData {
 
   void record_initialization_start();
   void record_initialization_end();
-
+  void notice_fully_initialized();
   // Record that we have witnessed the initialization of the name.
   // This is called when we know we are doing a `putstatic` or equivalent.
   // It can be called either just before or just after.  It is only
   // safe to call this inside the initializing thread.
   bool record_static_field_init(fieldDescriptor* fd, const char* reason);
-
-  virtual void print_on(outputStream* st, bool name_only = false) const;
-
-  virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
-};
-
-// Record information about a method at the time compilation is requested.
-class MethodTrainingData : public TrainingData {
-  friend CompileTrainingData;
-
-  KlassTrainingData* _klass;
-  const Method* _holder;  // can be null
-  CompileTrainingData* _compile;   // singly linked list, latest first
-  int _level_mask;  // bit-set of all possible levels
-  bool _was_inlined;
-  bool _was_toplevel;
-  // metadata snapshots of final state:
-  MethodCounters* _final_counters;
-  MethodData*     _final_profile;
-
-  MethodTrainingData(KlassTrainingData* klass,
-                     Symbol* name, Symbol* signature)
-    : TrainingData(klass, name, signature)
-  {
-    _klass = klass;
-    _holder = nullptr;
-    _compile = nullptr;
-    _level_mask = 0;
-    _was_inlined = _was_toplevel = false;
-  }
-
-  static int level_mask(int level) {
-    return ((level & 0xF) != level ? 0 : 1 << level);
-  }
-  static CompLevel highest_level(int mask) {
-    if (mask == 0)  return (CompLevel) 0;
-    int diff = (count_leading_zeros(level_mask(0)) - count_leading_zeros(mask));
-    return (CompLevel) diff;
-  }
-
- public:
-  KlassTrainingData* klass()  const { return _klass; }
-  bool has_holder()           const { return _holder != nullptr; }
-  const Method* holder()      const { return _holder; }
-  Symbol* name()              const { return _key.name1(); }
-  Symbol* signature()         const { return _key.name2(); }
-  bool only_inlined()         const { return !_was_toplevel; }
-  bool never_inlined()        const { return !_was_inlined; }
-  bool saw_level(CompLevel l) const { return (_level_mask & level_mask(l)) != 0; }
-  int highest_level()         const { return highest_level(_level_mask); }
-
-  inline int last_compile_id() const;
-
-  void notice_compilation(int level, bool inlined = false) {
-    if (inlined)  _was_inlined = true;
-    else          _was_toplevel = true;
-    _level_mask |= level_mask(level);
-  }
-
-  // Update any copied data.
-  void refresh_from(const Method* method);
-
-  static MethodTrainingData* make(KlassTrainingData* klass,
-                                  Symbol* name, Symbol* signature);
-  static MethodTrainingData* make(KlassTrainingData* klass,
-                                  const char* name, const char* signature);
-  static MethodTrainingData* make(const methodHandle& method,
-                                  bool null_if_not_found = false);
-  static MethodTrainingData* find(const methodHandle& method) {
-    return make(method, true);
-  }
-
-  virtual int cmp(const TrainingData* that) const;
-
-  virtual MethodTrainingData* as_MethodTrainingData() const { return const_cast<MethodTrainingData*>(this); };
 
   virtual void print_on(outputStream* st, bool name_only = false) const;
 
@@ -556,10 +506,10 @@ class CompileTrainingData : public TrainingData {
   float _qtime, _stime, _etime;   // time queued, started, ended
 
   // classes that should be initialized before this JIT task runs
-  TrainingData::DepList<KlassTrainingData*> _init_deps;
+  DepList<KlassTrainingData*> _init_deps;
+  volatile int _init_deps_left;
 
   // (should we also capture counters or MDO state or replay data?)
-
   CompileTrainingData(MethodTrainingData* method,
                       MethodTrainingData* top_method,
                       int level,
@@ -571,6 +521,7 @@ class CompileTrainingData : public TrainingData {
     _next = nullptr;
     _qtime = _stime = _etime = 0;
     _nm_total_size = 0;
+    _init_deps_left = 0;
   }
 
  public:
@@ -600,10 +551,29 @@ class CompileTrainingData : public TrainingData {
 
   int compile_id() const { return _compile_id; }
 
-  int init_dep_count() const { return _init_deps.length(); }
-  KlassTrainingData* init_dep(int i) const { return _init_deps.at(i); }
-  bool add_init_dep(KlassTrainingData* k) { return _init_deps.append_if_missing(k); }
-
+  int init_dep_count() const {
+    TrainingDataLocker::assert_locked();
+    return _init_deps.length();
+  }
+  KlassTrainingData* init_dep(int i) const {
+    TrainingDataLocker::assert_locked();
+    return _init_deps.at(i);
+  }
+  void add_init_dep(KlassTrainingData* ktd) {
+    TrainingDataLocker::assert_locked();
+    ktd->add_comp_dep(this);
+    _init_deps.append_if_missing(ktd);
+  }
+  void dec_init_deps_left() {
+    assert(_init_deps_left > 0, "Must be");
+    Atomic::sub(&_init_deps_left, 1);
+  }
+  int init_deps_left() const {
+    return _init_deps_left;
+  }
+  void initialize() {
+    _init_deps_left = init_dep_count();
+  }
   void record_compilation_queued(CompileTask* task);
   void record_compilation_start(CompileTask* task);
   void record_compilation_end(CompileTask* task);
@@ -618,6 +588,103 @@ class CompileTrainingData : public TrainingData {
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
 
   virtual void print_on(outputStream* st, bool name_only = false) const;
+};
+
+// Record information about a method at the time compilation is requested.
+class MethodTrainingData : public TrainingData {
+  friend CompileTrainingData;
+
+  KlassTrainingData* _klass;
+  const Method* _holder;  // can be null
+  CompileTrainingData* _compile;   // singly linked list, latest first
+  CompileTrainingData* _last_toplevel_compiles[CompLevel_count];
+  int _level_mask;  // bit-set of all possible levels
+  bool _was_inlined;
+  bool _was_toplevel;
+  // metadata snapshots of final state:
+  MethodCounters* _final_counters;
+  MethodData*     _final_profile;
+
+  MethodTrainingData(KlassTrainingData* klass,
+                     Symbol* name, Symbol* signature)
+    : TrainingData(klass, name, signature)
+  {
+    _klass = klass;
+    _holder = nullptr;
+    _compile = nullptr;
+    for (int i = 0; i < CompLevel_count; i++) {
+      _last_toplevel_compiles[i] = nullptr;
+    }
+    _level_mask = 0;
+    _was_inlined = _was_toplevel = false;
+  }
+
+  static int level_mask(int level) {
+    return ((level & 0xF) != level ? 0 : 1 << level);
+  }
+  static CompLevel highest_level(int mask) {
+    if (mask == 0)  return (CompLevel) 0;
+    int diff = (count_leading_zeros(level_mask(0)) - count_leading_zeros(mask));
+    return (CompLevel) diff;
+  }
+
+ public:
+  KlassTrainingData* klass()  const { return _klass; }
+  bool has_holder()           const { return _holder != nullptr; }
+  const Method* holder()      const { return _holder; }
+  Symbol* name()              const { return _key.name1(); }
+  Symbol* signature()         const { return _key.name2(); }
+  bool only_inlined()         const { return !_was_toplevel; }
+  bool never_inlined()        const { return !_was_inlined; }
+  bool saw_level(CompLevel l) const { return (_level_mask & level_mask(l)) != 0; }
+  int highest_level()         const { return highest_level(_level_mask); }
+
+  CompileTrainingData* last_toplevel_compile(int level) const {
+    if (level > CompLevel_none) {
+      return _last_toplevel_compiles[level - 1];
+    }
+    return nullptr;
+  }
+
+  inline int last_compile_id() const;
+
+  void notice_compilation(int level, bool inlined = false) {
+    if (inlined)  _was_inlined = true;
+    else          _was_toplevel = true;
+    _level_mask |= level_mask(level);
+  }
+
+  // Update any copied data.
+  void refresh_from(const Method* method);
+
+  static MethodTrainingData* make(KlassTrainingData* klass,
+                                  Symbol* name, Symbol* signature);
+  static MethodTrainingData* make(KlassTrainingData* klass,
+                                  const char* name, const char* signature);
+  static MethodTrainingData* make(const methodHandle& method,
+                                  bool null_if_not_found = false);
+  static MethodTrainingData* find(const methodHandle& method) {
+    return make(method, true);
+  }
+
+  virtual int cmp(const TrainingData* that) const;
+
+  virtual MethodTrainingData* as_MethodTrainingData() const { return const_cast<MethodTrainingData*>(this); };
+
+  virtual void print_on(outputStream* st, bool name_only = false) const;
+
+  virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
+
+  template<typename FN>
+  void iterate_all_compiles(FN fn) const { // lambda enabled API
+    for (CompileTrainingData* ctd = _compile; ctd != nullptr; ctd = ctd->next()) {
+       fn(ctd);
+    }
+  }
+
+  void initialize() {
+    iterate_all_compiles([](CompileTrainingData* ctd) { ctd->initialize(); });
+  }
 };
 
 inline int MethodTrainingData::last_compile_id() const {
