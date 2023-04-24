@@ -133,21 +133,10 @@ class TrainingData : public Metadata {
 
     void metaspace_pointers_do(MetaspaceClosure *iter);
   };
-
-  class TrainingDataSet {
-    friend TrainingData;
-    friend TrainingDataSetLocker;
-    ResizeableResourceHashtable<const Key*, TrainingData*,
-                                AnyObj::C_HEAP, MEMFLAGS::mtCompiler,
-                                &TrainingData::Key::hash,
-                                &TrainingData::Key::equals>
-      _table;
+  class TrainingDataLocker {
     static int _lock_mode;
-    static void initialize() {
-      _lock_mode = need_data() ? +1 : -1;   // if -1, we go lock-free
-    }
     static void lock() {
-      assert(_lock_mode != 0, "Forgot to call TrainingDataSet::initialize()");
+      assert(_lock_mode != 0, "Forgot to call TrainingDataLocker::initialize()");
       if (_lock_mode > 0) {
         TrainingData_lock->lock_without_safepoint_check();
       }
@@ -158,13 +147,34 @@ class TrainingData : public Metadata {
       }
     }
     static bool safely_locked() {
-      assert(_lock_mode != 0, "Forgot to call TrainingDataSet::initialize()");
+      assert(_lock_mode != 0, "Forgot to call TrainingDataLocker::initialize()");
       if (_lock_mode > 0) {
         return TrainingData_lock->owned_by_self();
       } else {
         return true;
       }
     }
+  public:
+    static void initialize() {
+      _lock_mode = need_data() ? +1 : -1;   // if -1, we go lock-free
+    }
+    static void assert_locked() {
+      assert(TrainingDataLocker::safely_locked(), "use under TrainingDataLocker");
+    }
+    TrainingDataLocker() {
+      lock();
+    }
+    ~TrainingDataLocker() {
+      unlock();
+    }
+  };
+  class TrainingDataSet {
+    friend TrainingData;
+    ResizeableResourceHashtable<const Key*, TrainingData*,
+                                AnyObj::C_HEAP, MEMFLAGS::mtCompiler,
+                                &TrainingData::Key::hash,
+                                &TrainingData::Key::equals>
+      _table;
 
   public:
     template<typename... Arg>
@@ -172,7 +182,7 @@ class TrainingData : public Metadata {
       : _table(arg...) {
     }
     TrainingData* find(const Key* key) const {
-      assert(safely_locked(), "use under TrainingDataSetLocker");
+      TrainingDataLocker::assert_locked();
       auto res = _table.get(key);
       return res == nullptr ? nullptr : *res;
     }
@@ -180,7 +190,7 @@ class TrainingData : public Metadata {
       return _table.remove(key);
     }
     TrainingData* install(TrainingData* tdata) {
-      assert(safely_locked(), "use under TrainingDataSetLocker");
+      TrainingDataLocker::assert_locked();
       auto key = tdata->key();
       if (key->is_empty())   return tdata;  // unkeyed TD not installed
       bool created = false;
@@ -257,11 +267,9 @@ public:
   // possibly cyclic.
   template<typename E>
   class DepList : public StackObj {
-  private:
     GrowableArrayCHeap<E, mtCompiler>* _deps_dyn;
     Array<E>*                          _deps;
     // (hmm, could we have state-selected union of these two?)
-
   public:
     DepList() {
       _deps_dyn = nullptr;
@@ -285,7 +293,7 @@ public:
     bool append_if_missing(E dep) {
       assert(_deps == nullptr, "must be growable");
       if (_deps_dyn == nullptr) {
-        _deps_dyn = new GrowableArrayCHeap<KlassTrainingData*, mtCompiler>(10);
+        _deps_dyn = new GrowableArrayCHeap<E, mtCompiler>(10);
         _deps_dyn->append(dep);
         return true;
       } else {
@@ -322,18 +330,11 @@ public:
   static TrainingData* lookup_archived_training_data(const Key* k);
 };
 
-class TrainingDataSetLocker {
- public:
-  TrainingDataSetLocker() {
-    TrainingData::TrainingDataSet::lock();
-  }
-  ~TrainingDataSetLocker() {
-    TrainingData::TrainingDataSet::unlock();
-  }
-};
+
 
 class KlassTrainingData : public TrainingData {
   friend TrainingData;
+  friend CompileTrainingData;
 
   // Used by CDS. These classes need to access the private default constructor.
   template <class T> friend class CppVtableTesterA;
@@ -351,7 +352,7 @@ class KlassTrainingData : public TrainingData {
     void init_from(fieldDescriptor& fd) {
       _name = fd.name();
       _index = fd.index();
-      _offset = fd.offset(); 
+      _offset = fd.offset();
       _type = fd.field_type();
       _fieldinit_sequence_index = 0;
     }
@@ -369,7 +370,7 @@ class KlassTrainingData : public TrainingData {
   int _fieldinit_count;  // count <= _static_fields.length()
   bool _clinit_is_done;
   DepList<KlassTrainingData*> _init_deps;  // classes to initialize before me
-
+  DepList<CompileTrainingData*> _comp_deps; // compiles that depend on me
   static GrowableArrayCHeap<FieldData, mtCompiler>* _no_static_fields;
   static int _clinit_count;  // global count (so far) of clinit events
 
@@ -398,9 +399,31 @@ class KlassTrainingData : public TrainingData {
     init();
   }
 
-  int init_dep_count() const { return _init_deps.length(); }
-  KlassTrainingData* init_dep(int i) const { return _init_deps.at(i); }
-  bool add_init_dep(KlassTrainingData* k) { return _init_deps.append_if_missing(k); }
+  int init_dep_count() const {
+    TrainingDataLocker::assert_locked();
+    return _init_deps.length();
+  }
+  KlassTrainingData* init_dep(int i) const {
+    TrainingDataLocker::assert_locked();
+    return _init_deps.at(i);
+  }
+  void add_init_dep(KlassTrainingData* ktd) {
+    TrainingDataLocker::assert_locked();
+    _init_deps.append_if_missing(ktd);
+  }
+
+  int comp_dep_count() const {
+    TrainingDataLocker::assert_locked();
+    return _comp_deps.length();
+  }
+  CompileTrainingData* comp_dep(int i) const {
+    TrainingDataLocker::assert_locked();
+    return _comp_deps.at(i);
+  }
+  void add_comp_dep(CompileTrainingData* ctd) {
+    TrainingDataLocker::assert_locked();
+     _comp_deps.append_if_missing(ctd);
+  }
 
   static GrowableArrayCHeap<FieldData, mtCompiler>* no_static_fields();
   static int next_clinit_count() {
@@ -428,8 +451,11 @@ class KlassTrainingData : public TrainingData {
   // factories from live class and from symbols:
   static KlassTrainingData* make(Symbol* name, Symbol* loader_name);
   static KlassTrainingData* make(const char* name, const char* loader_name);
-  static KlassTrainingData* make(InstanceKlass* holder);
-
+  static KlassTrainingData* make(InstanceKlass* holder,
+                                 bool null_if_not_found = false);
+  static KlassTrainingData* find(InstanceKlass* holder) {
+    return make(holder, true);
+  }
   virtual int cmp(const TrainingData* that) const;
 
   virtual KlassTrainingData* as_KlassTrainingData() const { return const_cast<KlassTrainingData*>(this); };
@@ -497,7 +523,7 @@ class KlassTrainingData : public TrainingData {
 
   void record_initialization_start();
   void record_initialization_end();
-
+  void notice_fully_initialized();
   // Record that we have witnessed the initialization of the name.
   // This is called when we know we are doing a `putstatic` or equivalent.
   // It can be called either just before or just after.  It is only
@@ -533,6 +559,132 @@ class KlassTrainingData : public TrainingData {
   static KlassTrainingData* allocate(Symbol* name, Symbol* loader_name);
 };
 
+// Information about particular JIT tasks.
+class CompileTrainingData : public TrainingData {
+  // Used by CDS. These classes need to access the private default constructor.
+  template <class T> friend class CppVtableTesterA;
+  template <class T> friend class CppVtableTesterB;
+  template <class T> friend class CppVtableCloner;
+
+  MethodTrainingData* _method;  // inlined method, or same as top method
+  MethodTrainingData* _top_method;
+  CompileTrainingData* _next;   // singly linked list, latest first
+  const short _level;
+  const int _compile_id;
+  int _nm_total_size;
+  float _qtime, _stime, _etime;   // time queued, started, ended
+
+  // classes that should be initialized before this JIT task runs
+  DepList<KlassTrainingData*> _init_deps;
+  volatile int _init_deps_left;
+
+  CompileTrainingData() : _level(-1), _compile_id (-1) {
+    assert(DumpSharedSpaces || UseSharedSpaces, "only for CDS");
+  }
+
+  // (should we also capture counters or MDO state or replay data?)
+  CompileTrainingData(MethodTrainingData* method,
+                      MethodTrainingData* top_method,
+                      int level,
+                      int compile_id)
+      : TrainingData(),  // empty key
+        _method(method), _top_method(top_method),
+        _level(level), _compile_id(compile_id)
+  {
+    _next = nullptr;
+    _qtime = _stime = _etime = 0;
+    _nm_total_size = 0;
+    _init_deps_left = 0;
+  }
+
+public:
+  // Record a use of a method in a given task.  If non-null, the given
+  // method is not the top-level method of the task, but instead it is
+  // inlined into the top-level method.
+  static CompileTrainingData* make(CompileTask* task,
+                                   Method* inlined_method = nullptr);
+  static CompileTrainingData* make(MethodTrainingData* this_method,
+                                   MethodTrainingData* top_method,
+                                   int level, int compile_id);
+  static CompileTrainingData* make(MethodTrainingData* method,
+                                   int level, int compile_id) {
+    return make(method, method, level, compile_id);
+  }
+
+  virtual CompileTrainingData* as_CompileTrainingData() const { return const_cast<CompileTrainingData*>(this); };
+
+  MethodTrainingData* method()      const { return _method; }
+  MethodTrainingData* top_method()  const { return _top_method; }
+  bool                is_inlined()  const { return _method != _top_method; }
+
+  CompileTrainingData* next() const { return _next; }
+
+  int level() const { return _level; }
+  //void set_level(int level) { _level = level; }
+
+  int compile_id() const { return _compile_id; }
+
+  int init_dep_count() const {
+    TrainingDataLocker::assert_locked();
+    return _init_deps.length();
+  }
+  KlassTrainingData* init_dep(int i) const {
+    TrainingDataLocker::assert_locked();
+    return _init_deps.at(i);
+  }
+  void add_init_dep(KlassTrainingData* ktd) {
+    TrainingDataLocker::assert_locked();
+    ktd->add_comp_dep(this);
+    _init_deps.append_if_missing(ktd);
+  }
+  void dec_init_deps_left() {
+    assert(_init_deps_left > 0, "Must be");
+    Atomic::sub(&_init_deps_left, 1);
+  }
+  int init_deps_left() const {
+    return _init_deps_left;
+  }
+  void initialize() {
+    _init_deps_left = init_dep_count();
+  }
+  void record_compilation_queued(CompileTask* task);
+  void record_compilation_start(CompileTask* task);
+  void record_compilation_end(CompileTask* task);
+  void notice_inlined_method(CompileTask* task, const methodHandle& method);
+
+  // The JIT looks at classes and objects too and can depend on their state.
+  // These simple calls just report the *possibility* of an observation.
+  void notice_jit_observation(ciEnv* env, ciBaseObject* what);
+
+  virtual int cmp(const TrainingData* that) const;
+
+  virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
+
+  void print_on(outputStream* st, bool name_only) const;
+  virtual void print_on(outputStream* st) const { print_on(st, false); }
+  virtual void print_value_on(outputStream* st) const { print_on(st, true); }
+
+#if INCLUDE_CDS
+  virtual void remove_unshareable_info();
+  virtual void restore_unshareable_info(TRAPS);
+#endif
+
+  virtual void metaspace_pointers_do(MetaspaceClosure* iter);
+  virtual MetaspaceObj::Type type() const { return CompileTrainingDataType; }
+
+  virtual const char* internal_name() const {
+    return "{ compile training data }";
+  };
+
+  virtual int size() const {
+    return align_metadata_size(align_up(sizeof(CompileTrainingData), BytesPerWord)/BytesPerWord);
+  }
+
+  static CompileTrainingData* allocate(MethodTrainingData* this_method,
+                                       MethodTrainingData* top_method,
+                                       int level, int compile_id);
+};
+
 // Record information about a method at the time compilation is requested.
 class MethodTrainingData : public TrainingData {
   friend CompileTrainingData;
@@ -545,6 +697,7 @@ class MethodTrainingData : public TrainingData {
   KlassTrainingData* _klass;
   const Method* _holder;  // can be null
   CompileTrainingData* _compile;   // singly linked list, latest first
+  CompileTrainingData* _last_toplevel_compiles[CompLevel_count];
   int _level_mask;  // bit-set of all possible levels
   bool _was_inlined;
   bool _was_toplevel;
@@ -563,6 +716,9 @@ class MethodTrainingData : public TrainingData {
     _klass = klass;
     _holder = nullptr;
     _compile = nullptr;
+    for (int i = 0; i < CompLevel_count; i++) {
+      _last_toplevel_compiles[i] = nullptr;
+    }
     _level_mask = 0;
     _was_inlined = _was_toplevel = false;
   }
@@ -587,6 +743,13 @@ class MethodTrainingData : public TrainingData {
   bool never_inlined()        const { return !_was_inlined; }
   bool saw_level(CompLevel l) const { return (_level_mask & level_mask(l)) != 0; }
   int highest_level()         const { return highest_level(_level_mask); }
+
+  CompileTrainingData* last_toplevel_compile(int level) const {
+    if (level > CompLevel_none) {
+      return _last_toplevel_compiles[level - 1];
+    }
+    return nullptr;
+  }
 
   inline int last_compile_id() const;
 
@@ -637,112 +800,6 @@ class MethodTrainingData : public TrainingData {
 
   static MethodTrainingData* allocate(KlassTrainingData* ktd, Method* m);
   static MethodTrainingData* allocate(KlassTrainingData* ktd, Symbol* name, Symbol* signature);
-};
-
-// Information about particular JIT tasks.
-class CompileTrainingData : public TrainingData {
-  // Used by CDS. These classes need to access the private default constructor.
-  template <class T> friend class CppVtableTesterA;
-  template <class T> friend class CppVtableTesterB;
-  template <class T> friend class CppVtableCloner;
-
-  MethodTrainingData* _method;  // inlined method, or same as top method
-  MethodTrainingData* _top_method;
-  CompileTrainingData* _next;   // singly linked list, latest first
-  const short _level;
-  const int _compile_id;
-  int _nm_total_size;
-  float _qtime, _stime, _etime;   // time queued, started, ended
-
-  // classes that should be initialized before this JIT task runs
-  TrainingData::DepList<KlassTrainingData*> _init_deps;
-
-  CompileTrainingData() : _level(-1), _compile_id (-1) {
-    assert(DumpSharedSpaces || UseSharedSpaces, "only for CDS");
-  }
-
-  // (should we also capture counters or MDO state or replay data?)
-
-  CompileTrainingData(MethodTrainingData* method,
-                      MethodTrainingData* top_method,
-                      int level,
-                      int compile_id)
-    : TrainingData(),  // empty key
-      _method(method), _top_method(top_method),
-      _level(level), _compile_id(compile_id)
-  {
-    _next = nullptr;
-    _qtime = _stime = _etime = 0;
-    _nm_total_size = 0;
-  }
-
- public:
-  // Record a use of a method in a given task.  If non-null, the given
-  // method is not the top-level method of the task, but instead it is
-  // inlined into the top-level method.
-  static CompileTrainingData* make(CompileTask* task,
-                                   Method* inlined_method = nullptr);
-  static CompileTrainingData* make(MethodTrainingData* this_method,
-                                   MethodTrainingData* top_method,
-                                   int level, int compile_id);
-  static CompileTrainingData* make(MethodTrainingData* method,
-                                   int level, int compile_id) {
-    return make(method, method, level, compile_id);
-  }
-
-  virtual CompileTrainingData* as_CompileTrainingData() const { return const_cast<CompileTrainingData*>(this); };
-
-  MethodTrainingData* method()      const { return _method; }
-  MethodTrainingData* top_method()  const { return _top_method; }
-  bool                is_inlined()  const { return _method != _top_method; }
-
-  CompileTrainingData* next() const { return _next; }
-
-  int level() const { return _level; }
-  //void set_level(int level) { _level = level; }
-
-  int compile_id() const { return _compile_id; }
-
-  int init_dep_count() const { return _init_deps.length(); }
-  KlassTrainingData* init_dep(int i) const { return _init_deps.at(i); }
-  bool add_init_dep(KlassTrainingData* k) { return _init_deps.append_if_missing(k); }
-
-  void record_compilation_queued(CompileTask* task);
-  void record_compilation_start(CompileTask* task);
-  void record_compilation_end(CompileTask* task);
-  void notice_inlined_method(CompileTask* task, const methodHandle& method);
-
-  // The JIT looks at classes and objects too and can depend on their state.
-  // These simple calls just report the *possibility* of an observation.
-  void notice_jit_observation(ciEnv* env, ciBaseObject* what);
-
-  virtual int cmp(const TrainingData* that) const;
-
-  virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
-
-  void print_on(outputStream* st, bool name_only) const;
-  virtual void print_on(outputStream* st) const { print_on(st, false); }
-  virtual void print_value_on(outputStream* st) const { print_on(st, true); }
-
-#if INCLUDE_CDS
-  virtual void remove_unshareable_info();
-  virtual void restore_unshareable_info(TRAPS);
-#endif
-
-  virtual void metaspace_pointers_do(MetaspaceClosure* iter);
-  virtual MetaspaceObj::Type type() const { return CompileTrainingDataType; }
-
-  virtual const char* internal_name() const {
-    return "{ compile training data }";
-  };
-
-  virtual int size() const {
-    return align_metadata_size(align_up(sizeof(CompileTrainingData), BytesPerWord)/BytesPerWord);
-  }
-
-  static CompileTrainingData* allocate(MethodTrainingData* this_method,
-                                       MethodTrainingData* top_method,
-                                       int level, int compile_id);
 };
 
 inline int MethodTrainingData::last_compile_id() const {
