@@ -76,6 +76,7 @@ class TrainingData : public Metadata {
       return _name1 == nullptr && _name2 == nullptr && _holder == nullptr;
     }
 
+  public:
     Key(Symbol* name1, Symbol* name2,
         const TrainingData* holder = nullptr)
       : _name1(name1), _name2(name2), _holder(holder)
@@ -88,7 +89,7 @@ class TrainingData : public Metadata {
     Key(const InstanceKlass* klass);
     Key(const Method* method);
 
-  public:
+    static unsigned cds_hash(const Key* const& k);
     static unsigned hash(const Key* const& k) {
       // A symmetric hash code is usually a bad idea, except in cases
       // like this where it is very unlikely that any one string might

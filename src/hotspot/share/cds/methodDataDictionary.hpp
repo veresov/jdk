@@ -128,14 +128,6 @@ public:
     return _key;
   }
 
-  static inline unsigned int DUMPTIME_HASH(MethodDataKey const& key) {
-    return (key.dumptime_hash());
-  }
-
-  static inline bool DUMPTIME_EQUALS(MethodDataKey const& k1, MethodDataKey const& k2) {
-    return (k1.equals(k2));
-  }
-
   Method*         method()          const { return _key.method();   }
   MethodData*     method_data()     const { return _method_data;     }
   MethodCounters* method_counters() const { return _method_counters; }

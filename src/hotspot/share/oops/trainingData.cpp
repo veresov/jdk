@@ -1278,7 +1278,7 @@ void TrainingData::cleanup_training_data() {
 }
 
 void TrainingData::serialize_training_data(SerializeClosure* soc) {
-  if ((soc->reading() && !have_data()) || (soc->writing() && !need_data())) {
+  if (/*(soc->reading() && !have_data()) ||*/ (soc->writing() && !need_data())) {
     return;
   }
   _archived_training_data_dictionary.serialize_header(soc);
@@ -1312,6 +1312,20 @@ void TrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   _key.metaspace_pointers_do(iter);
 }
 
+uint TrainingData::Key::cds_hash(const Key* const& k) {
+  uint hash = 0;
+  if (k->holder() != nullptr) {
+    hash += SystemDictionaryShared::hash_for_shared_dictionary((address)k->holder());
+  }
+  if (k->name1() != nullptr) {
+    hash += SystemDictionaryShared::hash_for_shared_dictionary((address)k->name1());
+  }
+  if (k->name2() != nullptr) {
+    hash += SystemDictionaryShared::hash_for_shared_dictionary((address)k->name2());
+  }
+  return hash;
+}
+
 void TrainingData::write_training_data_dictionary(TrainingDataDictionary* dictionary) {
   if (!need_data()) {
     return;
@@ -1322,7 +1336,7 @@ void TrainingData::write_training_data_dictionary(TrainingDataDictionary* dictio
   CompactHashtableWriter writer(_dumptime_training_data_dictionary->length(), &stats);
   for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
     TrainingData* td = _dumptime_training_data_dictionary->at(i).training_data();
-    uint hash = SystemDictionaryShared::hash_for_shared_dictionary((address)td->key());
+    uint hash = TrainingData::Key::cds_hash(td->key());
     u4 delta = ArchiveBuilder::current()->buffer_to_offset_u4((address)td);
     writer.add(hash, delta);
   }
@@ -1339,8 +1353,7 @@ size_t TrainingData::estimate_size_for_archive() {
 }
 
 TrainingData* TrainingData::lookup_archived_training_data(const Key* k) {
-  assert(have_data(), "");
-  uint hash = SystemDictionaryShared::hash_for_shared_dictionary((address)k); // Key::hash(k);
+  uint hash = TrainingData::Key::cds_hash(k);
   return _archived_training_data_dictionary.lookup(k, hash, -1 /*unused*/);
 }
 
@@ -1502,6 +1515,10 @@ void TrainingDataPrinter::do_value(const RunTimeMethodDataInfo* record) {
 
 void TrainingDataPrinter::do_value(TrainingData* td) {
   assert(td == TrainingData::lookup_archived_training_data(td->key()), "");
+
+  TrainingData::Key key(td->key()->name1(), td->key()->name2(), td->key()->holder());
+  assert(td == TrainingData::lookup_archived_training_data(&key), "");
+
   _st->print("%4d: %p ", _index++, td);
   td->print_on(_st);
   _st->cr();
