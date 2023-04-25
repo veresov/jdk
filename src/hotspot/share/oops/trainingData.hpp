@@ -310,7 +310,7 @@ public:
     void metaspace_pointers_do(MetaspaceClosure *iter);
   };
 
-  void metaspace_pointers_do(MetaspaceClosure *iter);
+  virtual void metaspace_pointers_do(MetaspaceClosure *iter);
 
 #if INCLUDE_CDS
   virtual void remove_unshareable_info() {}

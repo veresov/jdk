@@ -27,7 +27,6 @@
 #include "precompiled.hpp"
 #include "ci/ciEnv.hpp"
 #include "ci/ciMetadata.hpp"
-#include "ci/ciObject.hpp"
 #include "classfile/classLoaderData.hpp"
 #include "classfile/javaClasses.hpp"
 #include "classfile/symbolTable.hpp"
@@ -143,6 +142,8 @@ MethodTrainingData* MethodTrainingData::make(const methodHandle& method,
     auto v = training_data_set()->find(&mkey);
     if (v == nullptr) {
       mtd = MethodTrainingData::allocate(ktd, method());
+      TrainingData* td = training_data_set()->install(mtd);
+      assert(td == mtd, "");
     } else {
       mtd = v->as_MethodTrainingData();
     }
@@ -162,6 +163,7 @@ void MethodTrainingData::print_on(outputStream* st, bool name_only) const {
   if (!has_holder())  st->print("[SYM]");
   if (_do_not_dump)  st->print("[DND]");
   if (_level_mask)  st->print(" LM%d", _level_mask);
+  st->print(" mc=%p mdo=%p", _final_counters, _final_profile);
 }
 
 void MethodTrainingData::refresh_from(const Method* method) {
@@ -1276,12 +1278,16 @@ void TrainingData::init_dumptime_table(TRAPS) {
   GrowableArray<TrainingData*>& tda = tdd.hand_off_node_list();
   tda.sort(qsort_compare_tdata); // FIXME: needed?
   int num_of_entries = tda.length();
-  _dumptime_training_data_dictionary = new GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>();
+  _dumptime_training_data_dictionary = new GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>(num_of_entries);
   for (int i = 0; i < num_of_entries; i++) {
     TrainingData* td = tda.at(i);
-    // TODO: filter TD
-    // if (SystemDictionaryShared::check_for_exclusion(), nullptr);
-    _dumptime_training_data_dictionary->append(td);
+    if (td->is_CompileTrainingData()) {
+      continue; // skip CTDs; discoverable through corresponding MTD
+    } else {
+      // TODO: filter TD
+      // if (SystemDictionaryShared::check_for_exclusion(), nullptr);
+      _dumptime_training_data_dictionary->append(td);
+    }
   }
 }
 
@@ -1365,6 +1371,12 @@ void TrainingData::write_training_data_dictionary(TrainingDataDictionary* dictio
   CompactHashtableWriter writer(_dumptime_training_data_dictionary->length(), &stats);
   for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
     TrainingData* td = _dumptime_training_data_dictionary->at(i).training_data();
+#ifdef ASSERT
+    for (int j = i+1; j < _dumptime_training_data_dictionary->length(); j++) {
+      TrainingData* td1 = _dumptime_training_data_dictionary->at(j).training_data();
+      assert(!TrainingData::Key::equals(td1, td->key(), -1), "conflict");
+    }
+#endif // ASSERT
     uint hash = TrainingData::Key::cds_hash(td->key());
     u4 delta = ArchiveBuilder::current()->buffer_to_offset_u4((address)td);
     writer.add(hash, delta);
@@ -1404,6 +1416,8 @@ void MethodTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   iter->push(&_klass);
   iter->push((Method**)&_holder);
   iter->push(&_compile);
+  iter->push(&_final_profile);
+  iter->push(&_final_counters);
 }
 
 void CompileTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
@@ -1509,11 +1523,7 @@ void TrainingDataPrinter::do_value(const RunTimeClassInfo* record) {
   if (ktd != nullptr) {
     _st->print("%4d: KTD %s%p for %s %s", _index++, tag(ktd), ktd, record->_klass->external_name(),
                SystemDictionaryShared::class_loader_name_for_shared(record->_klass));
-    if (Verbose) {
-      ktd->print_on(_st);
-    } else {
-      ktd->print_value_on(_st);
-    }
+    ktd->print_on(_st);
     _st->cr();
   }
 }
@@ -1525,11 +1535,7 @@ void TrainingDataPrinter::do_value(const RunTimeMethodDataInfo* record) {
     MethodTrainingData* mtd = mc->method_training_data();
     if (mtd != nullptr) {
       _st->print("%4d: MTD %s%p ", _index++, tag(mtd), mtd);
-      if (Verbose) {
-        mtd->print_on(_st);
-      } else {
-        mtd->print_value_on(_st);
-      }
+      mtd->print_on(_st);
       _st->cr();
 
       int i = 0;
