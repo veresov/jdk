@@ -90,6 +90,7 @@ class TrainingData : public Metadata {
     Key(const Method* method);
 
     static unsigned cds_hash(const Key* const& k);
+    static bool can_compute_cds_hash(const Key* const& k);
     static unsigned hash(const Key* const& k) {
       // A symmetric hash code is usually a bad idea, except in cases
       // like this where it is very unlikely that any one string might
@@ -234,6 +235,7 @@ public:
   static bool need_data() { return RecordTraining;  } // Going to write
 
   static TrainingDataSet* training_data_set() { return &_training_data_set; }
+  static TrainingDataDictionary* archived_training_data_dictionary() { return &_archived_training_data_dictionary; }
 
   virtual MethodTrainingData*   as_MethodTrainingData()  const { return nullptr; }
   virtual KlassTrainingData*    as_KlassTrainingData()   const { return nullptr; }
@@ -291,7 +293,7 @@ public:
       return *adr_at(i);
     }
     bool append_if_missing(E dep) {
-      assert(_deps == nullptr, "must be growable");
+      //assert(_deps == nullptr, "must be growable");
       if (_deps_dyn == nullptr) {
         _deps_dyn = new GrowableArrayCHeap<E, mtCompiler>(10);
         _deps_dyn->append(dep);
@@ -644,7 +646,7 @@ public:
   int init_deps_left() const {
     return _init_deps_left;
   }
-  void initialize() {
+  void initialize_deps_tracking() {
     _init_deps_left = init_dep_count();
   }
   void record_compilation_queued(CompileTask* task);
@@ -743,6 +745,7 @@ class MethodTrainingData : public TrainingData {
   bool never_inlined()        const { return !_was_inlined; }
   bool saw_level(CompLevel l) const { return (_level_mask & level_mask(l)) != 0; }
   int highest_level()         const { return highest_level(_level_mask); }
+  MethodData* final_profile() const { return _final_profile; }
 
   CompileTrainingData* last_toplevel_compile(int level) const {
     if (level > CompLevel_none) {
@@ -781,6 +784,17 @@ class MethodTrainingData : public TrainingData {
   virtual void print_value_on(outputStream* st) const { print_on(st, true); }
 
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
+
+  template<typename FN>
+  void iterate_all_compiles(FN fn) const { // lambda enabled API
+    for (CompileTrainingData* ctd = _compile; ctd != nullptr; ctd = ctd->next()) {
+      fn(ctd);
+    }
+  }
+
+  void initialize_deps_tracking() {
+    iterate_all_compiles([](CompileTrainingData* ctd) { ctd->initialize_deps_tracking(); });
+  }
 
   virtual void metaspace_pointers_do(MetaspaceClosure* iter);
   virtual MetaspaceObj::Type type() const { return MethodTrainingDataType; }

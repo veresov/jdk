@@ -52,18 +52,30 @@ GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* TrainingData::_dump
 
 int TrainingData::TrainingDataLocker::_lock_mode;
 
+struct InitializeDepsTracking {
+  void do_value(TrainingData* td) {
+    if (td->is_MethodTrainingData()) {
+      td->as_MethodTrainingData()->initialize_deps_tracking();
+    }
+  }
+};
+
 void TrainingData::initialize() {
   // this is a nop if training modes are not enabled
   if (have_data() || need_data()) {
     TrainingDataLocker::initialize();
   }
   if (have_data()) {
-    load_profiles();
+    //load_profiles();
+    if (!archived_training_data_dictionary()->empty()) {
+      InitializeDepsTracking i;
+      archived_training_data_dictionary()->iterate(&i);
+    }
 
     // Initialize dependency tracking
-    TrainingData::training_data_set()->iterate_all([](const Key* k, TrainingData* td) {
+    training_data_set()->iterate_all([](const Key* k, TrainingData* td) {
       if (td->is_MethodTrainingData()) {
-        td->as_MethodTrainingData()->initialize();
+        td->as_MethodTrainingData()->initialize_deps_tracking();
       }
     });
   }
@@ -83,10 +95,15 @@ TrainingData::Key::Key(const Method* method)
 {}
 
 MethodTrainingData* MethodTrainingData::make(KlassTrainingData* klass, Symbol* name, Symbol* signature) {
-  TrainingDataLocker l;
-  Key mkey(klass, name, signature);
-  TrainingData* td = training_data_set()->find(&mkey);
+  Key key(klass, name, signature);
+  TrainingData* td = have_data() ? lookup_archived_training_data(&key) : nullptr;
   MethodTrainingData* mtd = nullptr;
+  if (td != nullptr) {
+    mtd = td->as_MethodTrainingData();
+    return mtd;
+  }
+  TrainingDataLocker l;
+  td = training_data_set()->find(&key);
   if (td != nullptr) {
     mtd = td->as_MethodTrainingData();
   } else {
@@ -116,40 +133,45 @@ MethodTrainingData* MethodTrainingData::make(const methodHandle& method,
   if (mcs != nullptr) {
     mtd = mcs->method_training_data();
     if (mtd != nullptr)  return mtd;
-  }
-
-  // No cached value.  Slow path looks in the central hash table.
-  if (null_if_not_found) {
-    Key mkey(method());
-    TrainingDataLocker l;
-    auto v = training_data_set()->find(&mkey);
-    if (v == nullptr)  return nullptr;
-    mtd = v->as_MethodTrainingData();
-    mtd->refresh_from(method());
-    method->init_training_data(mtd);  // Cache the pointer for next time.
-    return mtd;
-  }
-
-  // Make a place to cache the pointer for next time, if we can.
-  if (mcs == nullptr) {
+  } else {
     mcs = Method::build_method_counters(Thread::current(), method());
   }
 
+  Key key(method());
+  TrainingData* td = have_data()? lookup_archived_training_data(&key) : nullptr;
+  if (td != nullptr) {
+    mtd = td->as_MethodTrainingData();
+    mtd->refresh_from(method());
+    method->init_training_data(mtd);  // Cache the pointer for next time.
+    return mtd;
+  } else {
+    TrainingDataLocker l;
+    td = training_data_set()->find(&key);
+    if (td == nullptr && null_if_not_found) {
+      return nullptr;
+    }
+    if (td != nullptr) {
+      mtd = td->as_MethodTrainingData();
+      mtd->refresh_from(method());
+      method->init_training_data(mtd); // Cache the pointer for next time.
+      return mtd;
+    }
+  }
+
+  assert(td == nullptr && mtd == nullptr, "Should return if have result");
   KlassTrainingData* ktd = KlassTrainingData::make(method->method_holder());
   {
-    Key mkey(method());
     TrainingDataLocker l;
-    auto v = training_data_set()->find(&mkey);
-    if (v == nullptr) {
+    td = training_data_set()->find(&key);
+    if (td == nullptr) {
       mtd = MethodTrainingData::allocate(ktd, method());
-      TrainingData* td = training_data_set()->install(mtd);
+      td = training_data_set()->install(mtd);
       assert(td == mtd, "");
     } else {
-      mtd = v->as_MethodTrainingData();
+      mtd = td->as_MethodTrainingData();
     }
     mtd->refresh_from(method());
-    // cache for next time
-    method->init_training_data(mtd);  // Cache the pointer for next time.
+    method->init_training_data(mtd);
   }
   return mtd;
 }
@@ -506,6 +528,7 @@ bool KlassTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
       loader_data = java_lang_ClassLoader::loader_data(SystemDictionary::java_system_loader()); // default CLD
     }
     _init_deps.prepare(loader_data);
+    _comp_deps.prepare(loader_data);
     return true;
   }
   auto out = tdd.out();
@@ -836,10 +859,15 @@ int KlassTrainingData::_clinit_count;  //number <clinit> events in RecordTrainin
 GrowableArrayCHeap<FieldData, mtCompiler>* KlassTrainingData::_no_static_fields;
 
 KlassTrainingData* KlassTrainingData::make(Symbol* name, Symbol* loader_name) {
-  TrainingDataLocker l;
-  Key kkey(name, loader_name);
-  TrainingData* td = training_data_set()->find(&kkey);
+  Key key(name, loader_name);
+  TrainingData* td = have_data() ? lookup_archived_training_data(&key) : nullptr;
   KlassTrainingData* ktd = nullptr;
+  if (td != nullptr) {
+    ktd = td->as_KlassTrainingData();
+    return ktd;
+  }
+  TrainingDataLocker l;
+  td = training_data_set()->find(&key);
   if (td == nullptr) {
     ktd = KlassTrainingData::allocate(name, loader_name);
     td = training_data_set()->install(ktd);
@@ -862,10 +890,16 @@ KlassTrainingData* KlassTrainingData::make(const char* name, const char* loader_
 }
 
 KlassTrainingData* KlassTrainingData::make(InstanceKlass* holder, bool null_if_not_found) {
-  TrainingDataLocker l;
-  Key kkey(holder);
-  TrainingData* td = training_data_set()->find(&kkey);
+  Key key(holder);
+  TrainingData* td = have_data() ? lookup_archived_training_data(&key) : nullptr;
   KlassTrainingData* ktd = nullptr;
+  if (td != nullptr) {
+    ktd = td->as_KlassTrainingData();
+    holder->init_training_data(ktd);
+    return ktd;
+  }
+  TrainingDataLocker l;
+  td = training_data_set()->find(&key);
   if (td == nullptr) {
     if (null_if_not_found) {
       return nullptr;
@@ -1347,6 +1381,12 @@ void TrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   _key.metaspace_pointers_do(iter);
 }
 
+bool TrainingData::Key::can_compute_cds_hash(const Key* const& k) {
+  return (k->name1() == nullptr || MetaspaceObj::is_shared(k->name1())) &&
+         (k->name2() == nullptr || MetaspaceObj::is_shared(k->name2())) &&
+         (k->holder() == nullptr || MetaspaceObj::is_shared(k->holder()));
+}
+
 uint TrainingData::Key::cds_hash(const Key* const& k) {
   uint hash = 0;
   if (k->holder() != nullptr) {
@@ -1394,6 +1434,10 @@ size_t TrainingData::estimate_size_for_archive() {
 }
 
 TrainingData* TrainingData::lookup_archived_training_data(const Key* k) {
+  // For this to work, all components of the key must be in shared metaspace.
+  if (!TrainingData::Key::can_compute_cds_hash(k) || _archived_training_data_dictionary.empty()) {
+    return nullptr;
+  }
   uint hash = TrainingData::Key::cds_hash(k);
   return _archived_training_data_dictionary.lookup(k, hash, -1 /*unused*/);
 }
@@ -1407,6 +1451,7 @@ void KlassTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   log_trace(cds)("Iter(KlassTrainingData): %p", this);
   TrainingData::metaspace_pointers_do(iter);
   _init_deps.metaspace_pointers_do(iter);
+  _comp_deps.metaspace_pointers_do(iter);
   iter->push(&_holder);
 }
 
@@ -1416,6 +1461,9 @@ void MethodTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   iter->push(&_klass);
   iter->push((Method**)&_holder);
   iter->push(&_compile);
+  for (int i = 0; i < CompLevel_count; i++) {
+    iter->push(&_last_toplevel_compiles[i]);
+  }
   iter->push(&_final_profile);
   iter->push(&_final_counters);
 }
@@ -1566,11 +1614,13 @@ void KlassTrainingData::remove_unshareable_info() {
   _static_fields = nullptr;
   _no_static_fields = nullptr;
   _init_deps.remove_unshareable_info();
+  _comp_deps.remove_unshareable_info();
 }
 
 void KlassTrainingData::restore_unshareable_info(TRAPS) {
   TrainingData::restore_unshareable_info(CHECK);
   _init_deps.restore_unshareable_info(CHECK);
+  _comp_deps.restore_unshareable_info(CHECK);
 }
 
 void MethodTrainingData::remove_unshareable_info() {

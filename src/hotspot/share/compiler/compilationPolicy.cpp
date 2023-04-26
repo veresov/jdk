@@ -84,23 +84,33 @@ bool CompilationPolicy::must_be_compiled(const methodHandle& m, int comp_level) 
          (AlwaysCompileLoopMethods && m->has_loops() && CompileBroker::should_compile_new_jobs()); // eagerly compile loop methods
 }
 
-
 void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
   if (!m->is_native() && !m->has_compiled_code() && MethodTrainingData::have_data()) {
     MethodTrainingData* mtd = MethodTrainingData::find(m);
     if (mtd == nullptr) {
       return;              // there is no training data recorded for m
     }
+    if (UseNewCode) {
+      mtd->print_on(tty);
+    }
     if (!mtd->saw_level(CompLevel_simple) &&
         !mtd->saw_level(CompLevel_full_optimization) &&
         mtd->only_inlined()) {
       return;
     }
-    CompLevel level = CompLevel_full_profile;
+    CompLevel level = CompLevel_limited_profile;
     if (mtd->saw_level(CompLevel_simple)) {
       level = CompLevel_simple;
     } else if (!mtd->saw_level(CompLevel_full_optimization)) {
       level = CompLevel_limited_profile;
+    } else if (mtd->final_profile() != nullptr) {
+      if (is_method_ready(m, mtd)) {
+        m->set_method_data(mtd->final_profile());
+        level = CompLevel_full_optimization;
+        if (UseNewCode) {
+          tty->print_cr("***");
+        }
+      }
     }
     if (can_be_compiled(m, level) && !CompileBroker::compilation_is_in_queue(m)) {
       if (PrintTieredEvents) {
@@ -958,6 +968,16 @@ bool CompilationPolicy::compare_tasks(CompileTask* x, CompileTask* y) {
   }
   return false;
 }
+
+
+bool CompilationPolicy::is_method_ready(const methodHandle& method, MethodTrainingData* mtd) {
+  CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
+  if (ctd != nullptr && ctd->init_deps_left() == 0) {
+    return true;
+  }
+  return false;
+}
+
 
 // Is method profiled enough?
 bool CompilationPolicy::is_method_profiled(const methodHandle& method) {
