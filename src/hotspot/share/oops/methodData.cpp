@@ -1894,9 +1894,6 @@ void MethodData::remove_unshareable_info() {
 }
 
 void MethodData::restore_unshareable_info(TRAPS) {
-  if (UseNewCode2) {
-    tty->print_cr("########");
-  }
   _extra_data_lock = new Mutex(Mutex::safepoint-2, "MDOExtraData_lock");
 }
 #endif // INCLUDE_CDS

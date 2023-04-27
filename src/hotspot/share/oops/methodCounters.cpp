@@ -76,15 +76,10 @@ void MethodCounters::metaspace_pointers_do(MetaspaceClosure* it) {
 
 #if INCLUDE_CDS
 void MethodCounters::remove_unshareable_info() {
-  if (_method_training_data != nullptr) {
-    _method_training_data->remove_unshareable_info(); // FIXME: perform through TD table
-  }
+  _method_training_data = nullptr;
 }
 
 void MethodCounters::restore_unshareable_info(TRAPS) {
-  if (_method_training_data != nullptr) {
-    _method_training_data->restore_unshareable_info(CHECK); // FIXME: perform through TD table
-  }
 }
 #endif // INCLUDE_CDS
 

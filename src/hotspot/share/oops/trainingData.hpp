@@ -317,8 +317,9 @@ public:
 #if INCLUDE_CDS
   virtual void remove_unshareable_info() {}
   virtual void restore_unshareable_info(TRAPS) {}
+  virtual void foo() { }
+  static void restore(TRAPS);
 #endif
-
   static void init_dumptime_table(TRAPS);
   static void iterate_roots(MetaspaceClosure* it);
   static void dump_training_data();
@@ -647,7 +648,7 @@ public:
     return _init_deps_left;
   }
   void initialize_deps_tracking() {
-    _init_deps_left = init_dep_count();
+    _init_deps_left = _init_deps.length();
   }
   void record_compilation_queued(CompileTask* task);
   void record_compilation_start(CompileTask* task);

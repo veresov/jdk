@@ -186,15 +186,16 @@ class CompilationPolicy : AllStatic {
   inline static CompLevel limit_level(CompLevel level);
   // Common transition function. Given a predicate determines if a method should transition to another level.
   template<typename Predicate>
-  static CompLevel common(const methodHandle& method, CompLevel cur_level, bool disable_feedback = false);
+  static CompLevel common(const methodHandle& method, CompLevel cur_level, JavaThread* THREAD, bool disable_feedback = false);
   // Transition functions.
   // call_event determines if a method should be compiled at a different
   // level with a regular invocation entry.
-  static CompLevel call_event(const methodHandle& method, CompLevel cur_level, Thread* thread);
+  static CompLevel call_event(const methodHandle& method, CompLevel cur_level, JavaThread* THREAD);
   // loop_event checks if a method should be OSR compiled at a different
   // level.
-  static CompLevel loop_event(const methodHandle& method, CompLevel cur_level, Thread* thread);
-  static void print_counters(const char* prefix, const Method* m);
+  static CompLevel loop_event(const methodHandle& method, CompLevel cur_level, JavaThread* THREAD);
+  static void print_counters(const char* prefix, Method* m);
+  static void print_training_data(const char* prefix, Method* method);
   // Has a method been long around?
   // We don't remove old methods from the compile queue even if they have
   // very low activity (see select_task()).
@@ -219,15 +220,14 @@ class CompilationPolicy : AllStatic {
   // Create MDO if necessary.
   static void create_mdo(const methodHandle& mh, JavaThread* THREAD);
   // Is method profiled enough?
-  static bool is_method_profiled(const methodHandle& method);
-  static bool is_method_ready(const methodHandle& method, MethodTrainingData* mtd);
+  static bool is_method_profiled(const methodHandle& method, JavaThread* THREAD);
   static bool should_delay(const methodHandle& m);
 
   static void set_c1_count(int x) { _c1_count = x;    }
   static void set_c2_count(int x) { _c2_count = x;    }
 
   enum EventType { CALL, LOOP, COMPILE, FORCE_COMPILE, REMOVE_FROM_QUEUE, UPDATE_IN_QUEUE, REPROFILE, MAKE_NOT_ENTRANT };
-  static void print_event(EventType type, const Method* m, const Method* im, int bci, CompLevel level);
+  static void print_event(EventType type, Method* m, Method* im, int bci, CompLevel level);
   // Check if the method can be compiled, change level if necessary
   static void compile(const methodHandle& mh, int bci, CompLevel level, TRAPS);
   // Simple methods are as good being compiled with C1 as C2.
@@ -273,7 +273,7 @@ class CompilationPolicy : AllStatic {
   static nmethod* event(const methodHandle& method, const methodHandle& inlinee,
                  int branch_bci, int bci, CompLevel comp_level, CompiledMethod* nm, TRAPS);
   // Select task is called by CompileBroker. We should return a task or nullptr.
-  static CompileTask* select_task(CompileQueue* compile_queue);
+  static CompileTask* select_task(CompileQueue* compile_queue, JavaThread* THREAD);
   // Tell the runtime if we think a given method is adequately profiled.
   static bool is_mature(Method* method);
   // Initialize: set compiler thread count

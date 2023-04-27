@@ -434,7 +434,7 @@ CompileTask* CompileQueue::get(CompilerThread* thread) {
   CompileTask* task;
   {
     NoSafepointVerifier nsv;
-    task = CompilationPolicy::select_task(this);
+    task = CompilationPolicy::select_task(this, thread);
     if (task != nullptr) {
       task = task->select_for_compilation();
     }

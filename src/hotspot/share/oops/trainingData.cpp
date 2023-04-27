@@ -52,13 +52,25 @@ GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* TrainingData::_dump
 
 int TrainingData::TrainingDataLocker::_lock_mode;
 
-struct InitializeDepsTracking {
+#if INCLUDE_CDS
+class RestoreUnshareableInfo {
+  JavaThread *_thread;
+public:
+  RestoreUnshareableInfo(JavaThread *thread) : _thread(thread) { }
   void do_value(TrainingData* td) {
-    if (td->is_MethodTrainingData()) {
-      td->as_MethodTrainingData()->initialize_deps_tracking();
-    }
+    td->restore_unshareable_info(_thread);
   }
 };
+
+void TrainingData::restore(TRAPS) {
+  if (have_data()) {
+    if (!archived_training_data_dictionary()->empty()) {
+      RestoreUnshareableInfo r(THREAD);
+      archived_training_data_dictionary()->iterate(&r);
+    }
+  }
+}
+#endif
 
 void TrainingData::initialize() {
   // this is a nop if training modes are not enabled
@@ -67,11 +79,7 @@ void TrainingData::initialize() {
   }
   if (have_data()) {
     //load_profiles();
-    if (!archived_training_data_dictionary()->empty()) {
-      InitializeDepsTracking i;
-      archived_training_data_dictionary()->iterate(&i);
-    }
-
+    //restore((JavaThread*)Thread::current());
     // Initialize dependency tracking
     training_data_set()->iterate_all([](const Key* k, TrainingData* td) {
       if (td->is_MethodTrainingData()) {
@@ -80,6 +88,7 @@ void TrainingData::initialize() {
     });
   }
 }
+
 
 TrainingData::Key::Key(const KlassTrainingData* klass, Symbol* method_name, Symbol* signature)
   : Key(method_name, signature, klass) {}
@@ -1628,6 +1637,12 @@ void MethodTrainingData::remove_unshareable_info() {
   for (CompileTrainingData* ctd = _compile; ctd != nullptr; ctd = ctd->next()) {
     ctd->remove_unshareable_info();
   }
+  if (_final_counters != nullptr) {
+    _final_counters->remove_unshareable_info();
+  }
+  if (_final_profile != nullptr) {
+    _final_profile->remove_unshareable_info();
+  }
 }
 
 void MethodTrainingData::restore_unshareable_info(TRAPS) {
@@ -1635,6 +1650,13 @@ void MethodTrainingData::restore_unshareable_info(TRAPS) {
   for (CompileTrainingData* ctd = _compile; ctd != nullptr; ctd = ctd->next()) {
     ctd->restore_unshareable_info(CHECK);
   }
+  if (_final_counters != nullptr ) {
+    _final_counters->restore_unshareable_info(CHECK);
+  }
+  if (_final_profile != nullptr) {
+    _final_profile->restore_unshareable_info(CHECK);
+  }
+  initialize_deps_tracking();
 }
 
 void CompileTrainingData::remove_unshareable_info() {

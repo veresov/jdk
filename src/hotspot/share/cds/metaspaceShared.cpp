@@ -625,11 +625,11 @@ bool MetaspaceShared::link_class_for_cds(InstanceKlass* ik, TRAPS) {
 
 void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
   ClassPrelinker::initialize();
-
+/* FIXME!!!!!!!!
   if (!jcmd_request) {
     LambdaFormInvokers::regenerate_holder_classes(CHECK);
   }
-
+*/
   // Collect all loaded ClassLoaderData.
   CollectCLDClosure collect_cld(THREAD);
   {
