@@ -27,6 +27,7 @@
 #include "oops/methodCounters.hpp"
 #include "oops/trainingData.hpp"
 #include "runtime/handles.inline.hpp"
+#include "memory/resourceArea.hpp"
 
 MethodCounters::MethodCounters(const methodHandle& mh) :
   _method_training_data(nullptr),
