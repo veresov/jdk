@@ -519,6 +519,7 @@ static const char* ClassState_to_name(ClassState state) {
   #undef SWITCH_CASE
   return "?";
 }
+#if 0
 static int name_to_ClassState(const char* n) {
   #define NAME_CASE(x, y) \
     if (!strcmp(n, y))  return (int)ClassState::x;
@@ -526,7 +527,7 @@ static int name_to_ClassState(const char* n) {
   #undef NAME_CASE
   return -1;
 }
-
+#endif
 bool KlassTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
   if (dp == DP_prepare) {
     // FIXME: Decide if we should set _do_not_dump on some records.
