@@ -790,6 +790,7 @@
   template(jdk_internal_vm_ThreadDumper,           "jdk/internal/vm/ThreadDumper")                                \
   template(dumpThreads_name,                       "dumpThreads")                                                 \
   template(dumpThreadsToJson_name,                 "dumpThreadsToJson")                                           \
+  template(helloWorld,                             "HelloWorld")                                                  \
 
   /*end*/
 

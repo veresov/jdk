@@ -31,6 +31,7 @@
 #include "cds/lambdaFormInvokers.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "classfile/classLoaderData.inline.hpp"
+#include "classfile/dictionary.hpp"
 #include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmSymbols.hpp"
@@ -50,6 +51,116 @@
 #include "utilities/align.hpp"
 #include "utilities/bitMap.inline.hpp"
 
+
+/*
+
+Command-line example:
+
+(1) Perform a trial run. At the end of the run, dump the loaded classes into foo.jsa
+
+    For demonstration purposes, I write some a 20000 byte array that has some Klass pointers
+    into the CDS archive.
+
+    Note that the class "HelloWorld" is dynamically loaded in the trial run at 0x0000000801000800.
+
+    You can add "-Xcomp", and write the nmethods into _aot_data.
+
+$ java -cp HelloWorld.jar -XX:ArchiveClassesAtExit=foo.jsa -Xlog:cds+aot HelloWorld
+Hello World
+[0.309s][info][cds,aot] ptr->_k1 = 0x00000008000012d0, k1 = 0x00000008000012d0 : java.lang.Object
+[0.309s][info][cds,aot] ptr->_k2 = 0x00007f552f7ef008, k2 = 0x0000000801000800 : HelloWorld
+
+
+
+(2) This is a "production" run. HelloWorld is loaded from foo.jsa. It at a different location
+    0x0000000800d0b008.
+
+$ java -cp HelloWorld.jar -XX:SharedArchiveFile=foo.jsa -Xlog:cds+aot HelloWorld
+[0.031s][info][cds,aot] _aot_data = 0x0000000800d1a808:
+[0.031s][info][cds,aot] k1 = 0x00000008000012d0: java.lang.Object
+[0.031s][info][cds,aot] k2 = 0x0000000800d0b008: HelloWorld
+Hello World
+
+
+
+(3) CDS can also be executed in ASLR mode (with -XX:ArchiveRelocationMode=1).
+    The classes will be loaded at random locations, but this is transparently handled by the CDS
+    loading code. AOT doesn't need to worry about it.
+
+$ java -cp HelloWorld.jar -XX:SharedArchiveFile=foo.jsa -Xlog:cds+aot -XX:ArchiveRelocationMode=1 HelloWorld
+[0.050s][info][cds,aot] _aot_data = 0x00007f9e5bd1a808:
+[0.050s][info][cds,aot] k1 = 0x00007f9e5b0012d0: java.lang.Object
+[0.050s][info][cds,aot] k2 = 0x00007f9e5bd0b008: HelloWorld
+Hello World
+
+*/
+
+struct DummyAotData {
+  size_t _byte_size;
+  Klass* _k1;
+  int    _junk1;
+  int    _junk2;
+  int    _junk3;
+  Klass* _k2;
+};
+
+static DummyAotData* _aot_data = nullptr;
+
+void dummy_aot_write_cache() {
+  // Test code: just get some Klass pointers
+  Klass* k1 = nullptr;
+  Klass* k2 = nullptr;
+
+  k1 = SystemDictionary::find_instance_klass(Thread::current(), vmSymbols::java_lang_Object(),
+                                             Handle(), Handle());
+
+  {
+    // Can't use SystemDictionary::find_instance_klass because we are in a safepoint and cannot
+    // create Handle.
+    ClassLoaderData* loader_data = ClassLoaderData::class_loader_data_or_null(SystemDictionary::java_system_loader());
+    Dictionary* dictionary = loader_data->dictionary();
+    k2 = dictionary->find(Thread::current(), vmSymbols::helloWorld(), Handle());
+  }
+
+  // Allocate a buffer that's large enough to hold all of the AOT code
+  size_t byte_size = 20000;
+  DummyAotData* ptr = (DummyAotData*)ArchiveBuilder::ro_region_alloc(byte_size);
+
+
+  // Copy AOT code into this buffer. Note that all class pointers must be converted with
+  // ArchiveBuilder::get_buffered_klass()
+  ptr->_byte_size = byte_size;
+  ptr->_k1 = (k1 == nullptr) ? nullptr : ArchiveBuilder::get_buffered_klass(k1);
+  ptr->_k2 = (k2 == nullptr) ? nullptr : ArchiveBuilder::get_buffered_klass(k2);
+
+  // All pointer locations must be marked with ArchivePtrMarker::mark_pointer()
+  ArchivePtrMarker::mark_pointer((address*)&ptr->_k1);
+  ArchivePtrMarker::mark_pointer((address*)&ptr->_k2);
+
+  ResourceMark rm;
+  log_info(cds, aot)("ptr->_k1 = " INTPTR_FORMAT ", k1 = " INTPTR_FORMAT " : %s", p2i(ptr->_k1), p2i(k1), k1->external_name());
+  log_info(cds, aot)("ptr->_k2 = " INTPTR_FORMAT ", k2 = " INTPTR_FORMAT " : %s", p2i(ptr->_k2), p2i(k2), k2->external_name());
+
+  _aot_data = ptr;
+}
+
+void dummy_aot_serialize_data(SerializeClosure* soc) {
+  soc->do_ptr((void**)&_aot_data);
+
+  // The pointers inside _aot_data have been relocated to point to the latest addresses of the archived
+  // metadata objects.
+  //
+  // The AOT code can be restored at any time after this point.
+
+  if (soc->reading()) {
+    log_info(cds, aot)("_aot_data = " INTPTR_FORMAT ":", p2i(_aot_data));
+    if (_aot_data != nullptr) {
+      ResourceMark rm;
+      log_info(cds, aot)("k1 = " INTPTR_FORMAT ": %s", p2i(_aot_data->_k1), _aot_data->_k1->external_name());
+      log_info(cds, aot)("k2 = " INTPTR_FORMAT ": %s", p2i(_aot_data->_k2), _aot_data->_k2->external_name());
+    }
+  }
+}
 
 class DynamicArchiveBuilder : public ArchiveBuilder {
   const char* _archive_name;
@@ -144,11 +255,13 @@ public:
       ArchiveBuilder::OtherROAllocMark mark;
       SystemDictionaryShared::write_to_archive(false);
       TrainingData::dump_training_data();
+      dummy_aot_write_cache();
 
       serialized_data = ro_region()->top();
       WriteClosure wc(ro_region());
       SymbolTable::serialize_shared_table_header(&wc, false);
       SystemDictionaryShared::serialize_dictionary_headers(&wc, false);
+      dummy_aot_serialize_data(&wc);
       TrainingData::serialize_training_data(&wc);
     }
 

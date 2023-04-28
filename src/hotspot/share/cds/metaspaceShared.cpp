@@ -1427,6 +1427,7 @@ class CountSharedSymbols : public SymbolClosure {
 
 // Read the miscellaneous data from the shared file, and
 // serialize it out to its various destinations.
+extern void dummy_aot_serialize_data(SerializeClosure* soc);
 
 void MetaspaceShared::initialize_shared_spaces() {
   FileMapInfo *static_mapinfo = FileMapInfo::current_info();
@@ -1459,6 +1460,7 @@ void MetaspaceShared::initialize_shared_spaces() {
     ReadClosure rc(&buffer);
     SymbolTable::serialize_shared_table_header(&rc, false);
     SystemDictionaryShared::serialize_dictionary_headers(&rc, false);
+    dummy_aot_serialize_data(&rc);
     TrainingData::serialize_training_data(&rc);
     dynamic_mapinfo->close();
     dynamic_mapinfo->unmap_region(MetaspaceShared::bm);
