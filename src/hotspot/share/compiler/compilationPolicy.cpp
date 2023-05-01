@@ -996,20 +996,6 @@ bool CompilationPolicy::is_method_profiled(const methodHandle& method, JavaThrea
     int b = mdo->backedge_count_delta();
     return CallPredicate::apply_scaled(method, CompLevel_full_profile, i, b, 1);
   }
-  MethodTrainingData* mtd = MethodTrainingData::find(method);
-  if (mtd != nullptr && mtd->final_profile() != nullptr) {
-    CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
-    if (ctd != nullptr && ctd->init_deps_left() == 0) {
-      create_mdo(method, THREAD);
-      method->set_method_data(mtd->final_profile());
-      return true;
-    } else {
-      if (UseNewCode2 && ctd != nullptr) {
-        method->print_name(); tty->print_cr(" %d", ctd->init_deps_left());
-      }
-    }
-  }
-
   return false;
 }
 
@@ -1138,7 +1124,25 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
   if (force_comp_at_level_simple(method)) {
     next_level = CompLevel_simple;
   } else {
-    if (is_trivial(method)) {
+    MethodTrainingData* mtd = MethodTrainingData::have_data() ? MethodTrainingData::find(method) : nullptr;
+    if (mtd != nullptr) {
+      CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
+      if (mtd->final_profile() != nullptr && ctd != nullptr) {
+        if (ctd->init_deps_left() == 0) {
+          // Method has been compiled to level 4, has an MDO, all deps are met
+          if (method->method_data() == nullptr) {
+            create_mdo(method, THREAD);
+          }
+          next_level = CompLevel_full_optimization;
+        } else {
+          // deps are not met
+          next_level = CompLevel_limited_profile;
+        }
+      } else {
+        // Don't have an MDO or hasn't been compiled to level 4
+        next_level = CompLevel_limited_profile;
+      }
+    } else if (is_trivial(method)) {
       next_level = CompilationModeFlag::disable_intermediate() ? CompLevel_full_optimization : CompLevel_simple;
     } else {
       switch(cur_level) {
@@ -1166,7 +1170,6 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
         {
           bool delay = should_delay(method);
           if (is_method_profiled(method, THREAD) && !delay) {
-            if(UseNewCode) method->print_name();
             // Special case: we got here because this method was fully profiled in the interpreter.
             next_level = CompLevel_full_optimization;
           } else {
