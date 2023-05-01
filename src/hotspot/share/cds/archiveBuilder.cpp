@@ -26,6 +26,7 @@
 #include "cds/archiveBuilder.hpp"
 #include "cds/archiveHeapWriter.hpp"
 #include "cds/archiveUtils.hpp"
+#include "cds/classPrelinker.hpp"
 #include "cds/cppVtables.hpp"
 #include "cds/dumpAllocStats.hpp"
 #include "cds/heapShared.hpp"
@@ -814,6 +815,7 @@ void ArchiveBuilder::make_klasses_shareable() {
   log_info(cds)("Number of classes %d", num_instance_klasses + num_obj_array_klasses + num_type_array_klasses);
   log_info(cds)("    instance classes   = %5d", num_instance_klasses);
   log_info(cds)("      boot             = %5d", num_boot_klasses);
+  log_info(cds)("       vm              = %5d", ClassPrelinker::num_vm_klasses());
   log_info(cds)("      app              = %5d", num_app_klasses);
   log_info(cds)("      platform         = %5d", num_platform_klasses);
   log_info(cds)("      unregistered     = %5d", num_unregistered_klasses);

@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "cds/classPrelinker.hpp"
 #include "cds/heapShared.hpp"
 #include "classfile/classFileParser.hpp"
 #include "classfile/classFileStream.hpp"
@@ -155,6 +156,9 @@ void SystemDictionary::compute_java_loaders(TRAPS) {
       assert(_java_platform_loader.resolve() == platform_loader, "must be");
     )
   }
+
+  ClassPrelinker::runtime_preload(THREAD, Handle(THREAD, java_platform_loader()));
+  ClassPrelinker::runtime_preload(THREAD, Handle(THREAD, java_system_loader()));
 }
 
 oop SystemDictionary::get_system_class_loader_impl(TRAPS) {

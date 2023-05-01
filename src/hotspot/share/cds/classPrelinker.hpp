@@ -38,6 +38,7 @@ class constantPoolHandle;
 class InstanceKlass;
 class Klass;
 
+template <typename T> class Array;
 // ClassPrelinker is used to perform ahead-of-time linking of ConstantPool entries
 // for archived InstanceKlasses.
 //
@@ -49,9 +50,23 @@ class Klass;
 // at dump time, because at run time we will load a class from the CDS archive only
 // if all of its supertypes are loaded from the CDS archive.
 class ClassPrelinker :  AllStatic {
+  class PreloadedKlassRecorder;
   using ClassesTable = ResourceHashtable<InstanceKlass*, bool, 15889, AnyObj::C_HEAP, mtClassShared> ;
   static ClassesTable* _processed_classes;
   static ClassesTable* _vm_classes;
+  static int _num_vm_klasses;
+  static bool _record_java_base_only;
+  static bool _preload_java_base_only;
+  struct PreloadedKlasses {
+    Array<InstanceKlass*>* _boot;  // only java.base classes
+    Array<InstanceKlass*>* _boot2; // boot classes in other modules
+    Array<InstanceKlass*>* _platform;
+    Array<InstanceKlass*>* _app;
+    PreloadedKlasses() : _boot(nullptr), _boot2(nullptr), _platform(nullptr), _app(nullptr) {}
+  };
+
+  static PreloadedKlasses _static_preloaded_klasses;
+  static PreloadedKlasses _dynamic_preloaded_klasses;
 
   static void add_one_vm_class(InstanceKlass* ik);
 
@@ -67,7 +82,8 @@ class ClassPrelinker :  AllStatic {
   static Klass* maybe_resolve_class(constantPoolHandle cp, int cp_index, TRAPS);
   static bool can_archive_resolved_klass(InstanceKlass* cp_holder, Klass* resolved_klass);
   static Klass* find_loaded_class(JavaThread* THREAD, oop class_loader, Symbol* name);
-
+  static Array<InstanceKlass*>* record_preloaded_klasses(int loader_type);
+  static void runtime_preload(PreloadedKlasses* table, Handle loader, TRAPS);
 public:
   static void initialize();
   static void dispose();
@@ -77,7 +93,7 @@ public:
   // when CDS is enabled. Therefore, we can safely keep a direct reference to these
   // classes.
   static bool is_vm_class(InstanceKlass* ik);
-
+  static int  num_vm_klasses() { return _num_vm_klasses; }
   // Resolve all constant pool entries that are safe to be stored in the
   // CDS archive.
   static void dumptime_resolve_constants(InstanceKlass* ik, TRAPS);
@@ -86,6 +102,11 @@ public:
   // the result in the CDS archive? Returns true if cp_index is guaranteed to
   // resolve to the same InstanceKlass* at both dump time and run time.
   static bool can_archive_resolved_klass(ConstantPool* cp, int cp_index);
+
+  static void record_preloaded_klasses(bool is_static_archive);
+  static void serialize(SerializeClosure* soc, bool is_static_archive);
+
+  static void runtime_preload(JavaThread* current, Handle loader);
 };
 
 #endif // SHARE_CDS_CLASSPRELINKER_HPP

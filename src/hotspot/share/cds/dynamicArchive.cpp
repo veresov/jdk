@@ -144,12 +144,14 @@ public:
 
       ArchiveBuilder::OtherROAllocMark mark;
       SystemDictionaryShared::write_to_archive(false);
+      ClassPrelinker::record_preloaded_klasses(false);
       TrainingData::dump_training_data();
 
       serialized_data = ro_region()->top();
       WriteClosure wc(ro_region());
       SymbolTable::serialize_shared_table_header(&wc, false);
       SystemDictionaryShared::serialize_dictionary_headers(&wc, false);
+      ClassPrelinker::serialize(&wc, false);
       TrainingData::serialize_training_data(&wc);
     }
 
