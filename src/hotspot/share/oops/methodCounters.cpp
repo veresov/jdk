@@ -77,11 +77,10 @@ void MethodCounters::metaspace_pointers_do(MetaspaceClosure* it) {
 
 #if INCLUDE_CDS
 void MethodCounters::remove_unshareable_info() {
-  _method_training_data->remove_unshareable_info();
+  _method_training_data = nullptr;
 }
 
 void MethodCounters::restore_unshareable_info(TRAPS) {
-  _method_training_data->restore_unshareable_info(CHECK);
 }
 #endif // INCLUDE_CDS
 

@@ -2685,6 +2685,7 @@ void InstanceKlass::remove_unshareable_info() {
 
   if (_training_data != nullptr) {
     _training_data->remove_unshareable_info();
+    // _training_data = nullptr; // FIXME: link through table
   }
 }
 
