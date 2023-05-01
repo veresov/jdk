@@ -77,6 +77,10 @@ class Method : public Metadata {
   ConstMethod*      _constMethod;                // Method read-only data.
   MethodData*       _method_data;
   MethodCounters*   _method_counters;
+#if INCLUDE_CDS
+  MethodData*       _archived_method_data;
+  MethodCounters*   _archived_method_counters;
+#endif
   AdapterHandlerEntry* _adapter;
   AccessFlags       _access_flags;               // Access flags
   int               _vtable_index;               // vtable index of this method (see VtableIndexFlag)
@@ -393,6 +397,21 @@ class Method : public Metadata {
   }
 
   bool init_method_counters(MethodCounters* counters);
+
+  #if INCLUDE_CDS
+  MethodData* archived_method_data() const {
+    return _archived_method_data;
+  }
+  MethodCounters* archived_method_counters() const {
+    return _archived_method_counters;
+  }
+  void set_archived_method_data(MethodData* md) {
+    _archived_method_data = md;
+  }
+  void set_archived_method_counters(MethodCounters* mcs) {
+    _archived_method_counters = mcs;
+  }
+  #endif
 
   int prev_event_count() const {
     MethodCounters* mcs = method_counters();

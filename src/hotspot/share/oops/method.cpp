@@ -110,6 +110,8 @@ Method::Method(ConstMethod* xconst, AccessFlags access_flags, Symbol* name) {
   set_has_injected_profile(false);
   set_method_data(nullptr);
   clear_method_counters();
+  set_archived_method_counters(nullptr);
+  set_archived_method_data(nullptr);
   set_vtable_index(Method::garbage_vtable_index);
 
   // Fix and bury in Method*
@@ -402,6 +404,10 @@ void Method::metaspace_pointers_do(MetaspaceClosure* it) {
   }
   it->push(&_method_data);
   it->push(&_method_counters);
+#if INCLUDE_CDS
+  it->push(&_archived_method_data);
+  it->push(&_archived_method_counters);
+#endif
   NOT_PRODUCT(it->push(&_name);)
 }
 
@@ -413,22 +419,26 @@ void Method::metaspace_pointers_do(MetaspaceClosure* it) {
 
 void Method::remove_unshareable_info() {
   unlink_method();
-  if (method_data() != nullptr) {
-    method_data()->remove_unshareable_info();
+  set_archived_method_counters(method_counters());
+  set_archived_method_data(method_data());
+  clear_method_counters();
+  set_method_data(nullptr);
+  if (archived_method_data() != nullptr) {
+    archived_method_data()->remove_unshareable_info();
   }
-  if (method_counters() != nullptr) {
-    method_counters()->remove_unshareable_info();
+  if (archived_method_counters() != nullptr) {
+    archived_method_counters()->remove_unshareable_info();
   }
   JFR_ONLY(REMOVE_METHOD_ID(this);)
 }
 
 void Method::restore_unshareable_info(TRAPS) {
   assert(is_method() && is_valid_method(this), "ensure C++ vtable is restored");
-  if (method_data() != nullptr) {
-    method_data()->restore_unshareable_info(CHECK);
+  if (archived_method_data() != nullptr) {
+    archived_method_data()->restore_unshareable_info(CHECK);
   }
-  if (method_counters() != nullptr) {
-    method_counters()->restore_unshareable_info(CHECK);
+  if (archived_method_counters() != nullptr) {
+    archived_method_counters()->restore_unshareable_info(CHECK);
   }
 }
 #endif
