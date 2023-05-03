@@ -1346,6 +1346,7 @@ void TrainingData::iterate_roots(MetaspaceClosure* it) {
 }
 
 void TrainingData::dump_training_data() {
+  assert(!DumpSharedSpaces, "temporary restriction"); // See MetaspaceShared::link_shared_classes().
   if (!need_data()) {
     return;
   }

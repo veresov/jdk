@@ -608,11 +608,18 @@ bool MetaspaceShared::link_class_for_cds(InstanceKlass* ik, TRAPS) {
 
 void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
   ClassPrelinker::initialize();
-/* FIXME!!!!!!!!
-  if (!jcmd_request) {
+  if (!jcmd_request && DumpSharedSpaces) {
+    // We want to regenerate the holder classes so that the AOT (running
+    // in dynamic dump) will see fewer generated LambdaForm classes.
+    //
+    // There's a bug where holder regenration doesn't work with
+    // TrainingData::dump_training_data(), which have pointers of
+    // the original classes. Training data are currently only dump
+    // for the dynamic archive, so we enable the regeneration
+    // only for the static archive.
     LambdaFormInvokers::regenerate_holder_classes(CHECK);
   }
-*/
+
   // Collect all loaded ClassLoaderData.
   CollectCLDClosure collect_cld(THREAD);
   {
