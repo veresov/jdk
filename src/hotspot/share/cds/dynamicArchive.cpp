@@ -406,6 +406,7 @@ void DynamicArchive::dump_at_exit(JavaThread* current, const char* archive_name)
   if (!HAS_PENDING_EXCEPTION) {
     // copy shared path table to saved.
     FileMapInfo::clone_shared_path_table(current);
+    TrainingData::init_dumptime_table(CHECK); // captures TrainingDataSetLocker
     if (!HAS_PENDING_EXCEPTION) {
       VM_PopulateDynamicDumpSharedSpace op(archive_name);
       VMThread::execute(&op);
