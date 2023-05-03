@@ -98,6 +98,11 @@
                                                                             \
   product(bool, DumpTrainingData, false, DIAGNOSTIC,                        \
           "Dump training and profiling data")                               \
+                                                                            \
+  product(bool, PreloadSharedClasses, true,                                 \
+          "Load all shared classes for the boot/platform/app loaders "      \
+          "immediately at VM start-up")                                     \
+                                                                            \
 // end of CDS_FLAGS
 
 DECLARE_FLAGS(CDS_FLAGS)
