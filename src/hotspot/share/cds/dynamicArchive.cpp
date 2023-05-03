@@ -59,8 +59,8 @@ Command-line example:
 
 (1) Perform a trial run. At the end of the run, dump the loaded classes into foo.jsa
 
-    For demonstration purposes, I write some a 20000 byte array that has some Klass pointers
-    into the CDS archive.
+    For demonstration purposes, I write some a 20000 byte array that has some InstanceKlass/Method/ConstantPool
+    pointers into the CDS archive.
 
     Note that the class "HelloWorld" is dynamically loaded in the trial run at 0x0000000801000800.
 
@@ -68,20 +68,27 @@ Command-line example:
 
 $ java -cp HelloWorld.jar -XX:ArchiveClassesAtExit=foo.jsa -Xlog:cds+aot HelloWorld
 Hello World
-[0.309s][info][cds,aot] ptr->_k1 = 0x00000008000012d0, k1 = 0x00000008000012d0 : java.lang.Object
-[0.309s][info][cds,aot] ptr->_k2 = 0x00007f552f7ef008, k2 = 0x0000000801000800 : HelloWorld
+[0.634s][info][cds,aot] For java.lang.System (in static archive)
+[0.634s][info][cds,aot]   k1 = 0x0000000800003290, ptr->_k1 = 0x0000000800003290 : java.lang.System
+[0.634s][info][cds,aot]   m  = 0x000000080001e7a8, ptr->_m  = 0x000000080001e7a8
+[0.634s][info][cds,aot] --
+[0.634s][info][cds,aot] For HelloWorld (in dynamic archive)
+[0.634s][info][cds,aot]   k2 = 0x0000000801000800, ptr->_k2 = 0x00007fc22b7ef008 : HelloWorld
+[0.634s][info][cds,aot]   cp = 0x00007fc268400028, ptr->_cp = 0x00007fc22b7f0030
 
 
-
-(2) This is a "production" run. HelloWorld is loaded from foo.jsa. It at a different location
+(2) This is a "production" run. HelloWorld is loaded from foo.jsa. It at a different location:
     0x0000000800d0b008.
 
 $ java -cp HelloWorld.jar -XX:SharedArchiveFile=foo.jsa -Xlog:cds+aot HelloWorld
-[0.031s][info][cds,aot] _aot_data = 0x0000000800d1a808:
-[0.031s][info][cds,aot] k1 = 0x00000008000012d0: java.lang.Object
-[0.031s][info][cds,aot] k2 = 0x0000000800d0b008: HelloWorld
+[0.036s][info][cds,aot] For java.lang.System (in static archive)
+[0.036s][info][cds,aot]   k1 = 0x0000000800003290: java.lang.System
+[0.036s][info][cds,aot]   m  = 0x000000080001e7a8: java.lang.System.<clinit>()V
+[0.036s][info][cds,aot] --
+[0.036s][info][cds,aot]   For HelloWorld (in dynamic archive)
+[0.036s][info][cds,aot]   k2 = 0x0000000800d2c008: HelloWorld
+[0.036s][info][cds,aot]   cp = 0x0000000800d2d030
 Hello World
-
 
 
 (3) CDS can also be executed in ASLR mode (with -XX:ArchiveRelocationMode=1).
@@ -89,9 +96,13 @@ Hello World
     loading code. AOT doesn't need to worry about it.
 
 $ java -cp HelloWorld.jar -XX:SharedArchiveFile=foo.jsa -Xlog:cds+aot -XX:ArchiveRelocationMode=1 HelloWorld
-[0.050s][info][cds,aot] _aot_data = 0x00007f9e5bd1a808:
-[0.050s][info][cds,aot] k1 = 0x00007f9e5b0012d0: java.lang.Object
-[0.050s][info][cds,aot] k2 = 0x00007f9e5bd0b008: HelloWorld
+[0.058s][info][cds,aot] For java.lang.System (in static archive)
+[0.058s][info][cds,aot]   k1 = 0x00007f724b003290: java.lang.System
+[0.058s][info][cds,aot]   m  = 0x00007f724b01e7a8: java.lang.System.<clinit>()V
+[0.058s][info][cds,aot] --
+[0.058s][info][cds,aot]   For HelloWorld (in dynamic archive)
+[0.058s][info][cds,aot]   k2 = 0x00007f724bd2c008: HelloWorld
+[0.058s][info][cds,aot]   cp = 0x00007f724bd2d030
 Hello World
 
 */
@@ -99,48 +110,75 @@ Hello World
 struct DummyAotData {
   size_t _byte_size;
   Klass* _k1;
+  Method* _m;
   int    _junk1;
   int    _junk2;
   int    _junk3;
   Klass* _k2;
+  ConstantPool* _cp;
 };
 
 static DummyAotData* _aot_data = nullptr;
 
+// FIXME - this should be added to ArchiveBuilder API
+template <typename T> void relocate_src_pointer_to_buffered(T* ptr_loc) {
+  T src_addr = *ptr_loc; // Points to live data that's used in the trial run
+  if (src_addr != nullptr) {
+    T buffered_addr = (T)ArchiveBuilder::current()->get_buffered_addr((address)src_addr);
+    *ptr_loc = buffered_addr; // Points to the "buffered copy" of the live data 
+    ArchivePtrMarker::mark_pointer((address*)ptr_loc);
+  }
+}
+
 void dummy_aot_write_cache() {
   // Test code: just get some Klass pointers
-  Klass* k1 = nullptr;
-  Klass* k2 = nullptr;
+  InstanceKlass* k1 = nullptr;
+  InstanceKlass* k2 = nullptr;
+  Method* m = nullptr;
+  ConstantPool* cp = nullptr;
 
-  k1 = SystemDictionary::find_instance_klass(Thread::current(), vmSymbols::java_lang_Object(),
+  k1 = SystemDictionary::find_instance_klass(Thread::current(), vmSymbols::java_lang_System(),
                                              Handle(), Handle());
+  m = k1->class_initializer();
 
   {
     // Can't use SystemDictionary::find_instance_klass because we are in a safepoint and cannot
-    // create Handle.
+    // create a non-null Handle.
     ClassLoaderData* loader_data = ClassLoaderData::class_loader_data_or_null(SystemDictionary::java_system_loader());
     Dictionary* dictionary = loader_data->dictionary();
     k2 = dictionary->find(Thread::current(), vmSymbols::helloWorld(), Handle());
+    cp = k2->constants();
   }
 
   // Allocate a buffer that's large enough to hold all of the AOT code
   size_t byte_size = 20000;
   DummyAotData* ptr = (DummyAotData*)ArchiveBuilder::ro_region_alloc(byte_size);
 
-
-  // Copy AOT code into this buffer. Note that all class pointers must be converted with
-  // ArchiveBuilder::get_buffered_klass()
+  // Copy AOT code into this buffer. Our dummy AOT code just contains some random bytes,
+  // plus a few metadata pointers.
   ptr->_byte_size = byte_size;
-  ptr->_k1 = (k1 == nullptr) ? nullptr : ArchiveBuilder::get_buffered_klass(k1);
-  ptr->_k2 = (k2 == nullptr) ? nullptr : ArchiveBuilder::get_buffered_klass(k2);
+  ptr->_k1 = k1;  // points to live data.
+  ptr->_m  = m;   // points to live data.
+  ptr->_junk1 = 1;
+  ptr->_junk2 = 2;
+  ptr->_junk3 = 3;
+  ptr->_k2 = k2;  // points to live data.
+  ptr->_cp = cp;  // points to live data.
 
-  // All pointer locations must be marked with ArchivePtrMarker::mark_pointer()
-  ArchivePtrMarker::mark_pointer((address*)&ptr->_k1);
-  ArchivePtrMarker::mark_pointer((address*)&ptr->_k2);
+  // Mark all these pointers, and relocate them to point to the "buffered copy" as necessary.
+  relocate_src_pointer_to_buffered(&ptr->_k1); // now points to buffered copy
+  relocate_src_pointer_to_buffered(&ptr->_m);  // now points to buffered copy
+  relocate_src_pointer_to_buffered(&ptr->_k2); // now points to buffered copy
+  relocate_src_pointer_to_buffered(&ptr->_cp); // now points to buffered copy
 
   ResourceMark rm;
-  log_info(cds, aot)("ptr->_k1 = " INTPTR_FORMAT ", k1 = " INTPTR_FORMAT " : %s", p2i(ptr->_k1), p2i(k1), k1->external_name());
-  log_info(cds, aot)("ptr->_k2 = " INTPTR_FORMAT ", k2 = " INTPTR_FORMAT " : %s", p2i(ptr->_k2), p2i(k2), k2->external_name());
+  log_info(cds, aot)("For java.lang.System (in static archive)");
+  log_info(cds, aot)("  k1 = " INTPTR_FORMAT ", ptr->_k1 = " INTPTR_FORMAT " : %s", p2i(k1), p2i(ptr->_k1), k1->external_name());
+  log_info(cds, aot)("  m  = " INTPTR_FORMAT ", ptr->_m  = " INTPTR_FORMAT, p2i(m), p2i(ptr->_m));
+  log_info(cds, aot)("--");
+  log_info(cds, aot)("For HelloWorld (in dynamic archive)");
+  log_info(cds, aot)("  k2 = " INTPTR_FORMAT ", ptr->_k2 = " INTPTR_FORMAT " : %s", p2i(k2), p2i(ptr->_k2), k2->external_name());
+  log_info(cds, aot)("  cp = " INTPTR_FORMAT ", ptr->_cp = " INTPTR_FORMAT, p2i(cp), p2i(ptr->_cp));
 
   _aot_data = ptr;
 }
@@ -157,8 +195,13 @@ void dummy_aot_serialize_data(SerializeClosure* soc) {
     log_info(cds, aot)("_aot_data = " INTPTR_FORMAT ":", p2i(_aot_data));
     if (_aot_data != nullptr) {
       ResourceMark rm;
-      log_info(cds, aot)("k1 = " INTPTR_FORMAT ": %s", p2i(_aot_data->_k1), _aot_data->_k1->external_name());
-      log_info(cds, aot)("k2 = " INTPTR_FORMAT ": %s", p2i(_aot_data->_k2), _aot_data->_k2->external_name());
+      log_info(cds, aot)("For java.lang.System (in static archive)");
+      log_info(cds, aot)("  k1 = " INTPTR_FORMAT ": %s", p2i(_aot_data->_k1), _aot_data->_k1->external_name());
+      log_info(cds, aot)("  m  = " INTPTR_FORMAT ": %s", p2i(_aot_data->_m),  _aot_data->_m->name_and_sig_as_C_string());
+      log_info(cds, aot)("--");
+      log_info(cds, aot)("  For HelloWorld (in dynamic archive)");
+      log_info(cds, aot)("  k2 = " INTPTR_FORMAT ": %s", p2i(_aot_data->_k2), _aot_data->_k2->external_name());
+      log_info(cds, aot)("  cp = " INTPTR_FORMAT, p2i(_aot_data->_cp));
     }
   }
 }
