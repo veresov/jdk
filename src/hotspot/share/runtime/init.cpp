@@ -169,7 +169,7 @@ jint init_globals() {
   }
 #endif
 
-  if (RecordTraining || ReplayTraining) {
+  if (TrainingData::have_data() || TrainingData::need_data()) {
     TrainingData::initialize();
   }
 

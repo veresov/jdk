@@ -96,9 +96,6 @@
            "do not map the archive")                                        \
            range(0, 2)                                                      \
                                                                             \
-  product(bool, DumpTrainingData, false, DIAGNOSTIC,                        \
-          "Dump training and profiling data")                               \
-                                                                            \
   product(bool, PreloadSharedClasses, true,                                 \
           "Load all shared classes for the boot/platform/app loaders "      \
           "immediately at VM start-up")                                     \

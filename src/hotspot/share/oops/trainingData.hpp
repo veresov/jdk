@@ -53,11 +53,13 @@ class TrainingDataDictionary;
 class RunTimeClassInfo;
 class RunTimeMethodDataInfo;
 
+// Options are a list of comma-separated booleans (for now)
+// For example: TrainingOptions=xml
+
 class TrainingData : public Metadata {
   friend KlassTrainingData;
   friend MethodTrainingData;
   friend CompileTrainingData;
-
  public:
   class Key {
     Symbol* _name1;   // Klass::name or Method::name
@@ -208,9 +210,21 @@ class TrainingData : public Metadata {
     }
   };
 
+  class Options {
+  public:
+    enum BooleanOption { XML, CDS };
+  private:
+    int _boolean_options;
+  public:
+    void set_boolean_option(BooleanOption o) { _boolean_options |= 1 << o; }
+    bool get_boolean_option(BooleanOption o) { return _boolean_options & (1 << o); }
+    void parse();
+    void print_on(outputStream* st);
+  };
 private:
   Key _key;
   bool _do_not_dump;
+  static Options _options;
 
   // just forward all constructor arguments to the embedded key
   template<typename... Arg>
@@ -221,8 +235,9 @@ private:
 
   static TrainingDataSet _training_data_set;
   static TrainingDataDictionary _archived_training_data_dictionary;
-
   static GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* _dumptime_training_data_dictionary;
+
+  static Options* options() { return &_options; }
 public:
   // Returns the key under which this TD is installed, or else
   // Key::EMPTY if it is not installed.
@@ -233,6 +248,8 @@ public:
 
   static bool have_data() { return ReplayTraining;  } // Going to read
   static bool need_data() { return RecordTraining;  } // Going to write
+  static bool use_cds()   { return options()->get_boolean_option(Options::BooleanOption::CDS); }
+  static bool use_xml()   { return options()->get_boolean_option(Options::BooleanOption::XML); }
 
   static TrainingDataSet* training_data_set() { return &_training_data_set; }
   static TrainingDataDictionary* archived_training_data_dictionary() { return &_archived_training_data_dictionary; }
@@ -317,8 +334,7 @@ public:
 #if INCLUDE_CDS
   virtual void remove_unshareable_info() {}
   virtual void restore_unshareable_info(TRAPS) {}
-  virtual void foo() { }
-  static void restore(TRAPS);
+  static void restore_all_unshareable_info(TRAPS);
 #endif
   static void init_dumptime_table(TRAPS);
   static void iterate_roots(MetaspaceClosure* it);

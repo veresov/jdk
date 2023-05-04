@@ -51,18 +51,60 @@ TrainingDataDictionary TrainingData::_archived_training_data_dictionary;
 GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* TrainingData::_dumptime_training_data_dictionary = nullptr;
 
 int TrainingData::TrainingDataLocker::_lock_mode;
+TrainingData::Options TrainingData::_options;
+
+void TrainingData::Options::parse() {
+  if (TrainingOptions != nullptr) {
+    const char delimiter[] = " ,";
+    size_t length = strlen(TrainingOptions);
+    char* options_list = NEW_C_HEAP_ARRAY(char, length + 1, mtCompiler);
+    strncpy(options_list, TrainingOptions, length + 1);
+    char* save_ptr;
+    char* token = strtok_r(options_list, delimiter, &save_ptr);
+    while (token != nullptr) {
+      if (strcmp(token, "xml") == 0) {
+        set_boolean_option(BooleanOption::XML);
+      } else if (strcmp(token, "cds") == 0) {
+        set_boolean_option(BooleanOption::CDS);
+      } else {
+        vm_exit_during_initialization(err_msg("TrainingOptions: \'%s\' flag unknown, please correct it", token));
+      }
+      token = strtok_r(nullptr, delimiter, &save_ptr);
+    }
+    FREE_C_HEAP_ARRAY(char, options_list);
+  }
+  // Don't allow both XML and CDS options
+  if (get_boolean_option(BooleanOption::CDS) && get_boolean_option(BooleanOption::XML)) {
+    vm_exit_during_initialization(err_msg("TrainingOptions: cds and xml options cannot be specified together"));
+  }
+  // If neither XML nor CDS are specified, choose CDS.
+  if (!get_boolean_option(BooleanOption::CDS) && !get_boolean_option(BooleanOption::XML)) {
+    set_boolean_option(BooleanOption::CDS);
+  }
+}
+
+void TrainingData::Options::print_on(outputStream* st) {
+  st->print("TrainingData::Options:");
+  if (get_boolean_option(BooleanOption::CDS)) {
+    st->print(" cds");
+  }
+  if (get_boolean_option(BooleanOption::XML)) {
+    st->print(" xml");
+  }
+  st->cr();
+}
 
 #if INCLUDE_CDS
-class RestoreUnshareableInfo {
-  JavaThread *_thread;
-public:
-  RestoreUnshareableInfo(JavaThread *thread) : _thread(thread) { }
-  void do_value(TrainingData* td) {
-    td->restore_unshareable_info(_thread);
-  }
-};
+void TrainingData::restore_all_unshareable_info(TRAPS) {
+  class RestoreUnshareableInfo {
+    JavaThread *_thread;
+  public:
+    RestoreUnshareableInfo(JavaThread *thread) : _thread(thread) { }
+    void do_value(TrainingData* td) {
+      td->restore_unshareable_info(_thread);
+    }
+  };
 
-void TrainingData::restore(TRAPS) {
   if (have_data()) {
     if (!archived_training_data_dictionary()->empty()) {
       RestoreUnshareableInfo r(THREAD);
@@ -77,9 +119,15 @@ void TrainingData::initialize() {
   if (have_data() || need_data()) {
     TrainingDataLocker::initialize();
   }
+  options()->parse();
+  if (UseNewCode) {
+    options()->print_on(tty);
+  }
+
   if (have_data()) {
-    //load_profiles();
-    //restore((JavaThread*)Thread::current());
+    if (use_xml()) {
+      load_profiles();
+    }
     // Initialize dependency tracking
     training_data_set()->iterate_all([](const Key* k, TrainingData* td) {
       if (td->is_MethodTrainingData()) {
@@ -745,7 +793,7 @@ static bool str_scan(const char* str, const char* fmt, ...) {
 }
 
 void TrainingData::load_profiles() {
-  if (!ReplayTraining)  return;
+  if (!have_data())  return;
   const char* file_name = TrainingFile;
   if (file_name == nullptr)  file_name = "hs_training.log";
   fileStream file(file_name, "r");
@@ -1503,7 +1551,6 @@ void TrainingData::DepList<T>::prepare(ClassLoaderData* loader_data) {
 KlassTrainingData* KlassTrainingData::allocate(InstanceKlass* holder) {
   assert(need_data() || have_data(), "");
   JavaThread* THREAD = JavaThread::current();
-//  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
 
   int size = align_metadata_size(align_up(sizeof(KlassTrainingData), BytesPerWord) / BytesPerWord);
 
@@ -1515,12 +1562,10 @@ KlassTrainingData* KlassTrainingData::allocate(InstanceKlass* holder) {
 KlassTrainingData* KlassTrainingData::allocate(Symbol* name, Symbol* loader_name) {
   assert(need_data() || have_data(), "");
   JavaThread* THREAD = JavaThread::current();
-//  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
 
   int size = align_metadata_size(align_up(sizeof(KlassTrainingData), BytesPerWord) / BytesPerWord);
 
-  assert(SystemDictionary::java_system_loader() != nullptr, "");
-  ClassLoaderData* loader_data = java_lang_ClassLoader::loader_data(SystemDictionary::java_system_loader()); // default CLD
+  ClassLoaderData* loader_data = ClassLoaderData::the_null_class_loader_data();
   return new (loader_data, size, MetaspaceObj::KlassTrainingDataType, THREAD)
       KlassTrainingData(name, loader_name);
 }
@@ -1532,8 +1577,7 @@ MethodTrainingData* MethodTrainingData::allocate(KlassTrainingData* ktd, Symbol*
 
   int size = align_metadata_size(align_up(sizeof(MethodTrainingData), BytesPerWord) / BytesPerWord);
 
-  assert(SystemDictionary::java_system_loader() != nullptr, "");
-  ClassLoaderData* loader_data = java_lang_ClassLoader::loader_data(SystemDictionary::java_system_loader()); // default CLD
+  ClassLoaderData* loader_data = ClassLoaderData::the_null_class_loader_data();
   return new (loader_data, size, MetaspaceObj::KlassTrainingDataType, THREAD)
       MethodTrainingData(ktd, name, signature);
 }
@@ -1541,11 +1585,10 @@ MethodTrainingData* MethodTrainingData::allocate(KlassTrainingData* ktd, Symbol*
 MethodTrainingData* MethodTrainingData::allocate(KlassTrainingData* ktd, Method* m) {
   assert(need_data() || have_data(), "");
   JavaThread* THREAD = JavaThread::current();
-//  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
 
   int size = align_metadata_size(align_up(sizeof(MethodTrainingData), BytesPerWord) / BytesPerWord);
 
-  ClassLoaderData* loader_data = m->method_holder()->class_loader_data();
+  ClassLoaderData* loader_data = ClassLoaderData::the_null_class_loader_data();
   return new (loader_data, size, MetaspaceObj::KlassTrainingDataType, THREAD)
       MethodTrainingData(ktd, m->name(), m->signature());
 }
@@ -1556,10 +1599,9 @@ CompileTrainingData* CompileTrainingData::allocate(MethodTrainingData* this_meth
                                                    int compile_id) {
   assert(need_data() || have_data(), "");
   JavaThread* THREAD = JavaThread::current();
-//  assert(!THREAD->owns_locks(), "Should not own any locks"); // FIXME
   int size = align_metadata_size(align_up(sizeof(CompileTrainingData), BytesPerWord) / BytesPerWord);
 
-  ClassLoaderData* loader_data = this_method->klass()->class_loader_data();
+  ClassLoaderData* loader_data = ClassLoaderData::the_null_class_loader_data();
   return new (loader_data, size, MetaspaceObj::KlassTrainingDataType, THREAD)
       CompileTrainingData(this_method, top_method, level, compile_id);
 }
