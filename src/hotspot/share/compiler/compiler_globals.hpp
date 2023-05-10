@@ -270,7 +270,7 @@
           "Maximum rate sampling interval (in milliseconds)")               \
           range(0, max_intx)                                                \
                                                                             \
-  product(double, Tier2DelayFactor, 1000.0, DIAGNOSTIC,                     \
+  product(double, Tier2DelayFactor, 10000.0, DIAGNOSTIC,                    \
           "Delay profiling of methods that were observed to be cold")       \
                                                                             \
   product(ccstr, CompilationMode, "default",                                \

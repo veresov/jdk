@@ -187,6 +187,10 @@ class CompilationPolicy : AllStatic {
   // Common transition function. Given a predicate determines if a method should transition to another level.
   template<typename Predicate>
   static CompLevel common(const methodHandle& method, CompLevel cur_level, JavaThread* THREAD, bool disable_feedback = false);
+  template<typename Predicate>
+  static CompLevel limited_profile(const methodHandle& method, CompLevel cur_level, double scale, bool disable_feedback);
+  template<typename Predicate>
+  static CompLevel full_profile(const methodHandle& method, CompLevel cur_level);
   // Transition functions.
   // call_event determines if a method should be compiled at a different
   // level with a regular invocation entry.
@@ -220,7 +224,7 @@ class CompilationPolicy : AllStatic {
   // Create MDO if necessary.
   static void create_mdo(const methodHandle& mh, JavaThread* THREAD);
   // Is method profiled enough?
-  static bool is_method_profiled(const methodHandle& method, JavaThread* THREAD);
+  static bool is_method_profiled(const methodHandle& method);
   static bool should_delay(const methodHandle& m);
 
   static void set_c1_count(int x) { _c1_count = x;    }

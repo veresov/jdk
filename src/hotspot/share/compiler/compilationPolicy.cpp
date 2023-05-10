@@ -708,7 +708,7 @@ CompileTask* CompilationPolicy::select_task(CompileQueue* compile_queue, JavaThr
       continue;
     }
     Method* method = task->method();
-    methodHandle mh(Thread::current(), method);
+    methodHandle mh(THREAD, method);
     if (task->can_become_stale() && is_stale(t, TieredCompileTaskTimeout, mh) && !is_old(mh)) {
       if (PrintTieredEvents) {
         print_event(REMOVE_FROM_QUEUE, method, method, task->osr_bci(), (CompLevel) task->comp_level());
@@ -744,10 +744,10 @@ CompileTask* CompilationPolicy::select_task(CompileQueue* compile_queue, JavaThr
     max_method = max_task->method();
   }
 
-  methodHandle max_method_h(Thread::current(), max_method);
+  methodHandle max_method_h(THREAD, max_method);
 
   if (max_task != nullptr && max_task->comp_level() == CompLevel_full_profile && TieredStopAtLevel > CompLevel_full_profile &&
-      max_method != nullptr && is_method_profiled(max_method_h, THREAD) && !Arguments::is_compiler_only()) {
+      max_method != nullptr && is_method_profiled(max_method_h) && !Arguments::is_compiler_only()) {
     max_task->set_comp_level(CompLevel_limited_profile);
 
     if (CompileBroker::compilation_is_complete(max_method_h, max_task->osr_bci(), CompLevel_limited_profile)) {
@@ -989,7 +989,7 @@ bool CompilationPolicy::compare_tasks(CompileTask* x, CompileTask* y) {
 }
 
 // Is method profiled enough?
-bool CompilationPolicy::is_method_profiled(const methodHandle& method, JavaThread* THREAD) {
+bool CompilationPolicy::is_method_profiled(const methodHandle& method) {
   MethodData* mdo = method->method_data();
   if (mdo != nullptr) {
     int i = mdo->invocation_count_delta();
@@ -1134,13 +1134,21 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
             create_mdo(method, THREAD);
           }
           next_level = CompLevel_full_optimization;
-        } else {
-          // deps are not met
-          next_level = CompLevel_limited_profile;
         }
-      } else {
-        // Don't have an MDO or hasn't been compiled to level 4
-        next_level = CompLevel_limited_profile;
+      }
+      if (cur_level == next_level) {
+        switch(cur_level) {
+          default: break;
+          case CompLevel_none:
+            next_level = CompLevel_limited_profile;
+            break;
+          case CompLevel_limited_profile:
+            next_level = limited_profile<Predicate>(method, cur_level, Tier2DelayFactor, false);
+            break;
+          case CompLevel_full_profile:
+            next_level = full_profile<Predicate>(method, cur_level);
+            break;
+        }
       }
     } else if (is_trivial(method)) {
       next_level = CompilationModeFlag::disable_intermediate() ? CompLevel_full_optimization : CompLevel_simple;
@@ -1149,7 +1157,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
       default: break;
       case CompLevel_none:
         // If we were at full profile level, would we switch to full opt?
-        if (common<Predicate>(method, CompLevel_full_profile, THREAD, disable_feedback) == CompLevel_full_optimization) {
+        if (full_profile<Predicate>(method, CompLevel_full_profile) == CompLevel_full_optimization) {
           next_level = CompLevel_full_optimization;
         } else if (!CompilationModeFlag::disable_intermediate() && Predicate::apply(method, cur_level, i, b)) {
           // C1-generated fully profiled code is about 30% slower than the limited profile
@@ -1159,7 +1167,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
           // we introduce a feedback on the C2 queue size. If the C2 queue is sufficiently long
           // we choose to compile a limited profiled version and then recompile with full profiling
           // when the load on C2 goes down.
-          if (!disable_feedback && (CompileBroker::queue_size(CompLevel_full_optimization) > Tier3DelayOn * compiler_count(CompLevel_full_optimization) || should_delay(method))) {
+          if (!disable_feedback && CompileBroker::queue_size(CompLevel_full_optimization) > Tier3DelayOn * compiler_count(CompLevel_full_optimization)) {
             next_level = CompLevel_limited_profile;
           } else {
             next_level = CompLevel_full_profile;
@@ -1167,50 +1175,14 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
         }
         break;
       case CompLevel_limited_profile:
-        {
-          bool delay = should_delay(method);
-          if (is_method_profiled(method, THREAD) && !delay) {
-            // Special case: we got here because this method was fully profiled in the interpreter.
-            next_level = CompLevel_full_optimization;
-          } else {
-            MethodData* mdo = method->method_data();
-            double s = delay ? Tier2DelayFactor : 1.0;
-            if (mdo != nullptr) {
-              if (mdo->would_profile()) {
-                if (disable_feedback || (CompileBroker::queue_size(CompLevel_full_optimization) <=
-                                        Tier3DelayOff * compiler_count(CompLevel_full_optimization) &&
-                                        Predicate::apply_scaled(method, cur_level, i, b, s))) {
-                  next_level = CompLevel_full_profile;
-                }
-              } else {
-                next_level = CompLevel_full_optimization;
-              }
-            } else {
-              // If there is no MDO we need to profile
-              if (disable_feedback || (CompileBroker::queue_size(CompLevel_full_optimization) <=
-                                      Tier3DelayOff * compiler_count(CompLevel_full_optimization) &&
-                                      Predicate::apply_scaled(method, cur_level, i, b, s))) {
-                next_level = CompLevel_full_profile;
-              }
-            }
-          }
+        if (is_method_profiled(method)) {
+          next_level = CompLevel_full_optimization;
+        } else {
+          next_level = limited_profile<Predicate>(method, cur_level, 1.0, disable_feedback);
         }
         break;
       case CompLevel_full_profile:
-        {
-          MethodData* mdo = method->method_data();
-          if (mdo != nullptr) {
-            if (mdo->would_profile() || CompilationModeFlag::disable_intermediate()) {
-              int mdo_i = mdo->invocation_count_delta();
-              int mdo_b = mdo->backedge_count_delta();
-              if (Predicate::apply(method, cur_level, mdo_i, mdo_b)) {
-                next_level = CompLevel_full_optimization;
-              }
-            } else {
-              next_level = CompLevel_full_optimization;
-            }
-          }
-        }
+        next_level = full_profile<Predicate>(method, cur_level);
         break;
       }
     }
@@ -1218,6 +1190,52 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
   return (next_level != cur_level) ? limit_level(next_level) : next_level;
 }
 
+template<typename Predicate>
+CompLevel CompilationPolicy::full_profile(const methodHandle& method, CompLevel cur_level) {
+  precond(cur_level == CompLevel_full_profile);
+  CompLevel next_level = cur_level;
+  MethodData* mdo = method->method_data();
+  if (mdo != nullptr) {
+    if (mdo->would_profile() || CompilationModeFlag::disable_intermediate()) {
+      int mdo_i = mdo->invocation_count_delta();
+      int mdo_b = mdo->backedge_count_delta();
+      if (Predicate::apply(method, cur_level, mdo_i, mdo_b)) {
+        next_level = CompLevel_full_optimization;
+      }
+    } else {
+      next_level = CompLevel_full_optimization;
+    }
+  }
+  return next_level;
+}
+
+template<typename Predicate>
+CompLevel CompilationPolicy::limited_profile(const methodHandle& method, CompLevel cur_level, double scale, bool disable_feedback) {
+  precond(cur_level == CompLevel_limited_profile);
+  CompLevel next_level = cur_level;
+  int i = method->invocation_count();
+  int b = method->backedge_count();
+  MethodData* mdo = method->method_data();
+  if (mdo != nullptr) {
+    if (mdo->would_profile()) {
+      if (disable_feedback || (CompileBroker::queue_size(CompLevel_full_optimization) <=
+                              Tier3DelayOff * compiler_count(CompLevel_full_optimization) &&
+                              Predicate::apply_scaled(method, cur_level, i, b, scale))) {
+        next_level = CompLevel_full_profile;
+      }
+    } else {
+      next_level = CompLevel_full_optimization;
+    }
+  } else {
+    // If there is no MDO we need to profile
+    if (disable_feedback || (CompileBroker::queue_size(CompLevel_full_optimization) <=
+                            Tier3DelayOff * compiler_count(CompLevel_full_optimization) &&
+                            Predicate::apply_scaled(method, cur_level, i, b, scale))) {
+      next_level = CompLevel_full_profile;
+    }
+  }
+  return next_level;
+}
 
 
 // Determine if a method should be compiled with a normal entry point at a different level.
