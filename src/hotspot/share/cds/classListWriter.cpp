@@ -28,9 +28,11 @@
 #include "classfile/classFileStream.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/classLoaderData.hpp"
+#include "classfile/classLoaderDataGraph.hpp"
 #include "classfile/moduleEntry.hpp"
 #include "classfile/systemDictionaryShared.hpp"
 #include "memory/resourceArea.hpp"
+#include "oops/constantPool.inline.hpp"
 #include "oops/instanceKlass.hpp"
 #include "runtime/mutexLocker.hpp"
 
@@ -187,5 +189,60 @@ void ClassListWriter::write_to_stream(const InstanceKlass* k, outputStream* stre
 void ClassListWriter::delete_classlist() {
   if (_classlist_file != nullptr) {
     delete _classlist_file;
+  }
+}
+
+class ClassListWriter::WriteResolveConstantsCLDClosure : public CLDClosure {
+public:
+  void do_cld(ClassLoaderData* cld) {
+    for (Klass* klass = cld->klasses(); klass != nullptr; klass = klass->next_link()) {
+      if (klass->is_instance_klass()) {
+        write_resolved_constants_for(InstanceKlass::cast(klass));
+      }
+    }
+  }
+};
+
+
+void ClassListWriter::write_resolved_constants() {
+  if (!is_enabled()) {
+    return;
+  }
+  MutexLocker lock(ClassLoaderDataGraph_lock);
+  MutexLocker lock2(ClassListFile_lock, Mutex::_no_safepoint_check_flag);
+
+  WriteResolveConstantsCLDClosure closure;
+  ClassLoaderDataGraph::loaded_cld_do(&closure);
+}
+
+void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
+  if (!SystemDictionaryShared::is_builtin_loader(ik->class_loader_data()) ||
+      ik->is_hidden()) {
+    return;
+  }
+  ResourceMark rm;
+  GrowableArray<int> list;
+
+  ConstantPool* cp = ik->constants();
+  for (int cp_index = 1; cp_index < cp->length(); cp_index++) { // Index 0 is unused
+    switch (cp->tag_at(cp_index).value()) {
+    case JVM_CONSTANT_Class:
+      {
+        Klass* k = cp->resolved_klass_at(cp_index);
+        if (k->is_instance_klass()) {
+          list.append(cp_index);
+        }
+      }
+      break;
+    }
+  }
+
+  if (list.length() > 0) {
+    outputStream* stream = _classlist_file;
+    stream->print("@cp %s", ik->name()->as_C_string());
+    for (int i = 0; i < list.length(); i++) {
+      stream->print(" %d", list.at(i));
+    }
+    stream->cr();
   }
 }

@@ -475,7 +475,7 @@ char* VM_PopulateDumpSharedSpace::dump_read_only_tables() {
   ArchiveBuilder::OtherROAllocMark mark;
 
   SystemDictionaryShared::write_to_archive();
-  ClassPrelinker::record_preloaded_klasses(true);
+  ClassPrelinker::record_initiated_klasses(true);
 
   // Write lambform lines into archive
   LambdaFormInvokers::dump_static_archive_invokers();
@@ -516,6 +516,11 @@ void VM_PopulateDumpSharedSpace::doit() {
   dump_shared_symbol_table(builder.symbols());
 
   builder.relocate_vm_classes();
+
+  {
+    ArchiveBuilder::OtherROAllocMark mark;
+    ClassPrelinker::record_preloaded_klasses(true);
+  }
 
   log_info(cds)("Make classes shareable");
   builder.make_klasses_shareable();

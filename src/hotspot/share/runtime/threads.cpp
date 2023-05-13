@@ -25,6 +25,7 @@
 
 #include "precompiled.hpp"
 #include "cds/cds_globals.hpp"
+#include "cds/classPrelinker.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/javaClasses.hpp"
@@ -315,6 +316,9 @@ static void call_initPhase2(TRAPS) {
   }
 
   universe_post_module_init();
+
+  // Preload all boot classes outside of java.base module
+  ClassPrelinker::runtime_preload(THREAD, Handle());
 }
 
 // Phase 3. final setup - set security manager, system class loader and TCCL

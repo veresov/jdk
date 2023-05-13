@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "cds/cds_globals.hpp"
+#include "cds/classListWriter.hpp"
 #include "cds/dynamicArchive.hpp"
 #include "classfile/classLoaderDataGraph.hpp"
 #include "classfile/javaClasses.hpp"
@@ -442,6 +443,7 @@ void before_exit(JavaThread* thread, bool halt) {
 #endif
 
 #if INCLUDE_CDS
+  ClassListWriter::write_resolved_constants();
   // Dynamic CDS dumping must happen whilst we can still reliably
   // run Java code.
   DynamicArchive::dump_at_exit(thread, ArchiveClassesAtExit);

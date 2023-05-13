@@ -133,6 +133,16 @@ public:
 
     verify_estimate_size(_estimated_metaspaceobj_bytes, "MetaspaceObjs");
 
+    sort_methods();
+
+    {
+      ArchiveBuilder::OtherROAllocMark mark;
+      ClassPrelinker::record_preloaded_klasses(false);
+    }
+
+    log_info(cds)("Make classes shareable");
+    make_klasses_shareable();
+
     char* serialized_data;
     {
       // Write the symbol table and system dictionaries to the RO space.
@@ -144,7 +154,7 @@ public:
 
       ArchiveBuilder::OtherROAllocMark mark;
       SystemDictionaryShared::write_to_archive(false);
-      ClassPrelinker::record_preloaded_klasses(false);
+      ClassPrelinker::record_initiated_klasses(false);
       TrainingData::dump_training_data();
 
       serialized_data = ro_region()->top();
@@ -156,11 +166,6 @@ public:
     }
 
     verify_estimate_size(_estimated_hashtable_bytes, "Hashtables");
-
-    sort_methods();
-
-    log_info(cds)("Make classes shareable");
-    make_klasses_shareable();
 
     log_info(cds)("Adjust lambda proxy class dictionary");
     SystemDictionaryShared::adjust_lambda_proxy_class_dictionary();

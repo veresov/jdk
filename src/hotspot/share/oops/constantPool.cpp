@@ -384,8 +384,12 @@ void ConstantPool::remove_unshareable_info() {
   bool archived = false;
   for (int index = 1; index < length(); index++) { // Index 0 is unused
     switch (tag_at(index).value()) {
+    case JVM_CONSTANT_UnresolvedClass:
+      ArchiveBuilder::alloc_stats()->record_klass_cp_entry(false);
+      break;
     case JVM_CONSTANT_UnresolvedClassInError:
       tag_at_put(index, JVM_CONSTANT_UnresolvedClass);
+      ArchiveBuilder::alloc_stats()->record_klass_cp_entry(false);
       break;
     case JVM_CONSTANT_MethodHandleInError:
       tag_at_put(index, JVM_CONSTANT_MethodHandle);
@@ -431,7 +435,7 @@ bool ConstantPool::maybe_archive_resolved_klass_at(int cp_index) {
     if (ClassPrelinker::can_archive_resolved_klass(src_cp, cp_index)) {
       if (log_is_enabled(Debug, cds, resolve)) {
         ResourceMark rm;
-        log_debug(cds, resolve)("Resolved klass CP entry [%d]: %s => %s", cp_index,
+        log_debug(cds, resolve)("archived klass CP entry [%3d]: %s => %s", cp_index,
                                 pool_holder()->external_name(), k->external_name());
       }
       return true;
