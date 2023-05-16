@@ -46,7 +46,7 @@
 #include "utilities/growableArray.hpp"
 #include "utilities/xmlstream.hpp"
 
-TrainingData::TrainingDataSet TrainingData::_training_data_set(1024);
+TrainingData::TrainingDataSet TrainingData::_training_data_set(1024, 0x3fffffff);
 TrainingDataDictionary TrainingData::_archived_training_data_dictionary;
 GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* TrainingData::_dumptime_training_data_dictionary = nullptr;
 

@@ -383,7 +383,7 @@ public:
   void iterate() {
     GrowableArray<Klass*>* klasses = ArchiveBuilder::current()->klasses();
     for (GrowableArrayIterator<Klass*> it = klasses->begin(); it != klasses->end(); ++it) {
-      Klass* k = ArchiveBuilder::current()->get_source_addr(*it);
+      Klass* k = *it;
       assert(!k->is_shared(), "must be");
       if (k->is_instance_klass()) {
         maybe_record(InstanceKlass::cast(k));
