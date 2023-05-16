@@ -27,8 +27,8 @@
 #include "cds/methodDataDictionary.hpp"
 #include "classfile/systemDictionaryShared.hpp"
 
-void MethodDataKey::mark_pointers() {
-  ArchivePtrMarker::mark_pointer(&_holder);
+void MethodDataKey::init_for_archive(MethodDataKey& dumptime_key) {
+  ArchiveBuilder::current()->write_pointer_in_buffer(&_holder, dumptime_key._holder);
 }
 
 unsigned int MethodDataKey::hash() const {

@@ -1419,6 +1419,7 @@ void TrainingData::adjust_training_data_dictionary() {
   assert(_dumptime_training_data_dictionary != nullptr, "");
   for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
     TrainingData* td = _dumptime_training_data_dictionary->at(i).training_data();
+    td = ArchiveBuilder::current()->get_buffered_addr(td);
     assert(MetaspaceShared::is_in_shared_metaspace(td) || ArchiveBuilder::current()->is_in_buffer_space(td), "");
     td->remove_unshareable_info();
   }
@@ -1476,6 +1477,7 @@ void TrainingData::write_training_data_dictionary(TrainingDataDictionary* dictio
       assert(!TrainingData::Key::equals(td1, td->key(), -1), "conflict");
     }
 #endif // ASSERT
+    td = ArchiveBuilder::current()->get_buffered_addr(td);
     uint hash = TrainingData::Key::cds_hash(td->key());
     u4 delta = ArchiveBuilder::current()->buffer_to_offset_u4((address)td);
     writer.add(hash, delta);

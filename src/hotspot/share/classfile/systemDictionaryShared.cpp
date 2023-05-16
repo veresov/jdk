@@ -1336,17 +1336,21 @@ public:
   AdjustMethodInfo() {}
   bool do_entry(MethodDataKey& key, DumpTimeMethodDataInfo& info) {
     // TODO: is it possible for the data to become stale/invalid?
-    Method*         m  = key.method();
     MethodData*     md = info.method_data();
     MethodCounters* mc = info.method_counters();
-    assert(MetaspaceShared::is_in_shared_metaspace(m) || ArchiveBuilder::current()->is_in_buffer_space(m), "");
-    assert(!ArchiveBuilder::current()->is_in_buffer_space(md) || md == nullptr, "must be");
-    assert(!ArchiveBuilder::current()->is_in_buffer_space(mc) || mc == nullptr, "must be");
     if (md != nullptr) {
-      ArchiveBuilder::current()->get_buffered_addr(md)->remove_unshareable_info();
+      md = ArchiveBuilder::current()->get_buffered_addr(md);
     }
     if (mc != nullptr) {
-      ArchiveBuilder::current()->get_buffered_addr(mc)->remove_unshareable_info();
+      mc = ArchiveBuilder::current()->get_buffered_addr(mc);
+    }
+    assert(ArchiveBuilder::current()->is_in_buffer_space(md) || md == nullptr, "must be");
+    assert(ArchiveBuilder::current()->is_in_buffer_space(mc) || mc == nullptr, "must be");
+    if (md != nullptr) {
+      md->remove_unshareable_info();
+    }
+    if (mc != nullptr) {
+      mc->remove_unshareable_info();
     }
     return true;
   }

@@ -76,6 +76,7 @@ public:
     return (k1.equals(k2));
   }
 
+  void init_for_archive(MethodDataKey& dumptime_key);
   Method* method() const { return _holder; }
 };
 
@@ -113,12 +114,9 @@ public:
     return (value->_key.equals(*key));
   }
   void init(MethodDataKey& key, DumpTimeMethodDataInfo& info) {
-    _key = key;
-    _key.mark_pointers();
-    _method_data = info.method_data();
-    ArchivePtrMarker::mark_pointer(&_method_data);
-    _method_counters = info.method_counters();
-    ArchivePtrMarker::mark_pointer(&_method_counters);
+    _key.init_for_archive(key);
+    ArchiveBuilder::current()->write_pointer_in_buffer(&_method_data, info.method_data());
+    ArchiveBuilder::current()->write_pointer_in_buffer(&_method_counters, info.method_counters());
   }
 
   unsigned int hash() const {
