@@ -273,6 +273,10 @@
   product(double, Tier2DelayFactor, 10000.0, DIAGNOSTIC,                    \
           "Delay profiling of methods that were observed to be cold")       \
                                                                             \
+  product(bool, SkipTier2IfPossible, false, DIAGNOSTIC,                     \
+          "Compile at tier 4 instead of tier 2 in training replay "         \
+          "mode if posssible")                                              \
+                                                                            \
   product(ccstr, CompilationMode, "default",                                \
           "Compilation modes: "                                             \
           "default: normal tiered compilation; "                            \

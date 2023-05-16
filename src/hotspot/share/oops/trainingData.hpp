@@ -576,6 +576,14 @@ class KlassTrainingData : public TrainingData {
 
   static KlassTrainingData* allocate(InstanceKlass* holder);
   static KlassTrainingData* allocate(Symbol* name, Symbol* loader_name);
+
+  template<typename FN>
+  void iterate_all_comp_deps(FN fn) const { // lambda enabled API
+    TrainingDataLocker l;
+    for (int i = 0; i < comp_dep_count(); i++) {
+      fn(comp_dep(i));
+    }
+  }
 };
 
 // Information about particular JIT tasks.

@@ -85,7 +85,7 @@ bool CompilationPolicy::must_be_compiled(const methodHandle& m, int comp_level) 
 }
 
 void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
-  if (!m->is_native() && !m->has_compiled_code() && MethodTrainingData::have_data()) {
+  if (!m->is_native() && MethodTrainingData::have_data()) {
     MethodTrainingData* mtd = MethodTrainingData::find(m);
     if (mtd == nullptr) {
       return;              // there is no training data recorded for m
@@ -95,15 +95,41 @@ void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
         mtd->only_inlined()) {
       return;
     }
-    CompLevel level = mtd->highest_level() != CompLevel_none ? CompLevel_limited_profile : CompLevel_none;
+    CompLevel cur_level = static_cast<CompLevel>(m->highest_comp_level());
+    CompLevel next_level = cur_level;
     if (mtd->saw_level(CompLevel_simple)) {
-      level = CompLevel_simple;
-    }
-    if (level != CompLevel_none && can_be_compiled(m, level) && !CompileBroker::compilation_is_in_queue(m)) {
-      if (PrintTieredEvents) {
-        print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, level);
+      next_level = CompLevel_simple;
+    } else {
+      switch(cur_level) {
+        default: break;
+        case CompLevel_none:
+          if (mtd->highest_level() != CompLevel_none) {
+            next_level = CompLevel_limited_profile;
+            if (SkipTier2IfPossible) {
+              // fall through
+            } else {
+              break;
+            }
+          }
+        case CompLevel_limited_profile:
+        case CompLevel_full_profile:
+          if (mtd->highest_level() == CompLevel_full_optimization) {
+            CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
+            if (ctd != nullptr && ctd->init_deps_left() == 0) {
+              if (m->method_data() == nullptr) {
+                create_mdo(m, THREAD);
+              }
+              next_level = CompLevel_full_optimization;
+            }
+          }
+          break;
       }
-      CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
+    }
+    if (next_level != cur_level && can_be_compiled(m, next_level) && !CompileBroker::compilation_is_in_queue(m)) {
+      if (PrintTieredEvents) {
+        print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, next_level);
+      }
+      CompileBroker::compile_method(m, InvocationEntryBci, next_level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
       if (HAS_PENDING_EXCEPTION) {
         CLEAR_PENDING_EXCEPTION;
       }

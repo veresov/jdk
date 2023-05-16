@@ -1203,6 +1203,22 @@ void InstanceKlass::initialize_impl(TRAPS) {
     KlassTrainingData* ktd = KlassTrainingData::find(this);
     if (ktd != nullptr) {
       ktd->notice_fully_initialized();
+
+      ResourceMark rm;
+      GrowableArray<CompileTrainingData*> ctds;
+      ktd->iterate_all_comp_deps([&](CompileTrainingData* ctd) {
+        if (ctd->init_deps_left() == 0) {
+          ctds.append(ctd);
+        }
+      });
+
+      for (int i = 0; i < ctds.length(); i++) {
+        MethodTrainingData* mtd = ctds.at(i)->top_method();
+        if (mtd->has_holder()) {
+          const methodHandle mh(THREAD, const_cast<Method*>(mtd->holder()));
+          CompilationPolicy::compile_if_required(mh, THREAD);
+        }
+      }
     }
     int len = methods()->length();
     for (int i = 0; i < len; i++) {
