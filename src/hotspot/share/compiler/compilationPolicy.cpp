@@ -1155,7 +1155,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
       CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
       if (mtd->final_profile() != nullptr && ctd != nullptr) {
         if (ctd->init_deps_left() == 0) {
-          // Method has been compiled to level 4, has an MDO, all deps are met
+          // Method had been compiled to level 4, had an MDO, all deps are met
           if (method->method_data() == nullptr) {
             create_mdo(method, THREAD);
           }
@@ -1201,11 +1201,7 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
         }
         break;
       case CompLevel_limited_profile:
-        if (is_method_profiled(method)) {
-          next_level = CompLevel_full_optimization;
-        } else {
-          next_level = limited_profile<Predicate>(method, cur_level, 1.0, disable_feedback);
-        }
+        next_level = limited_profile<Predicate>(method, cur_level, 1.0, disable_feedback);
         break;
       case CompLevel_full_profile:
         next_level = full_profile<Predicate>(method, cur_level);
@@ -1259,6 +1255,9 @@ CompLevel CompilationPolicy::limited_profile(const methodHandle& method, CompLev
                             Predicate::apply_scaled(method, cur_level, i, b, scale))) {
       next_level = CompLevel_full_profile;
     }
+  }
+  if (next_level == CompLevel_full_profile && is_method_profiled(method)) {
+    next_level = CompLevel_full_optimization;
   }
   return next_level;
 }
