@@ -139,10 +139,10 @@ private:
 
   ClassListParser(const char* file, ParseMode _parse_mode);
   ~ClassListParser();
-  void print_diagnostic_info(outputStream* st, const char* msg, va_list ap);
-  void print_diagnostic_info(outputStream* st, const char* msg, ...);
-  void constant_pool_resolution_warning(const char* msg, ...);
-  void error(const char* msg, ...);
+  void print_diagnostic_info(outputStream* st, const char* msg, va_list ap) ATTRIBUTE_PRINTF(3, 0);
+  void print_diagnostic_info(outputStream* st, const char* msg, ...) ATTRIBUTE_PRINTF(3, 0);
+  void constant_pool_resolution_warning(const char* msg, ...) ATTRIBUTE_PRINTF(2, 0);
+  void error(const char* msg, ...) ATTRIBUTE_PRINTF(2, 0);
 
 public:
   static int parse_classlist(const char* classlist_path, ParseMode parse_mode, TRAPS) {
