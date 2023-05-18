@@ -26,6 +26,7 @@
 #include "cds/cds_globals.hpp"
 #include "cds/classListWriter.hpp"
 #include "cds/dynamicArchive.hpp"
+#include "cds/methodProfiler.hpp"
 #include "classfile/classLoaderDataGraph.hpp"
 #include "classfile/javaClasses.hpp"
 #include "classfile/stringTable.hpp"
@@ -441,6 +442,8 @@ void before_exit(JavaThread* thread, bool halt) {
     static_cast<void>(LSAN_DO_RECOVERABLE_LEAK_CHECK());
   }
 #endif
+
+  MethodProfiler::process_method_hotness();
 
 #if INCLUDE_CDS
   ClassListWriter::write_resolved_constants();

@@ -1738,6 +1738,9 @@ const int ObjectAlignmentInBytes = 8;
           "to or from this file [default: ./hs_training_%p.log] "           \
           "(_%p replaced with _pidNNN on output, empty string on input)")   \
                                                                             \
+  product(bool, RecordOptCompilationOrder, false,                           \
+          "Record c2 nmethod temperature to guide compilation order.")      \
+                                                                            \
   /* flags for performance data collection */                               \
                                                                             \
   product(bool, UsePerfData, true,                                          \

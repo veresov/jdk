@@ -27,6 +27,7 @@
 #include "cds/cds_globals.hpp"
 #include "cds/classPrelinker.hpp"
 #include "cds/metaspaceShared.hpp"
+#include "cds/methodProfiler.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/javaClasses.hpp"
 #include "classfile/javaThreadStatus.hpp"
@@ -674,6 +675,9 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
 
   // Start the monitor deflation thread:
   MonitorDeflationThread::initialize();
+
+  // Start the method sampler
+  MethodProfiler::initialize();
 
   // initialize compiler(s)
 #if defined(COMPILER1) || COMPILER2_OR_JVMCI
