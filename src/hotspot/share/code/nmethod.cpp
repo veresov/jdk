@@ -659,6 +659,7 @@ nmethod::nmethod(
     _exception_offset        = 0;
     _orig_pc_offset          = 0;
     _gc_epoch                = CodeCache::gc_epoch();
+    _method_profiling_count  = 0;
 
     _consts_offset           = content_offset()      + code_buffer->total_offset_of(code_buffer->consts());
     _stub_offset             = content_offset()      + code_buffer->total_offset_of(code_buffer->stubs());
@@ -801,6 +802,7 @@ nmethod::nmethod(
     _comp_level              = comp_level;
     _orig_pc_offset          = orig_pc_offset;
     _gc_epoch                = CodeCache::gc_epoch();
+    _method_profiling_count  = 0;
 
     // Section offsets
     _consts_offset           = content_offset()      + code_buffer->total_offset_of(code_buffer->consts());
@@ -1273,6 +1275,14 @@ void nmethod::inc_decompile_count() {
   if (mdo == nullptr)  return;
   // There is a benign race here.  See comments in methodData.hpp.
   mdo->inc_decompile_count();
+}
+
+void nmethod::inc_method_profiling_count() {
+  Atomic::inc(&_method_profiling_count);
+}
+
+uint64_t nmethod::method_profiling_count() {
+  return _method_profiling_count;
 }
 
 bool nmethod::try_transition(int new_state_int) {

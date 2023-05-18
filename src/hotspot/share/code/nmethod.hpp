@@ -74,6 +74,9 @@ class nmethod : public CompiledMethod {
 
   uint64_t  _gc_epoch;
 
+  // Profiling counter used to figure out the hottest nmethods to record into CDS
+  volatile uint64_t _method_profiling_count;
+
   // To support simple linked-list chaining of nmethods:
   nmethod*  _osr_link;         // from InstanceKlass::osr_nmethods_head
 
@@ -443,6 +446,9 @@ class nmethod : public CompiledMethod {
 
   nmethod* unlinked_next() const                  { return _unlinked_next; }
   void set_unlinked_next(nmethod* next)           { _unlinked_next = next; }
+
+  void inc_method_profiling_count();
+  uint64_t method_profiling_count();
 
 #if INCLUDE_RTM_OPT
   // rtm state accessing and manipulating
