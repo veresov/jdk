@@ -120,9 +120,6 @@ void TrainingData::initialize() {
     TrainingDataLocker::initialize();
   }
   options()->parse();
-  if (UseNewCode) {
-    options()->print_on(tty);
-  }
 
   if (have_data()) {
     if (use_xml()) {

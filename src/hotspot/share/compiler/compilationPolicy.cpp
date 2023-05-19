@@ -129,7 +129,12 @@ void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
       if (PrintTieredEvents) {
         print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, next_level);
       }
-      CompileBroker::compile_method(m, InvocationEntryBci, next_level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
+      bool has_unsatisfied_deps = false;
+      CompileTrainingData* ctd = mtd->last_toplevel_compile(next_level);
+      if (ctd != nullptr) {
+        has_unsatisfied_deps = (ctd->init_deps_left() > 0);
+      }
+      CompileBroker::compile_method(m, InvocationEntryBci, next_level, methodHandle(), 0, has_unsatisfied_deps, CompileTask::Reason_MustBeCompiled, THREAD);
       if (HAS_PENDING_EXCEPTION) {
         CLEAR_PENDING_EXCEPTION;
       }
@@ -164,7 +169,7 @@ void CompilationPolicy::compile_if_required(const methodHandle& m, TRAPS) {
     if (PrintTieredEvents) {
       print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, level);
     }
-    CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, CompileTask::Reason_MustBeCompiled, THREAD);
+    CompileBroker::compile_method(m, InvocationEntryBci, level, methodHandle(), 0, false, CompileTask::Reason_MustBeCompiled, THREAD);
   } else {
     maybe_compile_early(m, THREAD);
   }
@@ -789,7 +794,6 @@ CompileTask* CompilationPolicy::select_task(CompileQueue* compile_queue, JavaThr
       print_event(UPDATE_IN_QUEUE, max_method, max_method, max_task->osr_bci(), (CompLevel)max_task->comp_level());
     }
   }
-
   return max_task;
 }
 
@@ -924,7 +928,17 @@ void CompilationPolicy::compile(const methodHandle& mh, int bci, CompLevel level
     }
     int hot_count = (bci == InvocationEntryBci) ? mh->invocation_count() : mh->backedge_count();
     update_rate(nanos_to_millis(os::javaTimeNanos()), mh);
-    CompileBroker::compile_method(mh, bci, level, mh, hot_count, CompileTask::Reason_Tiered, THREAD);
+    bool has_unsatisfied_deps = false;
+    if (TrainingData::have_data()) {
+      MethodTrainingData* mtd = MethodTrainingData::find(mh);
+      if (mtd != nullptr) {
+        CompileTrainingData* ctd = mtd->last_toplevel_compile(level);
+        if (ctd != nullptr) {
+          has_unsatisfied_deps = (ctd->init_deps_left() > 0);
+        }
+      }
+    }
+    CompileBroker::compile_method(mh, bci, level, mh, hot_count, has_unsatisfied_deps, CompileTask::Reason_Tiered, THREAD);
   }
 }
 

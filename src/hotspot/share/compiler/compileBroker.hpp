@@ -246,6 +246,7 @@ class CompileBroker: AllStatic {
                                           const methodHandle& hot_method,
                                           int                 hot_count,
                                           CompileTask::CompileReason compile_reason,
+                                          bool                has_unsatisfied_deps,
                                           bool                blocking);
   static void wait_for_completion(CompileTask* task);
 #if INCLUDE_JVMCI
@@ -265,6 +266,7 @@ class CompileBroker: AllStatic {
                                   const methodHandle& hot_method,
                                   int hot_count,
                                   CompileTask::CompileReason compile_reason,
+                                  bool has_unsatisfied_deps,
                                   bool blocking,
                                   Thread* thread);
 
@@ -299,6 +301,7 @@ public:
                                  int comp_level,
                                  const methodHandle& hot_method,
                                  int hot_count,
+                                 bool has_unsatisfied_deps,
                                  CompileTask::CompileReason compile_reason,
                                  TRAPS);
 
@@ -307,6 +310,7 @@ public:
                                    int comp_level,
                                    const methodHandle& hot_method,
                                    int hot_count,
+                                   bool has_unsatisfied_deps,
                                    CompileTask::CompileReason compile_reason,
                                    DirectiveSet* directive,
                                    TRAPS);

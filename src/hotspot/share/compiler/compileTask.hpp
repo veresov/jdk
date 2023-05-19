@@ -83,6 +83,7 @@ class CompileTask : public CHeapObj<mtCompiler> {
   int                  _osr_bci;
   bool                 _is_complete;
   bool                 _is_success;
+  bool                 _has_unsatisfied_deps;
   bool                 _is_blocking;
   CodeSection::csize_t _nm_content_size;
   CodeSection::csize_t _nm_total_size;
@@ -117,7 +118,7 @@ class CompileTask : public CHeapObj<mtCompiler> {
 
   void initialize(int compile_id, const methodHandle& method, int osr_bci, int comp_level,
                   const methodHandle& hot_method, int hot_count,
-                  CompileTask::CompileReason compile_reason, bool is_blocking);
+                  CompileTask::CompileReason compile_reason, bool has_unsatisfied_deps, bool is_blocking);
 
   static CompileTask* allocate();
   static void         free(CompileTask* task);
@@ -129,6 +130,7 @@ class CompileTask : public CHeapObj<mtCompiler> {
   bool         is_complete() const               { return _is_complete; }
   bool         is_blocking() const               { return _is_blocking; }
   bool         is_success() const                { return _is_success; }
+  bool         has_unsatisfied_deps() const      { return _has_unsatisfied_deps; }
   DirectiveSet* directive() const                { return _directive; }
   CompileReason compile_reason() const           { return _compile_reason; }
   CodeSection::csize_t nm_content_size() { return _nm_content_size; }
