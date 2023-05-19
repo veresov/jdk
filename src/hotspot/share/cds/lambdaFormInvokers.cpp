@@ -49,6 +49,7 @@
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
 
+LambdaFormInvokers::RegeneratedObjTable* LambdaFormInvokers::_renegerated_objs = nullptr;
 GrowableArrayCHeap<char*, mtClassShared>* LambdaFormInvokers::_lambdaform_lines = nullptr;
 Array<Array<char>*>*  LambdaFormInvokers::_static_archive_invokers = nullptr;
 GrowableArrayCHeap<OopHandle, mtClassShared>* LambdaFormInvokers::_regenerated_mirrors = nullptr;
@@ -79,21 +80,61 @@ void LambdaFormInvokers::append(char* line) {
 
 // The regenerated Klass is not added to any class loader, so we need
 // to keep its java_mirror alive to avoid class unloading.
-void LambdaFormInvokers::add_regenerated_class(oop regenerated_class) {
+void LambdaFormInvokers::add_regenerated_class(InstanceKlass* orig_klass, InstanceKlass* regen_klass) {
+  MutexLocker ml(Thread::current(), LambdaFormInvokers_lock);
   if (_regenerated_mirrors == nullptr) {
     _regenerated_mirrors = new GrowableArrayCHeap<OopHandle, mtClassShared>(150);
   }
-  _regenerated_mirrors->append(OopHandle(Universe::vm_global(), regenerated_class));
+  _regenerated_mirrors->append(OopHandle(Universe::vm_global(), regen_klass->java_mirror()));
+
+  if (_renegerated_objs == nullptr) {
+    _renegerated_objs = new (mtClass)RegeneratedObjTable();
+  }
+
+  _renegerated_objs->put((address)orig_klass, (address)regen_klass);
+  Array<Method*>* methods = orig_klass->methods();
+  for (int i = 0; i < methods->length(); i++) {
+    Method* orig_m = methods->at(i);
+    Method* regen_m = regen_klass->find_method(orig_m->name(), orig_m->signature());
+    if (regen_m == nullptr) {
+        ResourceMark rm;
+        log_warning(cds, lambda)("Method in original class is missing from regenerated class: " INTPTR_FORMAT " %s",
+                                 p2i(orig_m), orig_m->external_name());
+    } else {
+      _renegerated_objs->put((address)orig_m, (address)regen_m);
+    }
+  }
+}
+
+bool LambdaFormInvokers::has_been_regenerated(address orig_obj) {
+  if (_renegerated_objs == nullptr) {
+    return false;
+  } else {
+    return _renegerated_objs->get(orig_obj) != nullptr;
+  }
+}
+
+void LambdaFormInvokers::record_regenerated_objects() {
+  if (_renegerated_objs != nullptr) {
+    auto doit = [&] (address orig_obj, address regen_obj) {
+      ArchiveBuilder::current()->record_regenerated_object(orig_obj, regen_obj);
+    };
+    _renegerated_objs->iterate_all(doit);
+  }
 }
 
 void LambdaFormInvokers::cleanup_regenerated_classes() {
-  if (_regenerated_mirrors == nullptr) return;
-
-  for (int i = 0; i < _regenerated_mirrors->length(); i++) {
-    _regenerated_mirrors->at(i).release(Universe::vm_global());
+  MutexLocker ml(Thread::current(), LambdaFormInvokers_lock);
+  if (_regenerated_mirrors != nullptr) {
+    for (int i = 0; i < _regenerated_mirrors->length(); i++) {
+      _regenerated_mirrors->at(i).release(Universe::vm_global());
+    }
+    delete _regenerated_mirrors;
+    _regenerated_mirrors = nullptr;
   }
-  delete _regenerated_mirrors;
-  _regenerated_mirrors = nullptr;
+  if (_renegerated_objs != nullptr) {
+    delete _renegerated_objs;
+  }
 }
 
 // convenient output
@@ -207,7 +248,7 @@ void LambdaFormInvokers::regenerate_class(char* class_name, ClassFileStream& st,
                                                    CHECK);
 
   assert(result->java_mirror() != nullptr, "must be");
-  add_regenerated_class(result->java_mirror());
+  add_regenerated_class(InstanceKlass::cast(klass), result);
 
   result->add_to_hierarchy(THREAD);
 

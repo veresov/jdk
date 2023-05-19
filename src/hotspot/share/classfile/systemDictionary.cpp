@@ -131,22 +131,10 @@ oop SystemDictionary::java_platform_loader() {
 }
 
 void SystemDictionary::compute_java_loaders(TRAPS) {
-  if (_java_system_loader.is_empty()) {
-    oop system_loader = get_system_class_loader_impl(CHECK);
-    _java_system_loader = OopHandle(Universe::vm_global(), system_loader);
-  } else {
-    // It must have been restored from the archived module graph
-    assert(UseSharedSpaces, "must be");
-    assert(MetaspaceShared::use_full_module_graph(), "must be");
-    DEBUG_ONLY(
-      oop system_loader = get_system_class_loader_impl(CHECK);
-      assert(_java_system_loader.resolve() == system_loader, "must be");
-    )
- }
-
   if (_java_platform_loader.is_empty()) {
     oop platform_loader = get_platform_class_loader_impl(CHECK);
     _java_platform_loader = OopHandle(Universe::vm_global(), platform_loader);
+    ClassPrelinker::runtime_preload(THREAD, Handle(THREAD, java_platform_loader()));
   } else {
     // It must have been restored from the archived module graph
     assert(UseSharedSpaces, "must be");
@@ -157,8 +145,19 @@ void SystemDictionary::compute_java_loaders(TRAPS) {
     )
   }
 
-  ClassPrelinker::runtime_preload(THREAD, Handle(THREAD, java_platform_loader()));
-  ClassPrelinker::runtime_preload(THREAD, Handle(THREAD, java_system_loader()));
+  if (_java_system_loader.is_empty()) {
+    oop system_loader = get_system_class_loader_impl(CHECK);
+    _java_system_loader = OopHandle(Universe::vm_global(), system_loader);
+    ClassPrelinker::runtime_preload(THREAD, Handle(THREAD, java_system_loader()));
+  } else {
+    // It must have been restored from the archived module graph
+    assert(UseSharedSpaces, "must be");
+    assert(MetaspaceShared::use_full_module_graph(), "must be");
+    DEBUG_ONLY(
+      oop system_loader = get_system_class_loader_impl(CHECK);
+      assert(_java_system_loader.resolve() == system_loader, "must be");
+    )
+ }
 }
 
 oop SystemDictionary::get_system_class_loader_impl(TRAPS) {

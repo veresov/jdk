@@ -122,6 +122,7 @@ public:
   static void serialize(SerializeClosure* soc, bool is_static_archive);
 
   static void runtime_preload(JavaThread* current, Handle loader);
+  static bool class_preloading_finished();
 };
 
 #endif // SHARE_CDS_CLASSPRELINKER_HPP

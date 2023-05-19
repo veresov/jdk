@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "cds/classPrelinker.hpp"
 #include "classfile/javaClasses.inline.hpp"
 #include "classfile/symbolTable.hpp"
 #include "classfile/vmClasses.hpp"
@@ -1326,6 +1327,13 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
   if (!_initialized || comp_level == CompLevel_none) {
     return nullptr;
   }
+
+#if INCLUDE_JVMCI
+  if (EnableJVMCI && UseJVMCICompiler &&
+      comp_level == CompLevel_full_optimization && !ClassPrelinker::class_preloading_finished()) {
+    return nullptr;
+  }
+#endif
 
   AbstractCompiler *comp = CompileBroker::compiler(comp_level);
   assert(comp != nullptr, "Ensure we have a compiler");

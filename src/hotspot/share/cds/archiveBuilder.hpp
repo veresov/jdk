@@ -145,6 +145,11 @@ private:
         _buffered_addr = nullptr;
       }
     }
+    SourceObjInfo(address src, address buf) {
+      _ref = nullptr;
+      _source_addr = src;
+      _buffered_addr = buf;
+    }
 
     bool should_copy() const { return _follow_mode == make_a_copy; }
     MetaspaceClosure::Ref* ref() const { return  _ref; }
@@ -378,6 +383,7 @@ public:
   void dump_rw_metadata();
   void dump_ro_metadata();
   void relocate_metaspaceobj_embedded_pointers();
+  void record_regenerated_object(address orig_obj, address regen_obj);
   void make_klasses_shareable();
   void relocate_to_requested();
   void write_archive(FileMapInfo* mapinfo, ArchiveHeapInfo* heap_info);

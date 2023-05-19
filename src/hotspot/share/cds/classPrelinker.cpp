@@ -25,6 +25,7 @@
 #include "precompiled.hpp"
 #include "cds/archiveBuilder.hpp"
 #include "cds/classPrelinker.hpp"
+#include "cds/lambdaFormInvokers.inline.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/systemDictionaryShared.hpp"
@@ -130,6 +131,15 @@ bool ClassPrelinker::can_archive_resolved_klass(InstanceKlass* cp_holder, Klass*
     // TODO - what is needed for hidden classes?
     return false;
   }
+
+#if 0
+  if (DumpSharedSpaces && LambdaFormInvokers::may_be_regenerated_class(resolved_klass->name())) {
+    // Hack -- there's a copy of the regenerated class in both dynamic and static archive.
+    // When dynamic archive is loaded, we don't want pre-resolved CP entries in the static
+    // archive to point to the wrong class.
+    return false;
+  }
+#endif
 
   if (resolved_klass->is_instance_klass()) {
     InstanceKlass* ik = InstanceKlass::cast(resolved_klass);
@@ -468,6 +478,18 @@ void ClassPrelinker::serialize(SerializeClosure* soc, bool is_static_archive) {
   soc->do_ptr((void**)&table->_app_initiated);
 }
 
+volatile bool _class_preloading_finished = false;
+
+bool ClassPrelinker::class_preloading_finished() {
+  if (!UseSharedSpaces) {
+    return true;
+  } else {
+    // The ConstantPools of preloaded classes have references to other preloaded classes. We don't
+    // want any Java code (including JVMCI compiler) to use these classes until all of them
+    // are loaded.
+    return Atomic::load_acquire(&_class_preloading_finished);
+  }
+}
 // This function is called 4 times:
 // preload only java.base classes
 // preload boot classes outside of java.base
@@ -491,20 +513,33 @@ void ClassPrelinker::runtime_preload(JavaThread* current, Handle loader) {
   if (UseSharedSpaces) {
     if (loader() != nullptr && !SystemDictionaryShared::has_platform_or_app_classes()) {
       // Non-boot classes might have been disabled due to command-line mismatch.
+      Atomic::release_store(&_class_preloading_finished, true);
       return;
     }
-    ExceptionMark rm(current);
+    ResourceMark rm(current);
+    ExceptionMark em(current);
     runtime_preload(&_static_preloaded_klasses, loader, current);
     if (!current->has_pending_exception()) {
       runtime_preload(&_dynamic_preloaded_klasses, loader, current);
     }
     _preload_java_base_only = false;
+
+    if (loader() != nullptr && loader() == SystemDictionary::java_system_loader()) {
+      Atomic::release_store(&_class_preloading_finished, true);
+    }
   }
 
   assert(!current->has_pending_exception(), "VM should have exited due to ExceptionMark");
 }
 
 void ClassPrelinker::jvmti_agent_error(InstanceKlass* expected, InstanceKlass* actual, const char* type) {
+  if (actual->is_shared() && expected->name() == actual->name() &&
+      LambdaFormInvokers::may_be_regenerated_class(expected->name())) {
+    // For the 4 regenerated classes (such as java.lang.invoke.Invokers$Holder) there's one
+    // in static archive and one in dynamic archive. If the dynamic archive is loaded, we
+    // load the one from the dynamic archive.
+    return;
+  }
   ResourceMark rm;
   log_error(cds)("Unable to resolve %s class from CDS archive: %s", type, expected->external_name());
   log_error(cds)("Expected: " INTPTR_FORMAT ", actual: " INTPTR_FORMAT, p2i(expected), p2i(actual));

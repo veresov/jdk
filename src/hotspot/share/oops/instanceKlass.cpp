@@ -2785,7 +2785,7 @@ void InstanceKlass::restore_unshareable_info(ClassLoaderData* loader_data, Handl
      MutexLocker ml(MultiArray_lock);
     // Array classes have null protection domain.
     // --> see ArrayKlass::complete_create_array_klass()
-    array_klasses()->restore_unshareable_info(ClassLoaderData::the_null_class_loader_data(), Handle(), CHECK);
+    array_klasses()->restore_unshareable_info(loader_data, Handle(), CHECK);
   }
 
   // Initialize @ValueBased class annotation

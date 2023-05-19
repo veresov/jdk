@@ -1253,7 +1253,9 @@ bool Arguments::add_property(const char* prop, PropertyWriteable writeable, Prop
   }
 
 #if INCLUDE_CDS
-  if (is_internal_module_property(key) ||
+  /*if (strcmp(key, "jdk.module.addmods.0") == 0 && strcmp(value, "jdk.internal.vm.ci") == 0) {
+    // ...
+  } else */ if (is_internal_module_property(key) ||
       strcmp(key, "jdk.module.main") == 0) {
     MetaspaceShared::disable_optimized_module_handling();
     log_info(cds)("optimized module handling: disabled due to incompatible property: %s=%s", key, value);
@@ -1881,11 +1883,17 @@ bool Arguments::check_vm_args_consistency() {
   if (status && EnableJVMCI) {
     PropertyList_unique_add(&_system_properties, "jdk.internal.vm.ci.enabled", "true",
         AddProperty, UnwriteableProperty, InternalProperty);
+    /*
+     * Ioi - 2023/05/19. There's no need for this with my patch-jdk.sh script, which adds
+     * jdk.internal.vm.ci as one of the default modules. Using -Djdk.module.addmods will
+     * cause the full module graph to be disabled and slow down performance.
+     *
     if (ClassLoader::is_module_observable("jdk.internal.vm.ci")) {
       if (!create_numbered_module_property("jdk.module.addmods", "jdk.internal.vm.ci", addmods_count++)) {
         return false;
       }
     }
+    */
   }
 #endif
 

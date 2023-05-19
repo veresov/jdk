@@ -30,6 +30,7 @@
 #include "cds/cppVtables.hpp"
 #include "cds/dumpAllocStats.hpp"
 #include "cds/heapShared.hpp"
+#include "cds/lambdaFormInvokers.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "classfile/classLoaderDataShared.hpp"
 #include "classfile/symbolTable.hpp"
@@ -434,6 +435,10 @@ bool ArchiveBuilder::gather_one_source_obj(MetaspaceClosure::Ref* enclosing_ref,
   if (src_obj == nullptr) {
     return false;
   }
+  if (LambdaFormInvokers::has_been_regenerated(src_obj)) {
+    // No need to copy it. We will later relocate it to point to the regenerated klass/method.
+    return false;
+  }
   ref->set_keep_after_pushing();
   remember_embedded_pointer_in_gathered_obj(enclosing_ref, ref);
 
@@ -446,6 +451,14 @@ bool ArchiveBuilder::gather_one_source_obj(MetaspaceClosure::Ref* enclosing_ref,
       log_info(cds, hashtables)("Expanded _src_obj_table table to %d", _src_obj_table.table_size());
     }
   }
+
+#ifdef ASSERT
+  if (ref->msotype() == MetaspaceObj::MethodType) {
+    Method* m = (Method*)ref->obj();
+    assert(!LambdaFormInvokers::has_been_regenerated((address)m->method_holder()),
+           "Should not archive to methods in a class that has been regenerated");
+  }
+#endif
 
   assert(p->read_only() == src_info.read_only(), "must be");
 
@@ -460,6 +473,17 @@ bool ArchiveBuilder::gather_one_source_obj(MetaspaceClosure::Ref* enclosing_ref,
   } else {
     return false;
   }
+}
+
+void ArchiveBuilder::record_regenerated_object(address orig_obj, address regen_obj) {
+  // Record the fact that orig_obj has been replaced by regen_obj. All calls to get_buffered_addr(orig_obj)
+  // should return the same value as get_buffered_addr(regen_obj).
+  SourceObjInfo* p = _src_obj_table.get(regen_obj);
+  assert(p != nullptr, "regenerated object should always be dumped");
+  SourceObjInfo src_info(orig_obj, p->buffered_addr());
+  bool created;
+  _src_obj_table.put_if_absent(orig_obj, src_info, &created);
+  assert(created, "must be");
 }
 
 void ArchiveBuilder::remember_embedded_pointer_in_gathered_obj(MetaspaceClosure::Ref* enclosing_ref,
@@ -588,6 +612,8 @@ void ArchiveBuilder::dump_ro_metadata() {
     alloc_stats()->record_modules(ro_region()->top() - start, /*read_only*/true);
   }
 #endif
+
+  LambdaFormInvokers::record_regenerated_objects();
 }
 
 void ArchiveBuilder::make_shallow_copies(DumpRegion *dump_region,
@@ -658,7 +684,8 @@ void ArchiveBuilder::write_pointer_in_buffer(address* ptr_location, address src_
 
 address ArchiveBuilder::get_buffered_addr(address src_addr) const {
   SourceObjInfo* p = _src_obj_table.get(src_addr);
-  assert(p != nullptr, "must be");
+  assert(p != nullptr, "src_addr " INTPTR_FORMAT " is used but has not been archived",
+         p2i(src_addr));
 
   return p->buffered_addr();
 }

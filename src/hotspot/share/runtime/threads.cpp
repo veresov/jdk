@@ -321,6 +321,14 @@ static void call_initPhase2(TRAPS) {
 
   // Preload all boot classes outside of java.base module
   ClassPrelinker::runtime_preload(THREAD, Handle());
+  if (MetaspaceShared::use_full_module_graph() && UseSharedSpaces) {
+    // SystemDictionary::java_{platform,system}_loader are already assigned. We can spin
+    // this up a little quicker.
+    assert(SystemDictionary::java_platform_loader() != nullptr, "must be");
+    assert(SystemDictionary::java_system_loader() != nullptr,   "must be");
+    ClassPrelinker::runtime_preload(THREAD, Handle(THREAD, SystemDictionary::java_platform_loader()));
+    ClassPrelinker::runtime_preload(THREAD, Handle(THREAD, SystemDictionary::java_system_loader()));
+  }
 }
 
 // Phase 3. final setup - set security manager, system class loader and TCCL

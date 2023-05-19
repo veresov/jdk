@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "cds/classPrelinker.hpp"
 #include "code/scopeDesc.hpp"
 #include "compiler/compilationPolicy.hpp"
 #include "compiler/compileBroker.hpp"
@@ -833,6 +834,13 @@ nmethod* CompilationPolicy::event(const methodHandle& method, const methodHandle
     print_event(bci == InvocationEntryBci ? CALL : LOOP, method(), inlinee(), bci, comp_level);
   }
 
+#if INCLUDE_JVMCI
+  if (EnableJVMCI && UseJVMCICompiler &&
+      comp_level == CompLevel_full_optimization && !ClassPrelinker::class_preloading_finished()) {
+    return nullptr;
+  }
+#endif
+
   if (comp_level == CompLevel_none &&
       JvmtiExport::can_post_interpreter_events() &&
       THREAD->is_interp_only_mode()) {
@@ -1294,6 +1302,12 @@ CompLevel CompilationPolicy::call_event(const methodHandle& method, CompLevel cu
   } else {
     next_level = MAX2(osr_level, next_level);
   }
+#if INCLUDE_JVMCI
+  if (EnableJVMCI && UseJVMCICompiler &&
+      next_level == CompLevel_full_optimization && !ClassPrelinker::class_preloading_finished()) {
+    next_level = cur_level;
+  }
+#endif
   return next_level;
 }
 

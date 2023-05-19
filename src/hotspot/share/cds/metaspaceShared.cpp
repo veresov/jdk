@@ -607,15 +607,11 @@ bool MetaspaceShared::link_class_for_cds(InstanceKlass* ik, TRAPS) {
 
 void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
   ClassPrelinker::initialize();
-  if (!jcmd_request && DumpSharedSpaces) {
-    // We want to regenerate the holder classes so that the AOT (running
-    // in dynamic dump) will see fewer generated LambdaForm classes.
-    //
-    // There's a bug where holder regenration doesn't work with
-    // TrainingData::dump_training_data(), which have pointers of
-    // the original classes. Training data are currently only dump
-    // for the dynamic archive, so we enable the regeneration
-    // only for the static archive.
+  if (!jcmd_request && !DynamicDumpSharedSpaces) {
+    // If we have regenerated invoker classes in the dynamic archive,
+    // they will conflict with the resolved CONSTANT_Klass references that are stored
+    // in the static archive. This is not easy to handle. Let's disable
+    // it for dynamic archive for now.
     LambdaFormInvokers::regenerate_holder_classes(CHECK);
   }
 

@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "cds/classPrelinker.hpp"
 #include "ci/ciCallProfile.hpp"
 #include "ci/ciExceptionHandler.hpp"
 #include "ci/ciInstanceKlass.hpp"
@@ -1085,6 +1086,13 @@ bool ciMethod::can_be_compiled() {
   if (is_c1_compile(env->comp_level())) {
     return _is_c1_compilable;
   }
+
+#if INCLUDE_JVMCI
+  if (EnableJVMCI && UseJVMCICompiler &&
+      env->comp_level() == CompLevel_full_optimization && !ClassPrelinker::class_preloading_finished()) {
+    return false;
+  }
+#endif
   return _is_c2_compilable;
 }
 
