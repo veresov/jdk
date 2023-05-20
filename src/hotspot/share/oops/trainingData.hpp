@@ -346,6 +346,8 @@ public:
   static void write_training_data_dictionary(TrainingDataDictionary* dictionary);
   static size_t estimate_size_for_archive();
 
+  virtual void cleanup() = 0;
+
   static TrainingData* lookup_archived_training_data(const Key* k);
 };
 
@@ -549,6 +551,8 @@ class KlassTrainingData : public TrainingData {
   // safe to call this inside the initializing thread.
   bool record_static_field_init(fieldDescriptor* fd, const char* reason);
 
+  void cleanup();
+
   void print_on(outputStream* st, bool name_only) const;
   virtual void print_on(outputStream* st) const { print_on(st, false); }
   virtual void print_value_on(outputStream* st) const { print_on(st, true); }
@@ -707,6 +711,8 @@ public:
     return align_metadata_size(align_up(sizeof(CompileTrainingData), BytesPerWord)/BytesPerWord);
   }
 
+  void cleanup();
+
   static CompileTrainingData* allocate(MethodTrainingData* this_method,
                                        MethodTrainingData* top_method,
                                        int level, int compile_id);
@@ -714,6 +720,7 @@ public:
 
 // Record information about a method at the time compilation is requested.
 class MethodTrainingData : public TrainingData {
+  friend TrainingData;
   friend CompileTrainingData;
 
   // Used by CDS. These classes need to access the private default constructor.
@@ -809,6 +816,8 @@ class MethodTrainingData : public TrainingData {
   virtual void print_value_on(outputStream* st) const { print_on(st, true); }
 
   virtual bool dump(TrainingDataDumper& tdd, DumpPhase dp);
+
+  void cleanup();
 
   template<typename FN>
   void iterate_all_compiles(FN fn) const { // lambda enabled API

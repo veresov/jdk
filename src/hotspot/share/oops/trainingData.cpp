@@ -1399,7 +1399,49 @@ void TrainingData::dump_training_data() {
 }
 
 void TrainingData::cleanup_training_data() {
-  // FIXME: anything to do here?
+  if (_dumptime_training_data_dictionary != nullptr) {
+    for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
+      TrainingData* td = _dumptime_training_data_dictionary->at(i).training_data();
+      td->cleanup();
+    }
+  }
+}
+
+void KlassTrainingData::cleanup() {
+  bool is_excluded = SystemDictionaryShared::check_for_exclusion(holder(), nullptr);
+  if (is_excluded) {
+    ResourceMark rm;
+    log_debug(cds)("Cleanup KTD %s", name()->as_klass_external_name());
+    _holder = nullptr; // reset
+  }
+  for (int i = 0; i < _comp_deps.length(); i++) {
+    _comp_deps.at(i)->cleanup();
+  }
+}
+
+void MethodTrainingData::cleanup() {
+  if (has_holder()) {
+    bool is_excluded = SystemDictionaryShared::check_for_exclusion(holder()->method_holder(), nullptr);
+    if (is_excluded) {
+      log_debug(cds)("Cleanup MTD %s::%s", name()->as_klass_external_name(), signature()->as_utf8());
+      _holder = nullptr;
+    }
+  }
+  for (CompileTrainingData* ctd = _compile; ctd != nullptr; ctd = ctd->next()) {
+    if (ctd->method() != this) {
+      ctd->method()->cleanup();
+    }
+    if (ctd->is_inlined() && ctd->top_method() != this) {
+      ctd->top_method()->cleanup();
+    }
+  }
+}
+
+void CompileTrainingData::cleanup() {
+  method()->cleanup();
+  if (is_inlined()) {
+    top_method()->cleanup();
+  }
 }
 
 void TrainingData::serialize_training_data(SerializeClosure* soc) {
@@ -1425,6 +1467,7 @@ void TrainingData::adjust_training_data_dictionary() {
 void TrainingData::print_archived_training_data_on(outputStream* st) {
   st->print_cr("Archived TrainingData Dictionary");
   TrainingDataPrinter tdp(st);
+  TrainingDataLocker::initialize();
   _archived_training_data_dictionary.iterate(&tdp);
 }
 
@@ -1625,6 +1668,11 @@ void TrainingDataPrinter::do_value(const RunTimeClassInfo* record) {
                SystemDictionaryShared::class_loader_name_for_shared(record->_klass));
     ktd->print_on(_st);
     _st->cr();
+    ktd->iterate_all_comp_deps([&](CompileTrainingData* ctd) {
+      ResourceMark rm;
+      _st->print_raw("    ");
+      ctd->print_on(_st);
+    });
   }
 }
 
@@ -1654,9 +1702,29 @@ void TrainingDataPrinter::do_value(TrainingData* td) {
   TrainingData::Key key(td->key()->name1(), td->key()->name2(), td->key()->holder());
   assert(td == TrainingData::lookup_archived_training_data(&key), "");
 
-  _st->print("%4d: %p ", _index++, td);
+  const char* type = (td->is_KlassTrainingData()   ? "K" :
+                      td->is_MethodTrainingData()  ? "M" :
+                      td->is_CompileTrainingData() ? "C" : "?");
+  _st->print("%4d: %p %s ", _index++, td, type);
   td->print_on(_st);
   _st->cr();
+  if (td->is_KlassTrainingData()) {
+    td->as_KlassTrainingData()->iterate_all_comp_deps([&](CompileTrainingData* ctd) {
+      ResourceMark rm;
+      _st->print_raw("  C ");
+      ctd->print_on(_st);
+      _st->cr();
+    });
+  } else if (td->is_MethodTrainingData()) {
+    td->as_MethodTrainingData()->iterate_all_compiles([&](CompileTrainingData* ctd) {
+      ResourceMark rm;
+      _st->print_raw("  C ");
+      ctd->print_on(_st);
+      _st->cr();
+    });
+  } else if (td->is_CompileTrainingData()) {
+    // ?
+  }
 }
 
 
