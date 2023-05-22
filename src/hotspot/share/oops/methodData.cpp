@@ -317,8 +317,13 @@ void TypeStackSlotEntries::clean_weak_klass_links(bool always_clean) {
   for (int i = 0; i < _number_of_entries; i++) {
     intptr_t p = type(i);
     Klass* k = (Klass*)klass_part(p);
-    if (k != nullptr && (always_clean || !k->is_loader_alive())) {
-      set_type(i, with_status((Klass*)nullptr, p));
+    if (k != nullptr) {
+      if (!always_clean && k->is_instance_klass() && InstanceKlass::cast(k)->is_not_initialized()) {
+        continue; // skip not-yet-initialized classes // TODO: maybe clear the slot instead?
+      }
+      if (always_clean || !k->is_loader_alive()) {
+        set_type(i, with_status((Klass*)nullptr, p));
+      }
     }
   }
 }
@@ -335,8 +340,13 @@ void TypeStackSlotEntries::metaspace_pointers_do(MetaspaceClosure* it) {
 void ReturnTypeEntry::clean_weak_klass_links(bool always_clean) {
   intptr_t p = type();
   Klass* k = (Klass*)klass_part(p);
-  if (k != nullptr && (always_clean || !k->is_loader_alive())) {
-    set_type(with_status((Klass*)nullptr, p));
+  if (k != nullptr) {
+    if (!always_clean && k->is_instance_klass() && InstanceKlass::cast(k)->is_not_initialized()) {
+      return; // skip not-yet-initialized classes // TODO: maybe clear the slot instead?
+    }
+    if (always_clean || !k->is_loader_alive()) {
+      set_type(with_status((Klass*)nullptr, p));
+    }
   }
 }
 
@@ -422,8 +432,13 @@ void VirtualCallTypeData::print_data_on(outputStream* st, const char* extra) con
 void ReceiverTypeData::clean_weak_klass_links(bool always_clean) {
     for (uint row = 0; row < row_limit(); row++) {
     Klass* p = receiver(row);
-    if (p != nullptr && (always_clean || !p->is_loader_alive())) {
-      clear_row(row);
+    if (p != nullptr) {
+      if (!always_clean && p->is_instance_klass() && InstanceKlass::cast(p)->is_not_initialized()) {
+        continue; // skip not-yet-initialized classes // TODO: maybe clear the slot instead?
+      }
+      if (always_clean || !p->is_loader_alive()) {
+        clear_row(row);
+      }
     }
   }
 }
@@ -1769,6 +1784,9 @@ class CleanExtraDataKlassClosure : public CleanExtraDataClosure {
 public:
   CleanExtraDataKlassClosure(bool always_clean) : _always_clean(always_clean) {}
   bool is_live(Method* m) {
+    if (!_always_clean && m->method_holder()->is_instance_klass() && InstanceKlass::cast(m->method_holder())->is_not_initialized()) {
+      return true; // TODO: treat as unloaded instead?
+    }
     return !(_always_clean) && m->method_holder()->is_loader_alive();
   }
 };
