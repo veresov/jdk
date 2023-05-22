@@ -617,7 +617,7 @@ bool MethodTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
       // FIXME: we might need to clone these two things
       _final_counters = holder()->method_counters();
       _final_profile  = holder()->method_data();
-      assert(_final_profile->method() == holder(), "");
+      assert(_final_profile == nullptr || _final_profile->method() == holder(), "");
     }
     if (_compile != nullptr) {
       // Just prepare the first one, or prepare them all?  This needs
