@@ -2633,8 +2633,6 @@ void InstanceKlass::metaspace_pointers_do(MetaspaceClosure* it) {
   it->push(&_nest_members);
   it->push(&_permitted_subclasses);
   it->push(&_record_components);
-
-  it->push(&_training_data);
 }
 
 #if INCLUDE_CDS
@@ -2699,10 +2697,7 @@ void InstanceKlass::remove_unshareable_info() {
   _dep_context_last_cleaned = 0;
   _init_monitor = nullptr;
 
-  if (_training_data != nullptr) {
-    _training_data->remove_unshareable_info();
-    // _training_data = nullptr; // FIXME: link through table
-  }
+  _training_data = nullptr;
 }
 
 void InstanceKlass::remove_java_mirror() {
