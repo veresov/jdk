@@ -595,7 +595,8 @@ void Method::print_invocation_count() {
 // method when requested.
 void Method::build_profiling_method_data(const methodHandle& method, TRAPS) {
   MethodTrainingData* mtd = MethodTrainingData::find(method);
-  if (mtd != nullptr && mtd->final_profile() != nullptr) {
+  if (mtd != nullptr && mtd->has_holder() && mtd->final_profile() != nullptr &&
+      mtd->holder() == method() && mtd->final_profile()->method() == method()) { // FIXME
     Atomic::replace_if_null(&method->_method_data, mtd->final_profile());
     return;
   }

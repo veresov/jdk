@@ -617,6 +617,7 @@ bool MethodTrainingData::dump(TrainingDataDumper& tdd, DumpPhase dp) {
       // FIXME: we might need to clone these two things
       _final_counters = holder()->method_counters();
       _final_profile  = holder()->method_data();
+      assert(_final_profile->method() == holder(), "");
     }
     if (_compile != nullptr) {
       // Just prepare the first one, or prepare them all?  This needs
@@ -1424,6 +1425,10 @@ void MethodTrainingData::cleanup() {
     bool is_excluded = SystemDictionaryShared::check_for_exclusion(holder()->method_holder(), nullptr);
     if (is_excluded) {
       log_debug(cds)("Cleanup MTD %s::%s", name()->as_klass_external_name(), signature()->as_utf8());
+      if (_final_profile != nullptr && _final_profile->method() != _holder) {
+        // FIXME: MDO still points at the stale method; either completely drop the MDO or zero out the link
+        log_warning(cds)("Stale MDO for  %s::%s", name()->as_klass_external_name(), signature()->as_utf8());
+      }
       _holder = nullptr;
     }
   }
