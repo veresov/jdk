@@ -97,9 +97,10 @@ void LambdaFormInvokers::add_regenerated_class(InstanceKlass* orig_klass, Instan
     Method* orig_m = methods->at(i);
     Method* regen_m = regen_klass->find_method(orig_m->name(), orig_m->signature());
     if (regen_m == nullptr) {
-        ResourceMark rm;
-        log_warning(cds, lambda)("Method in original class is missing from regenerated class: " INTPTR_FORMAT " %s",
-                                 p2i(orig_m), orig_m->external_name());
+      // FIXME -- should we always keep all the methods from the original class?
+      ResourceMark rm;
+      log_info(cds, lambda)("Method in original class is missing from regenerated class: " INTPTR_FORMAT " %s",
+                            p2i(orig_m), orig_m->external_name());
     } else {
       _renegerated_objs->put((address)orig_m, (address)regen_m);
     }
