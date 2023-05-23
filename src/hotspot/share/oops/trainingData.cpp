@@ -1450,9 +1450,6 @@ void CompileTrainingData::cleanup() {
 }
 
 void TrainingData::serialize_training_data(SerializeClosure* soc) {
-  if (/*(soc->reading() && !have_data()) ||*/ (soc->writing() && !need_data())) {
-    return;
-  }
   _archived_training_data_dictionary.serialize_header(soc);
 }
 
