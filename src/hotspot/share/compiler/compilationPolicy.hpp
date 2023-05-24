@@ -188,9 +188,13 @@ class CompilationPolicy : AllStatic {
   template<typename Predicate>
   static CompLevel common(const methodHandle& method, CompLevel cur_level, JavaThread* THREAD, bool disable_feedback = false);
   template<typename Predicate>
-  static CompLevel limited_profile(const methodHandle& method, CompLevel cur_level, double scale, bool disable_feedback);
+  static CompLevel transition_from_none(const methodHandle& method, CompLevel cur_level, bool delay_profile, bool disable_feedback);
   template<typename Predicate>
-  static CompLevel full_profile(const methodHandle& method, CompLevel cur_level);
+  static CompLevel transition_from_limited_profile(const methodHandle& method, CompLevel cur_level, bool delay_profile, bool disable_feedback);
+  template<typename Predicate>
+  static CompLevel transition_from_full_profile(const methodHandle& method, CompLevel cur_level);
+  template<typename Predicate>
+  static CompLevel standard_transitions(const methodHandle& method, CompLevel cur_level, bool delay_profile, bool disable_feedback);
   // Transition functions.
   // call_event determines if a method should be compiled at a different
   // level with a regular invocation entry.

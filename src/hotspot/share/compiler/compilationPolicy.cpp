@@ -96,25 +96,34 @@ void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
         mtd->only_inlined()) {
       return;
     }
+    CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
     CompLevel cur_level = static_cast<CompLevel>(m->highest_comp_level());
     CompLevel next_level = cur_level;
+    CompLevel highest_training_level = static_cast<CompLevel>(mtd->highest_level());
+    bool training_has_profile = (mtd->final_profile() != nullptr);
     if (mtd->saw_level(CompLevel_simple)) {
       next_level = CompLevel_simple;
     } else {
       switch(cur_level) {
         default: break;
         case CompLevel_none:
-          if (mtd->highest_level() != CompLevel_none) {
-            next_level = CompLevel_limited_profile;
-            if (SkipTier2IfPossible) {
-              // fall through
+          if (highest_training_level != CompLevel_none) {
+            if (highest_training_level == CompLevel_full_optimization && ctd != nullptr && !training_has_profile) { // had a level 4 compile but don't have and MDO
+              next_level = CompLevel_full_profile;
             } else {
-              break;
+              next_level = CompLevel_limited_profile;
+              if (SkipTier2IfPossible) {
+                // fall through
+              } else {
+                break;
+              }
             }
+          } else {
+            break;
           }
         case CompLevel_limited_profile:
         case CompLevel_full_profile:
-          if (mtd->highest_level() == CompLevel_full_optimization) {
+          if (highest_training_level == CompLevel_full_optimization && training_has_profile) {
             CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
             if (ctd != nullptr && ctd->init_deps_left() == 0) {
               if (m->method_data() == nullptr) {
@@ -1172,70 +1181,83 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
   if (force_comp_at_level_simple(method)) {
     next_level = CompLevel_simple;
   } else {
-    MethodTrainingData* mtd = MethodTrainingData::have_data() ? MethodTrainingData::find(method) : nullptr;
-    if (mtd != nullptr) {
-      CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
-      if (mtd->final_profile() != nullptr && ctd != nullptr) {
-        if (ctd->init_deps_left() == 0) {
-          // Method had been compiled to level 4, had an MDO, all deps are met
-          if (method->method_data() == nullptr) {
-            create_mdo(method, THREAD);
-          }
-          next_level = CompLevel_full_optimization;
-        }
-      }
-      if (cur_level == next_level) {
-        switch(cur_level) {
-          default: break;
-          case CompLevel_none:
-            next_level = CompLevel_limited_profile;
-            break;
-          case CompLevel_limited_profile:
-            next_level = limited_profile<Predicate>(method, cur_level, Tier2DelayFactor, false);
-            break;
-          case CompLevel_full_profile:
-            next_level = full_profile<Predicate>(method, cur_level);
-            break;
-        }
-      }
-    } else if (is_trivial(method)) {
-      next_level = CompilationModeFlag::disable_intermediate() ? CompLevel_full_optimization : CompLevel_simple;
-    } else {
-      switch(cur_level) {
-      default: break;
-      case CompLevel_none:
-        // If we were at full profile level, would we switch to full opt?
-        if (full_profile<Predicate>(method, CompLevel_full_profile) == CompLevel_full_optimization) {
-          next_level = CompLevel_full_optimization;
-        } else if (!CompilationModeFlag::disable_intermediate() && Predicate::apply(method, cur_level, i, b)) {
-          // C1-generated fully profiled code is about 30% slower than the limited profile
-          // code that has only invocation and backedge counters. The observation is that
-          // if C2 queue is large enough we can spend too much time in the fully profiled code
-          // while waiting for C2 to pick the method from the queue. To alleviate this problem
-          // we introduce a feedback on the C2 queue size. If the C2 queue is sufficiently long
-          // we choose to compile a limited profiled version and then recompile with full profiling
-          // when the load on C2 goes down.
-          if (!disable_feedback && CompileBroker::queue_size(CompLevel_full_optimization) > Tier3DelayOn * compiler_count(CompLevel_full_optimization)) {
-            next_level = CompLevel_limited_profile;
+    if (MethodTrainingData::have_data()) {
+      MethodTrainingData* mtd = MethodTrainingData::find(method);
+      if (mtd != nullptr) {
+        CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
+        if (ctd != nullptr) { // had been compiled to level 4 in the training run
+          if (mtd->final_profile() != nullptr) { // have stored profile
+            if (ctd->init_deps_left() == 0) {
+              // Method had been compiled to level 4, had an MDO, all deps are met
+              if (method->method_data() == nullptr) {
+                create_mdo(method, THREAD);
+              }
+              next_level = CompLevel_full_optimization;
+            }
           } else {
             next_level = CompLevel_full_profile;
           }
         }
-        break;
-      case CompLevel_limited_profile:
-        next_level = limited_profile<Predicate>(method, cur_level, 1.0, disable_feedback);
-        break;
-      case CompLevel_full_profile:
-        next_level = full_profile<Predicate>(method, cur_level);
-        break;
       }
+      if (cur_level == next_level) {
+        next_level = standard_transitions<Predicate>(method, cur_level, true, disable_feedback);
+      }
+    } else if (is_trivial(method)) {
+      next_level = CompilationModeFlag::disable_intermediate() ? CompLevel_full_optimization : CompLevel_simple;
+    } else {
+      next_level = standard_transitions<Predicate>(method, cur_level, false, disable_feedback);
     }
   }
   return (next_level != cur_level) ? limit_level(next_level) : next_level;
 }
 
+
 template<typename Predicate>
-CompLevel CompilationPolicy::full_profile(const methodHandle& method, CompLevel cur_level) {
+CompLevel CompilationPolicy::standard_transitions(const methodHandle& method, CompLevel cur_level, bool delay_profile, bool disable_feedback) {
+  CompLevel next_level = cur_level;
+  switch(cur_level) {
+  default: break;
+  case CompLevel_none:
+    next_level = transition_from_none<Predicate>(method, cur_level, delay_profile, disable_feedback);
+    break;
+  case CompLevel_limited_profile:
+    next_level = transition_from_limited_profile<Predicate>(method, cur_level, delay_profile, disable_feedback);
+    break;
+  case CompLevel_full_profile:
+    next_level = transition_from_full_profile<Predicate>(method, cur_level);
+    break;
+  }
+  return next_level;
+}
+
+template<typename Predicate>
+CompLevel CompilationPolicy::transition_from_none(const methodHandle& method, CompLevel cur_level, bool delay_profile, bool disable_feedback) {
+  precond(cur_level == CompLevel_none);
+  CompLevel next_level = cur_level;
+  int i = method->invocation_count();
+  int b = method->backedge_count();
+  // If we were at full profile level, would we switch to full opt?
+  if (transition_from_full_profile<Predicate>(method, CompLevel_full_profile) == CompLevel_full_optimization) {
+    next_level = CompLevel_full_optimization;
+  } else if (!CompilationModeFlag::disable_intermediate() && Predicate::apply(method, cur_level, i, b)) {
+    // C1-generated fully profiled code is about 30% slower than the limited profile
+    // code that has only invocation and backedge counters. The observation is that
+    // if C2 queue is large enough we can spend too much time in the fully profiled code
+    // while waiting for C2 to pick the method from the queue. To alleviate this problem
+    // we introduce a feedback on the C2 queue size. If the C2 queue is sufficiently long
+    // we choose to compile a limited profiled version and then recompile with full profiling
+    // when the load on C2 goes down.
+    if (delay_profile || (!disable_feedback && CompileBroker::queue_size(CompLevel_full_optimization) > Tier3DelayOn * compiler_count(CompLevel_full_optimization))) {
+      next_level = CompLevel_limited_profile;
+    } else {
+      next_level = CompLevel_full_profile;
+    }
+  }
+  return next_level;
+}
+
+template<typename Predicate>
+CompLevel CompilationPolicy::transition_from_full_profile(const methodHandle& method, CompLevel cur_level) {
   precond(cur_level == CompLevel_full_profile);
   CompLevel next_level = cur_level;
   MethodData* mdo = method->method_data();
@@ -1254,8 +1276,9 @@ CompLevel CompilationPolicy::full_profile(const methodHandle& method, CompLevel 
 }
 
 template<typename Predicate>
-CompLevel CompilationPolicy::limited_profile(const methodHandle& method, CompLevel cur_level, double scale, bool disable_feedback) {
+CompLevel CompilationPolicy::transition_from_limited_profile(const methodHandle& method, CompLevel cur_level, bool delay_profile, bool disable_feedback) {
   precond(cur_level == CompLevel_limited_profile);
+  double scale = delay_profile ? Tier2DelayFactor : 1.0;
   CompLevel next_level = cur_level;
   int i = method->invocation_count();
   int b = method->backedge_count();
