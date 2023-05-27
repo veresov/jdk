@@ -646,11 +646,11 @@ class RelocIterator : public StackObj {
   bool   addr_in_const()      const;
 
   address section_start(int n) const {
-    assert(_section_start[n], "must be initialized");
+    assert(_section_start[n], "section %d must be initialized", n);
     return _section_start[n];
   }
   address section_end(int n) const {
-    assert(_section_end[n], "must be initialized");
+    assert(_section_end[n], "section %d must be initialized", n);
     return _section_end[n];
   }
 
@@ -1355,6 +1355,7 @@ class external_word_Relocation : public DataRelocation {
   // in the code stream.  See external_word_Relocation::target().
   void pack_data_to(CodeSection* dest) override;
   void unpack_data() override;
+  short* pack_data_to(short* p); // Pack address into buffer
 
   void fix_relocation_after_move(const CodeBuffer* src, CodeBuffer* dest) override;
   address  target();        // if _target==nullptr, fetch addr from code stream

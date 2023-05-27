@@ -33,6 +33,7 @@ class DirectiveSet;
 class DebugInformationRecorder;
 class JvmtiThreadState;
 class OopIterateClosure;
+class SCAEntry;
 
 // nmethods (native methods) are the compiled code versions of Java methods.
 //
@@ -238,6 +239,8 @@ class nmethod : public CompiledMethod {
   RTMState _rtm_state;
 #endif
 
+  SCAEntry* _sca_entry;
+
   // These are used for compiled synchronized native methods to
   // locate the owner and stack slot for the BasicLock. They are
   // needed because there is no debug information for compiled native
@@ -294,6 +297,7 @@ class nmethod : public CompiledMethod {
           ImplicitExceptionTable* nul_chk_table,
           AbstractCompiler* compiler,
           CompLevel comp_level
+          , SCAEntry* sca_entry
 #if INCLUDE_JVMCI
           , char* speculations = nullptr,
           int speculations_len = 0,
@@ -345,6 +349,7 @@ class nmethod : public CompiledMethod {
                               ImplicitExceptionTable* nul_chk_table,
                               AbstractCompiler* compiler,
                               CompLevel comp_level
+                              , SCAEntry* sca_entry
 #if INCLUDE_JVMCI
                               , char* speculations = nullptr,
                               int speculations_len = 0,

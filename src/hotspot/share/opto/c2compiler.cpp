@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "classfile/vmClasses.hpp"
+#include "code/SCArchive.hpp"
 #include "compiler/compilerDefinitions.inline.hpp"
 #include "runtime/handles.inline.hpp"
 #include "jfr/support/jfrIntrinsics.hpp"
@@ -84,7 +85,11 @@ bool C2Compiler::init_c2_runtime() {
   CompilerThread* thread = CompilerThread::current();
 
   HandleMark handle_mark(thread);
-  return OptoRuntime::generate(thread->env());
+  bool success = OptoRuntime::generate(thread->env());
+  if (success) {
+    SCAFile::init_opto_table();
+  }
+  return success;
 }
 
 void C2Compiler::initialize() {
@@ -106,6 +111,9 @@ void C2Compiler::initialize() {
 void C2Compiler::compile_method(ciEnv* env, ciMethod* target, int entry_bci, bool install_code, DirectiveSet* directive) {
   assert(is_initialized(), "Compiler thread must be initialized");
 
+  if (install_code && SCAFile::load_nmethod(env, target, entry_bci, this, CompLevel_full_optimization)) {
+    return;
+  }
   bool subsume_loads = SubsumeLoads;
   bool do_escape_analysis = DoEscapeAnalysis;
   bool do_iterative_escape_analysis = DoEscapeAnalysis;

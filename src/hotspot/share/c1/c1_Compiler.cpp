@@ -31,6 +31,7 @@
 #include "c1/c1_MacroAssembler.hpp"
 #include "c1/c1_Runtime1.hpp"
 #include "c1/c1_ValueType.hpp"
+#include "code/SCArchive.hpp"
 #include "compiler/compileBroker.hpp"
 #include "interpreter/linkResolver.hpp"
 #include "jfr/support/jfrIntrinsics.hpp"
@@ -50,6 +51,7 @@ Compiler::Compiler() : AbstractCompiler(compiler_c1) {
 void Compiler::init_c1_runtime() {
   BufferBlob* buffer_blob = CompilerThread::current()->get_buffer_blob();
   Runtime1::initialize(buffer_blob);
+  SCAFile::init_c1_table();
   FrameMap::initialize();
   // initialize data structures
   ValueType::initialize();
@@ -245,6 +247,9 @@ bool Compiler::is_intrinsic_supported(const methodHandle& method) {
 void Compiler::compile_method(ciEnv* env, ciMethod* method, int entry_bci, bool install_code, DirectiveSet* directive) {
   BufferBlob* buffer_blob = CompilerThread::current()->get_buffer_blob();
   assert(buffer_blob != nullptr, "Must exist");
+  if (install_code && SCAFile::load_nmethod(env, method, entry_bci, this, CompLevel(env->task()->comp_level()))) {
+    return;
+  }
   // invoke compilation
   {
     // We are nested here because we need for the destructor

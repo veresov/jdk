@@ -31,6 +31,7 @@
 #include "code/nativeInst.hpp"
 #include "code/nmethod.hpp"
 #include "code/scopeDesc.hpp"
+#include "code/SCArchive.hpp"
 #include "compiler/abstractCompiler.hpp"
 #include "compiler/compilationLog.hpp"
 #include "compiler/compileBroker.hpp"
@@ -547,6 +548,7 @@ nmethod* nmethod::new_nmethod(const methodHandle& method,
   ImplicitExceptionTable* nul_chk_table,
   AbstractCompiler* compiler,
   CompLevel comp_level
+  , SCAEntry* sca_entry
 #if INCLUDE_JVMCI
   , char* speculations,
   int speculations_len,
@@ -554,6 +556,14 @@ nmethod* nmethod::new_nmethod(const methodHandle& method,
 #endif
 )
 {
+#ifdef ASSERT
+if (UseNewCode3) {
+  tty->print_cr("== new_nmethod 1");
+  FlagSetting fs(PrintRelocations, true);
+  code_buffer->print();
+  code_buffer->decode();
+}
+#endif
   assert(debug_info->oop_recorder() == code_buffer->oop_recorder(), "shared OR");
   code_buffer->finalize_oop_references(method);
   // create nmethod
@@ -583,6 +593,7 @@ nmethod* nmethod::new_nmethod(const methodHandle& method,
             nul_chk_table,
             compiler,
             comp_level
+            , sca_entry
 #if INCLUDE_JVMCI
             , speculations,
             speculations_len,
@@ -618,6 +629,16 @@ nmethod* nmethod::new_nmethod(const methodHandle& method,
   }
   // Do verification and logging outside CodeCache_lock.
   if (nm != nullptr) {
+
+#ifdef ASSERT
+if (UseNewCode3) {
+  tty->print_cr("== new_nmethod 2");
+  FlagSetting fs(PrintRelocations, true);
+  nm->print();
+  nm->decode(tty);
+}
+#endif
+
     // Safepoints in nmethod::verify aren't allowed because nm hasn't been installed yet.
     DEBUG_ONLY(nm->verify();)
     nm->log_new_nmethod();
@@ -659,6 +680,7 @@ nmethod::nmethod(
     _exception_offset        = 0;
     _orig_pc_offset          = 0;
     _gc_epoch                = CodeCache::gc_epoch();
+    _sca_entry               = nullptr;
     _method_profiling_count  = 0;
 
     _consts_offset           = content_offset()      + code_buffer->total_offset_of(code_buffer->consts());
@@ -776,6 +798,7 @@ nmethod::nmethod(
   ImplicitExceptionTable* nul_chk_table,
   AbstractCompiler* compiler,
   CompLevel comp_level
+  , SCAEntry* sca_entry
 #if INCLUDE_JVMCI
   , char* speculations,
   int speculations_len,
@@ -802,6 +825,7 @@ nmethod::nmethod(
     _comp_level              = comp_level;
     _orig_pc_offset          = orig_pc_offset;
     _gc_epoch                = CodeCache::gc_epoch();
+    _sca_entry               = sca_entry;
     _method_profiling_count  = 0;
 
     // Section offsets
@@ -1393,6 +1417,9 @@ bool nmethod::make_not_entrant() {
     // Remove nmethod from method.
     unlink_from_method();
 
+    // Invalidate shared code
+    SCArchive::invalidate(_sca_entry);
+
   } // leave critical region under CompiledMethod_lock
 
 #if INCLUDE_JVMCI
@@ -1524,6 +1551,9 @@ void nmethod::post_compiled_method(CompileTask* task) {
   task->set_nm_content_size(content_size());
   task->set_nm_insts_size(insts_size());
   task->set_nm_total_size(total_size());
+  if (_sca_entry != nullptr && SCArchive::is_loaded(_sca_entry)) {
+    task->set_sca();
+  }
 
   // JVMTI -- compiled method notification (must be done outside lock)
   post_compiled_method_load_event();
@@ -2946,6 +2976,16 @@ const char* nmethod::reloc_string_for(u_char* begin, u_char* end) {
           st.print("runtime_call");
           CallRelocation* r = (CallRelocation*)iter.reloc();
           address dest = r->destination();
+          if (StubRoutines::contains(dest)) {
+            StubCodeDesc* desc = StubCodeDesc::desc_for(dest);
+            if (desc == nullptr) {
+              desc = StubCodeDesc::desc_for(dest + frame::pc_return_offset);
+            }
+            if (desc != nullptr) {
+              st.print(" Stub::%s", desc->name());
+              return st.as_string();
+            }
+          }
           CodeBlob* cb = CodeCache::find_blob(dest);
           if (cb != nullptr) {
             st.print(" %s", cb->name());

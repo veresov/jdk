@@ -289,9 +289,7 @@ void mutex_init() {
   MUTEX_DEFN(RedefineClasses_lock            , PaddedMonitor, safepoint);
   MUTEX_DEFN(Verify_lock                     , PaddedMutex  , safepoint);
 
-  if (WhiteBoxAPI) {
-    MUTEX_DEFN(Compilation_lock              , PaddedMonitor, nosafepoint);
-  }
+  MUTEX_DEFN(Compilation_lock                , PaddedMonitor, nosafepoint);
 
 #if INCLUDE_JFR
   MUTEX_DEFN(JfrBuffer_lock                  , PaddedMutex  , nosafepoint);

@@ -1066,7 +1066,7 @@ void CodeBuffer::print() {
     return;
   }
 
-  tty->print_cr("CodeBuffer:");
+  tty->print_cr("CodeBuffer:%s", name());
   for (int n = 0; n < (int)SECT_LIMIT; n++) {
     // print each section
     CodeSection* cs = code_section(n);
