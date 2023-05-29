@@ -39,6 +39,7 @@ class ImplicitExceptionTable;
 class OopMapSet;
 class OopRecorder;
 class outputStream;
+class SCAFile;
 class StubCodeGenerator;
 
 template <typename T> class GrowableArray;
@@ -125,25 +126,9 @@ public:
     _decompile    = decomp;
     _not_entrant  = false;
   }
-
-  SCAEntry() {
-    _kind         = None;
-    _id           = 0;
-
-    _offset       = 0;
-    _size         = 0;
-    _name_offset  = 0;
-    _name_size    = 0;
-    _code_offset  = 0;
-    _code_size    = 0;
-    _reloc_offset = 0;
-    _reloc_size   = 0;
-    _num_inlined_bytecodes = 0;
-
-    _comp_level   = 0;
-    _decompile    = 0;
-    _not_entrant  = false;
-  }
+  void* operator new(size_t x, SCAFile* sca);
+  // Delete is a NOP
+  void operator delete( void *ptr ) {}
 
   Kind kind()         const { return _kind; }
   uint id()           const { return _id; }
@@ -276,8 +261,9 @@ private:
 
   SCAEntry* _load_entries;     // Used when reading archive
   uint*     _search_entries;   // sorted by ID table [id, index]
-  GrowableArray<SCAEntry>* _store_entries; // Used when writing archive
+  SCAEntry* _store_entries;    // Used when writing archive
   const char* _C_strings_buf;  // Loaded buffer for _C_strings[] table
+  uint      _store_entries_cnt;
 
   static SCAFile* open_for_read();
   static SCAFile* open_for_write();
@@ -319,7 +305,11 @@ public:
 
   void add_C_string(const char* str);
 
-  SCAEntry* add_entry(SCAEntry entry);
+  SCAEntry* add_entry() {
+    _store_entries_cnt++;
+    _store_entries -= 1;
+    return _store_entries;
+  }
   SCAEntry* find_entry(SCAEntry::Kind kind, uint id, uint comp_level = 0, uint decomp = 0);
   void invalidate(SCAEntry* entry);
 
