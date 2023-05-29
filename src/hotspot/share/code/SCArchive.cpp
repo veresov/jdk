@@ -416,8 +416,8 @@ uint SCAFile::write_bytes(const void* buffer, uint nbytes) {
   return nbytes;
 }
 
-void SCAEntry::print() const {
-  tty->print_cr("kind: %d, id: %d, offset: %d, size %d ", (int)_kind, _id, _offset, _size);
+void SCAEntry::print(outputStream* st) const {
+  st->print_cr(" SCA entry [kind: %d, id: %d, offset: %d, size: %d, comp_level: %d, decompiled: %d, %s]", (int)_kind, _id, _offset, _size, _comp_level, _decompile, (_not_entrant? "not_entrant" : "entrant"));
 }
 
 SCAEntry* SCAFile::add_entry(SCAEntry entry) {
@@ -784,6 +784,8 @@ bool SCAFile::store_stub(StubCodeGenerator* cgen, vmIntrinsicID id, const char* 
 
 Klass* SCAReader::read_klass(const methodHandle& comp_method) {
   uint code_offset = read_position();
+  int not_init = *(int*)addr(code_offset);
+  code_offset += sizeof(int);
   int name_length = *(int*)addr(code_offset);
   code_offset += sizeof(int);
   const char* dest = addr(code_offset);
@@ -807,7 +809,8 @@ Klass* SCAReader::read_klass(const methodHandle& comp_method) {
     assert(!thread->has_pending_exception(), "should not throw");
   }
   if (k != nullptr) {
-   if (k->is_instance_klass() && !InstanceKlass::cast(k)->is_initialized()) {
+    // Allow not initialized klass which was uninitialized during code caching
+    if (k->is_instance_klass() && !InstanceKlass::cast(k)->is_initialized() && (not_init != 1)) {
       set_lookup_failed();
       log_warning(sca)("Lookup failed for klass %s: not initialized", &(dest[0]));
       return nullptr;
@@ -924,6 +927,12 @@ if (UseNewCode) {
   }
   tty->cr();
 }
+  // Record state of instance klass initialization.
+  int not_init = klass->is_instance_klass() && !InstanceKlass::cast(klass)->is_initialized() ? 1 : 0;
+  n = write_bytes(&not_init, sizeof(int));
+  if (n != sizeof(int)) {
+    return false;
+  }
   n = write_bytes(&name_length, sizeof(int));
   if (n != sizeof(int)) {
     return false;
@@ -932,7 +941,7 @@ if (UseNewCode) {
   if (n != (uint)total_length) {
     return false;
   }
-  log_info(sca)("Write klass: %s", dest);
+  log_info(sca)("Write klass: %s%s", dest, (!klass->is_instance_klass() ? "" : (InstanceKlass::cast(klass)->is_initialized() ? " (initialized)" : " (not-initialized)")));
   return true;
 }
 
@@ -1761,6 +1770,22 @@ Metadata* SCAReader::read_metadata(const methodHandle& comp_method) {
     m = (Metadata*)read_klass(comp_method);
   } else if (kind == DataKind::Method) {
     m = (Metadata*)read_method(comp_method);
+  } else if (kind == DataKind::MethodCnts) {
+    kind = *(DataKind*)addr(code_offset);
+    assert(kind == DataKind::Method, "Sanity");
+    code_offset += sizeof(DataKind);
+    set_read_position(code_offset);
+    m = (Metadata*)read_method(comp_method);
+    if (m != nullptr) {
+      Method* method = (Method*)m;
+      m = method->get_method_counters(Thread::current());
+      if (m == nullptr) {
+        set_lookup_failed();
+        log_warning(sca)("Failed to get MethodCounters");
+      } else {
+        log_info(sca)("Read MethodCounters : " INTPTR_FORMAT, p2i(m));
+      }
+    }
   } else {
     set_lookup_failed();
     log_warning(sca)("Unknown metadata's kind: %d", (int)kind);
@@ -1936,6 +1961,16 @@ bool SCAFile::write_metadata(Metadata* m) {
     if (!write_method((Method*)m)) {
       return false;
     }
+  } else if (m->is_methodCounters()) {
+    DataKind kind = DataKind::MethodCnts;
+    n = write_bytes(&kind, sizeof(int));
+    if (n != sizeof(int)) {
+      return false;
+    }
+    if (!write_method(((MethodCounters*)m)->method())) {
+      return false;
+    }
+    log_info(sca)("Write MethodCounters : " INTPTR_FORMAT, p2i(m));
   } else { // Not supported
     fatal("metadata : " INTPTR_FORMAT " unimplemented", p2i(m));
     return false;
@@ -1996,7 +2031,7 @@ bool SCAFile::load_nmethod(ciEnv* env, ciMethod* target, int entry_bci, Abstract
   if (env->task()->has_unsatisfied_deps()) {
     return false;
   }
-  if (compiler->is_c1() && (comp_level == CompLevel_simple)) {
+  if (compiler->is_c1() && (comp_level == CompLevel_simple || comp_level == CompLevel_limited_profile)) {
     // Load tier1 compilations
   } else if (!compiler->is_c2()) {
     return false; // Only C2 now
@@ -2021,7 +2056,7 @@ bool SCAFile::load_nmethod(ciEnv* env, ciMethod* target, int entry_bci, Abstract
 
   SCAEntry* entry = archive->find_entry(SCAEntry::Code, hash, (uint)comp_level, decomp);
   if (entry == nullptr) {
-    log_info(sca, nmethod)("Missing entry for '%s' hash: " UINT32_FORMAT_X_0 ", decomp: %d", target_name, hash, decomp);
+    log_info(sca, nmethod)("Missing entry for '%s' hash: " UINT32_FORMAT_X_0 ", comp_level %d, decomp: %d", target_name, hash, (uint)comp_level, decomp);
     os::free((void*)target_name);
     return false;
   }
@@ -2210,7 +2245,7 @@ SCAEntry* SCAFile::store_nmethod(const methodHandle& method,
   if (entry_bci != InvocationEntryBci) {
     return nullptr; // No OSR
   }
-  if (compiler->is_c1() && (comp_level == CompLevel_simple)) {
+  if (compiler->is_c1() && (comp_level == CompLevel_simple || comp_level == CompLevel_limited_profile)) {
     // Cache tier1 compilations
   } else if (!compiler->is_c2()) {
     return nullptr; // Only C2 now

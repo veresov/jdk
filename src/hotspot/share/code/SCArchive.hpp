@@ -38,6 +38,7 @@ class ExceptionHandlerTable;
 class ImplicitExceptionTable;
 class OopMapSet;
 class OopRecorder;
+class outputStream;
 class StubCodeGenerator;
 
 template <typename T> class GrowableArray;
@@ -165,7 +166,7 @@ public:
   bool not_entrant()  const { return _not_entrant; }
   void set_not_entrant()    { _not_entrant = true; }
   void set_entrant()        { _not_entrant = false; }
-  void print() const;
+  void print(outputStream* st) const;
 };
 
 // Addresses of stubs, blobs and runtime finctions called from compiled code.
@@ -212,7 +213,8 @@ enum class DataKind: int {
   String    = 3,
   Primitive = 4, // primitive Class object
   SysLoader = 5, // java_system_loader
-  PlaLoader = 6  // java_platform_loader
+  PlaLoader = 6, // java_platform_loader
+  MethodCnts= 7
 };
 
 class SCAFile;
@@ -275,7 +277,7 @@ private:
   SCAEntry* _load_entries;     // Used when reading archive
   uint*     _search_entries;   // sorted by ID table [id, index]
   GrowableArray<SCAEntry>* _store_entries; // Used when writing archive
-  const char* _C_strings_buf; // Loaded buffer for _C_strings[] table
+  const char* _C_strings_buf;  // Loaded buffer for _C_strings[] table
 
   static SCAFile* open_for_read();
   static SCAFile* open_for_write();

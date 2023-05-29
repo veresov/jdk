@@ -30,6 +30,7 @@
 #include "memory/resourceArea.hpp"
 
 MethodCounters::MethodCounters(const methodHandle& mh) :
+  _method(mh()),
   _method_training_data(nullptr),
   _prev_time(0),
   _rate(0),
@@ -72,6 +73,7 @@ void MethodCounters::clear_counters() {
 
 void MethodCounters::metaspace_pointers_do(MetaspaceClosure* it) {
   log_trace(cds)("Iter(MethodCounters): %p", this);
+  it->push(&_method);
   it->push(&_method_training_data);
 }
 
