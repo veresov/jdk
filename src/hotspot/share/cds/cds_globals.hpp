@@ -100,6 +100,9 @@
           "Load all shared classes for the boot/platform/app loaders "      \
           "immediately at VM start-up")                                     \
                                                                             \
+  product(bool, ArchiveFieldReferences, true, DIAGNOSTIC,                   \
+          "Archive resolved JVM_CONSTANT_Fieldref in ConstantPool")         \
+                                                                            \
 // end of CDS_FLAGS
 
 DECLARE_FLAGS(CDS_FLAGS)

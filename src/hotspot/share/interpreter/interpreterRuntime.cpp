@@ -655,24 +655,29 @@ JRT_END
 //
 
 void InterpreterRuntime::resolve_get_put(JavaThread* current, Bytecodes::Code bytecode) {
-  // resolve field
-  fieldDescriptor info;
   LastFrameAccessor last_frame(current);
   constantPoolHandle pool(current, last_frame.method()->constants());
   methodHandle m(current, last_frame.method());
+
+  resolve_get_put(bytecode, last_frame.get_index_u2_cpcache(bytecode), m, pool, last_frame.cache_entry(), current);
+}
+
+void InterpreterRuntime::resolve_get_put(Bytecodes::Code bytecode, int raw_index,
+                                         methodHandle& m,
+                                         constantPoolHandle& pool,
+                                         ConstantPoolCacheEntry* cp_cache_entry, TRAPS) {
+  fieldDescriptor info;
   bool is_put    = (bytecode == Bytecodes::_putfield  || bytecode == Bytecodes::_nofast_putfield ||
                     bytecode == Bytecodes::_putstatic);
   bool is_static = (bytecode == Bytecodes::_getstatic || bytecode == Bytecodes::_putstatic);
 
   {
-    JvmtiHideSingleStepping jhss(current);
-    JavaThread* THREAD = current; // For exception macros.
-    LinkResolver::resolve_field_access(info, pool, last_frame.get_index_u2_cpcache(bytecode),
+    JvmtiHideSingleStepping jhss(THREAD);
+    LinkResolver::resolve_field_access(info, pool, raw_index,
                                        m, bytecode, CHECK);
   } // end JvmtiHideSingleStepping
 
   // check if link resolution caused cpCache to be updated
-  ConstantPoolCacheEntry* cp_cache_entry = last_frame.cache_entry();
   if (cp_cache_entry->is_resolved(bytecode)) return;
 
   // compute auxiliary field attributes

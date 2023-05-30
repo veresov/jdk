@@ -25,6 +25,7 @@
 #include "precompiled.hpp"
 #include "cds/cds_globals.hpp"
 #include "cds/classListWriter.hpp"
+#include "cds/lambdaFormInvokers.inline.hpp"
 #include "classfile/classFileStream.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/classLoaderData.hpp"
@@ -127,9 +128,15 @@ void ClassListWriter::write_to_stream(const InstanceKlass* k, outputStream* stre
     }
   }
 
-  // filter out java/lang/invoke/BoundMethodHandle$Species...
-  if (cfs != nullptr && cfs->source() != nullptr && strcmp(cfs->source(), "_ClassSpecializer_generateConcreteSpeciesCode") == 0) {
-    return;
+  if (cfs != nullptr && cfs->source() != nullptr) {
+    if (strcmp(cfs->source(), "_ClassSpecializer_generateConcreteSpeciesCode") == 0) {
+      return;
+    }
+
+    if (strncmp(cfs->source(), "__", 2) == 0) {
+      // generated class: __dynamic_proxy__, __JVM_LookupDefineClass__, etc
+      return;
+    }
   }
 
   {
@@ -220,10 +227,17 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
       ik->is_hidden()) {
     return;
   }
+  if (LambdaFormInvokers::may_be_regenerated_class(ik->name())) {
+    return;
+  }
+
+
   ResourceMark rm;
   GrowableArray<int> list;
 
   ConstantPool* cp = ik->constants();
+  int fmi_cpcache_index = 0; // cpcache index for Fieldref/Methodref/InterfaceMethodref
+
   for (int cp_index = 1; cp_index < cp->length(); cp_index++) { // Index 0 is unused
     switch (cp->tag_at(cp_index).value()) {
     case JVM_CONSTANT_Class:
@@ -233,6 +247,22 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
           list.append(cp_index);
         }
       }
+      break;
+    case JVM_CONSTANT_Fieldref:
+      if (cp->cache() != nullptr) {
+        ConstantPoolCacheEntry* cpce = cp->cache()->entry_at(fmi_cpcache_index);
+        if (cpce->is_resolved(Bytecodes::_getfield) ||
+            cpce->is_resolved(Bytecodes::_putfield)) {
+          list.append(cp_index);
+        }
+      }
+      fmi_cpcache_index++;
+      break;
+    case JVM_CONSTANT_Methodref:
+      fmi_cpcache_index++;
+      break;
+    case JVM_CONSTANT_InterfaceMethodref:
+      fmi_cpcache_index++;
       break;
     }
   }

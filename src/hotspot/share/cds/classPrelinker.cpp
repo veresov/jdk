@@ -186,6 +186,34 @@ bool ClassPrelinker::can_archive_resolved_klass(InstanceKlass* cp_holder, Klass*
   return false;
 }
 
+bool ClassPrelinker::can_archive_resolved_field(ConstantPool* cp, int cp_index) {
+  assert(!is_in_archivebuilder_buffer(cp), "sanity");
+  assert(cp->tag_at(cp_index).is_field(), "must be");
+
+  int klass_cp_index = cp->uncached_klass_ref_index_at(cp_index);
+  if (!cp->tag_at(klass_cp_index).is_klass()) {
+    // Not yet resolved
+    return false;
+  }
+  Klass* k = cp->resolved_klass_at(klass_cp_index);
+  if (!can_archive_resolved_klass(cp->pool_holder(), k)) {
+    // When we access this field at runtime, the target klass may
+    // have a different definition.
+    return false;
+  }
+
+  Symbol* field_name = cp->uncached_name_ref_at(cp_index);
+  Symbol* field_sig = cp->uncached_signature_ref_at(cp_index);
+  fieldDescriptor fd;
+  if (k->find_field(field_name, field_sig, &fd) == NULL || fd.access_flags().is_static()) {
+    // Static field resolution at runtime may trigger initialization, so we can't
+    // archive it.
+    return false;
+  }
+
+  return true;
+}
+
 void ClassPrelinker::dumptime_resolve_constants(InstanceKlass* ik, TRAPS) {
   if (!ik->is_linked()) {
     return;

@@ -117,6 +117,10 @@ public:
   // resolve to the same InstanceKlass* at both dump time and run time.
   static bool can_archive_resolved_klass(ConstantPool* cp, int cp_index);
 
+  // Similar to can_archive_resolved_klass() -- returns true if cp_index is
+  // guaranteed to resolve to the same result both dump time and run time.
+  static bool can_archive_resolved_field(ConstantPool* cp, int cp_index);
+
   static void record_preloaded_klasses(bool is_static_archive);
   static void record_initiated_klasses(bool is_static_archive);
   static void serialize(SerializeClosure* soc, bool is_static_archive);

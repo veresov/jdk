@@ -637,6 +637,22 @@ void ConstantPoolCacheEntry::verify(outputStream* st) const {
   // not implemented yet
 }
 
+#if INCLUDE_CDS
+void ConstantPoolCacheEntry::mark_and_relocate() {
+  assert(is_resolved(Bytecodes::_getfield), "only this is implemented for now");
+  Klass* klass = (Klass*)_f1;
+  assert(klass != NULL && klass->is_klass(), "must be");
+  if (klass->is_shared()) {
+    assert(DynamicDumpSharedSpaces, "A dynamically dumped class refers to a class in the static archive");
+  } else {
+    // Relocate it to point to the buffered klass.
+    Klass* buffered = ArchiveBuilder::get_buffered_klass(klass);
+    _f1 = buffered;
+  }
+  ArchivePtrMarker::mark_pointer((address*)(&_f1));
+}
+#endif
+
 // Implementation of ConstantPoolCache
 
 ConstantPoolCache* ConstantPoolCache::allocate(ClassLoaderData* loader_data,
@@ -694,8 +710,9 @@ void ConstantPoolCache::save_for_archive(TRAPS) {
   }
 }
 
-void ConstantPoolCache::remove_unshareable_info() {
+void ConstantPoolCache::remove_unshareable_info(const GrowableArray<bool>* keep_cpcache) {
   Arguments::assert_is_dumping_archive();
+  assert(keep_cpcache->length() == length(), "sanity");
   // <this> is the copy to be written into the archive. It's in the ArchiveBuilder's "buffer space".
   // However, this->_initial_entries was not copied/relocated by the ArchiveBuilder, so it's
   // still pointing to the array allocated inside save_for_archive().
@@ -704,7 +721,9 @@ void ConstantPoolCache::remove_unshareable_info() {
   for (int i=0; i<length(); i++) {
     // Restore each entry to the initial state -- just after Rewriter::make_constant_pool_cache()
     // has finished.
-    *entry_at(i) = _initial_entries->at(i);
+    if (!keep_cpcache->at(i)) {
+      *entry_at(i) = _initial_entries->at(i);
+    }
   }
   _initial_entries = nullptr;
 

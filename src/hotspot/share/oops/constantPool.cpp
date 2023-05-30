@@ -58,6 +58,7 @@
 #include "oops/typeArrayOop.inline.hpp"
 #include "prims/jvmtiExport.hpp"
 #include "runtime/atomic.hpp"
+//#include "runtime/fieldDescriptor.inline.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/init.hpp"
 #include "runtime/javaCalls.hpp"
@@ -381,7 +382,11 @@ void ConstantPool::remove_unshareable_info() {
     resolved_references() != nullptr ? resolved_references()->length() : 0);
   set_resolved_references(OopHandle());
 
+  ResourceMark rm;
+  GrowableArray<bool> keep_cpcache(cache()->length(), cache()->length(), false);
   bool archived = false;
+  int fmi_cpcache_index = 0; // cpcache index for Fieldref/Methodref/InterfaceMethodref
+
   for (int index = 1; index < length(); index++) { // Index 0 is unused
     switch (tag_at(index).value()) {
     case JVM_CONSTANT_UnresolvedClass:
@@ -404,12 +409,40 @@ void ConstantPool::remove_unshareable_info() {
       archived = maybe_archive_resolved_klass_at(index);
       ArchiveBuilder::alloc_stats()->record_klass_cp_entry(archived);
       break;
+    case JVM_CONSTANT_Fieldref:
+      if (ArchiveFieldReferences) {
+        archived = maybe_archive_resolved_fieldref_at(index, fmi_cpcache_index);
+        ArchiveBuilder::alloc_stats()->record_field_cp_entry(archived);
+      } else {
+        archived = false;
+      }
+      break;
+    case JVM_CONSTANT_Methodref:
+      archived = false;
+      break;
+    case JVM_CONSTANT_InterfaceMethodref:
+      archived = false;
+      break;
+    default:
+      break;
+    }
+
+    // The cpcache indices for the F/M/I entries are allocated sequentially by
+    // Rewriter::compute_index_maps().
+    switch (tag_at(index).value()) {
+    case JVM_CONSTANT_Fieldref:
+    case JVM_CONSTANT_Methodref:
+    case JVM_CONSTANT_InterfaceMethodref:
+      keep_cpcache.at_put(fmi_cpcache_index++, archived);
+      break;
+    default:
+      break;
     }
   }
 
   if (cache() != nullptr) {
     // cache() is null if this class is not yet linked.
-    cache()->remove_unshareable_info();
+    cache()->remove_unshareable_info(&keep_cpcache);
   }
 }
 
@@ -447,6 +480,36 @@ bool ConstantPool::maybe_archive_resolved_klass_at(int cp_index) {
   resolved_klasses()->at_put(resolved_klass_index, nullptr);
   tag_at_put(cp_index, JVM_CONSTANT_UnresolvedClass);
   return false;
+}
+
+bool ConstantPool::maybe_archive_resolved_fieldref_at(int cp_index, int cpc_index) {
+  if (pool_holder()->is_hidden()) { // Not sure how to handle this yet ...
+    return false;
+  }
+
+  ConstantPool* src_cp = ArchiveBuilder::current()->get_source_addr(this);
+  if (!ClassPrelinker::can_archive_resolved_field(src_cp, cp_index)) {
+    return false;
+  }
+
+  ConstantPoolCacheEntry* cpce = cache()->entry_at(cpc_index);
+  if (!cpce->is_resolved(Bytecodes::_getfield)) {
+    // FIXME -- should we automatically marked both getfield/putfield as resolved?
+    return false;
+  }
+
+  cpce->mark_and_relocate();
+  if (log_is_enabled(Debug, cds, resolve)) {
+    ResourceMark rm;
+    int klass_cp_index = uncached_klass_ref_index_at(cp_index);
+    Klass* k = resolved_klass_at(klass_cp_index);
+    Symbol* name = uncached_name_ref_at(cp_index);
+    Symbol* signature = uncached_signature_ref_at(cp_index);
+    log_debug(cds, resolve)("archived field CP entry [%3d]: %s => %s.%s:%s", cp_index,
+                            pool_holder()->external_name(), k->external_name(),
+                            name->as_C_string(), signature->as_C_string());
+  }
+  return true;
 }
 #endif // INCLUDE_CDS
 

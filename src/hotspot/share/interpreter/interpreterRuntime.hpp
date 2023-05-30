@@ -91,6 +91,12 @@ class InterpreterRuntime: AllStatic {
   static void    throw_pending_exception(JavaThread* current);
 
   static void resolve_from_cache(JavaThread* current, Bytecodes::Code bytecode);
+
+  // Used by ClassListParser.
+  static void resolve_get_put(Bytecodes::Code bytecode, int raw_index,
+                              methodHandle& m,
+                              constantPoolHandle& pool,
+                              ConstantPoolCacheEntry* cp_cache_entry, TRAPS);
  private:
   // Statics & fields
   static void resolve_get_put(JavaThread* current, Bytecodes::Code bytecode);

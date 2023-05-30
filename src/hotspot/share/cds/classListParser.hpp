@@ -25,6 +25,7 @@
 #ifndef SHARE_CDS_CLASSLISTPARSER_HPP
 #define SHARE_CDS_CLASSLISTPARSER_HPP
 
+#include "interpreter/bytecodes.hpp"
 #include "utilities/exceptions.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/growableArray.hpp"
@@ -133,6 +134,8 @@ private:
 
   void resolve_indy(JavaThread* current, Symbol* class_name_symbol);
   void resolve_indy_impl(Symbol* class_name_symbol, TRAPS);
+  void maybe_resolve_field(InstanceKlass* ik, Method* m, Bytecodes::Code bc, int which,
+                           GrowableArray<bool>* resolve_field_list, TRAPS);
   bool parse_one_line();
   Klass* load_current_class(Symbol* class_name_symbol, TRAPS);
   void parse_constant_pool_tag();
