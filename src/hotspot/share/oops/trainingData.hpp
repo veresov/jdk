@@ -141,7 +141,7 @@ class TrainingData : public Metadata {
     static void lock() {
       assert(_lock_mode != 0, "Forgot to call TrainingDataLocker::initialize()");
       if (_lock_mode > 0) {
-        TrainingData_lock->lock_without_safepoint_check();
+        TrainingData_lock->lock();
       }
     }
     static void unlock() {
