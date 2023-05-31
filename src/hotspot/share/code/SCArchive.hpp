@@ -42,8 +42,6 @@ class outputStream;
 class SCAFile;
 class StubCodeGenerator;
 
-template <typename T> class GrowableArray;
-
 enum class vmIntrinsicID : int;
 enum CompLevel : signed char;
 
@@ -229,7 +227,7 @@ public:
   Method* read_method(const methodHandle& comp_method);
 
   bool read_code(CodeBuffer* buffer, CodeBuffer* orig_buffer, uint code_offset);
-  bool read_relocations(CodeBuffer* buffer, CodeBuffer* orig_buffer, uint reloc_size, OopRecorder* oop_recorder, ciMethod* target);
+  bool read_relocations(CodeBuffer* buffer, CodeBuffer* orig_buffer, OopRecorder* oop_recorder, ciMethod* target);
   DebugInformationRecorder* read_debug_info(OopRecorder* oop_recorder);
   OopMapSet* read_oop_maps();
   bool read_dependencies(Dependencies* dependencies);
@@ -377,6 +375,8 @@ public:
   static bool allow_const_field(ciConstant& value);
   static void invalidate(SCAEntry* entry);
   static bool is_loaded(SCAEntry* entry);
+  static SCAEntry* find_code_entry(const methodHandle& method, uint comp_level);
+
   static void add_C_string(const char* str);
 };
 

@@ -134,6 +134,7 @@ class CompileTask : public CHeapObj<mtCompiler> {
   bool         is_success() const                { return _is_success; }
   bool         is_sca() const                    { return _is_sca; }
   void         set_sca()                         { _is_sca = true; }
+  void         clear_sca()                       { _is_sca = false; }
   bool         has_unsatisfied_deps() const      { return _has_unsatisfied_deps; }
   DirectiveSet* directive() const                { return _directive; }
   CompileReason compile_reason() const           { return _compile_reason; }

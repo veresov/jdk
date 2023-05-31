@@ -122,6 +122,10 @@ OopMap::OopMap(int data_size) {
   _num_oops = 0;
   _has_derived_oops = false;
   _index = -1;
+#ifdef ASSERT
+  _locs_length = 0;
+  _locs_used   = nullptr;
+#endif
 }
 
 OopMap::OopMap(OopMap::DeepCopyToken, OopMap* source) {
