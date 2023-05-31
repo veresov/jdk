@@ -23,7 +23,6 @@
  */
 
 #include "precompiled.hpp"
-#include "code/SCArchive.hpp"
 #include "compiler/compilationPolicy.hpp"
 #include "compiler/compileTask.hpp"
 #include "compiler/compileLog.hpp"
@@ -36,6 +35,7 @@
 #include "runtime/handles.inline.hpp"
 #include "runtime/jniHandles.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "code/SCArchive.hpp"
 
 CompileTask*  CompileTask::_task_free_list = nullptr;
 

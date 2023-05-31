@@ -1100,10 +1100,10 @@ void ciEnv::register_method(ciMethod* target,
 
       // Encode the dependencies now, so we can check them right away.
       dependencies()->encode_content_bytes();
-
-      // Check for {class loads, evolution, breakpoints, ...} during compilation
-      validate_compile_task_dependencies(target);
     }
+    // Check for {class loads, evolution, breakpoints, ...} during compilation
+    validate_compile_task_dependencies(target);
+
 #if INCLUDE_RTM_OPT
     if (!failing() && (rtm_state != NoRTM) &&
         (method()->method_data() != nullptr) &&

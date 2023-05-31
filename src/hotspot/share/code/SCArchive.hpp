@@ -36,6 +36,7 @@ class Dependencies;
 class ExceptionTable;
 class ExceptionHandlerTable;
 class ImplicitExceptionTable;
+class methodHandle;
 class OopMapSet;
 class OopRecorder;
 class outputStream;
