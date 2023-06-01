@@ -606,6 +606,8 @@ public:
 
   int orig_pc_offset() { return _orig_pc_offset; }
 
+  SCAEntry* sca_entry() const { return _sca_entry; }
+
   // Post successful compilation
   void post_compiled_method(CompileTask* task);
 

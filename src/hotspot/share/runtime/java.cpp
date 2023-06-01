@@ -230,6 +230,9 @@ void print_bytecode_count() {
 
 // General statistics printing (profiling ...)
 void print_statistics() {
+  if (ReplayTraining && PrintTrainingInfo) {
+    TrainingData::print_archived_training_data_on(tty);
+  }
   if (CITime) {
     CompileBroker::print_times();
   }
@@ -342,6 +345,9 @@ void print_statistics() {
 #else // PRODUCT MODE STATISTICS
 
 void print_statistics() {
+  if (ReplayTraining && PrintTrainingInfo) {
+    TrainingData::print_archived_training_data_on(tty);
+  }
 
   if (PrintMethodData) {
     print_method_profiling_data();

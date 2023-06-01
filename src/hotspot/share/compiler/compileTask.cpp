@@ -244,7 +244,7 @@ void CompileTask::print_tty() {
 // ------------------------------------------------------------------
 // CompileTask::print_impl
 void CompileTask::print_impl(outputStream* st, Method* method, int compile_id, int comp_level,
-                             bool is_osr_method, int osr_bci, bool is_blocking,
+                             bool is_osr_method, int osr_bci, bool is_blocking, bool is_sca,
                              const char* compiler_name,
                              const char* msg, bool short_form, bool cr,
                              jlong time_queued, jlong time_started) {
@@ -280,9 +280,10 @@ void CompileTask::print_impl(outputStream* st, Method* method, int compile_id, i
   const char exception_char = has_exception_handler           ? '!' : ' ';
   const char blocking_char  = is_blocking                     ? 'b' : ' ';
   const char native_char    = is_native                       ? 'n' : ' ';
+  const char sca_char       = is_sca                          ? 'A' : ' ';
 
   // print method attributes
-  st->print("%c%c%c%c%c ", compile_type, sync_char, exception_char, blocking_char, native_char);
+  st->print("%c%c%c%c%c%c ", compile_type, sync_char, exception_char, blocking_char, native_char, sca_char);
 
   if (TieredCompilation) {
     if (comp_level != -1)  st->print("%d ", comp_level);
@@ -330,7 +331,7 @@ void CompileTask::print_inline_indent(int inline_level, outputStream* st) {
 // CompileTask::print_compilation
 void CompileTask::print(outputStream* st, const char* msg, bool short_form, bool cr) {
   bool is_osr_method = osr_bci() != InvocationEntryBci;
-  print_impl(st, is_unloaded() ? nullptr : method(), compile_id(), comp_level(), is_osr_method, osr_bci(), is_blocking(),
+  print_impl(st, is_unloaded() ? nullptr : method(), compile_id(), comp_level(), is_osr_method, osr_bci(), is_blocking(), is_sca(),
              compiler()->name(), msg, short_form, cr, _time_queued, _time_started);
 }
 
@@ -495,7 +496,7 @@ void CompileTask::print_ul(const nmethod* nm, const char* msg) {
     print_impl(&ls, nm->method(), nm->compile_id(),
                nm->comp_level(), nm->is_osr_method(),
                nm->is_osr_method() ? nm->osr_entry_bci() : -1,
-               /*is_blocking*/ false,
+               /*is_blocking*/ false, nm->sca_entry() != nullptr,
                nm->compiler_name(),
                msg, /* short form */ true, /* cr */ true);
   }

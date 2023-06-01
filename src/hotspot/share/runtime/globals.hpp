@@ -1733,6 +1733,9 @@ const int ObjectAlignmentInBytes = 8;
   product(bool, ReplayTraining, false,                                      \
           "Read training data, if available, for use in this execution")    \
                                                                             \
+  product(bool, PrintTrainingInfo, false, DIAGNOSTIC,                       \
+          "Print additional information about training")                    \
+                                                                            \
   product(ccstr, TrainingFile, nullptr,                                     \
           "If training record or replay is enabled, store or load VM data " \
           "to or from this file [default: ./hs_training_%p.log] "           \

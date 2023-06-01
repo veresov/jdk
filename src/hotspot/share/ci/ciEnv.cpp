@@ -1188,8 +1188,8 @@ void ciEnv::register_method(ciMethod* target,
         if (lt.is_enabled()) {
           ResourceMark rm;
           char *method_name = method->name_and_sig_as_C_string();
-          lt.print("Installing method (%d) %s ",
-                    task()->comp_level(), method_name);
+          lt.print("Installing method (%d) %s  sca=%u",
+                    task()->comp_level(), method_name, (sca_entry != nullptr ? sca_entry->offset() : 0));
         }
         // Allow the code to be executed
         MutexLocker ml(CompiledMethod_lock, Mutex::_no_safepoint_check_flag);
@@ -1201,8 +1201,8 @@ void ciEnv::register_method(ciMethod* target,
         if (lt.is_enabled()) {
           ResourceMark rm;
           char *method_name = method->name_and_sig_as_C_string();
-          lt.print("Installing osr method (%d) %s @ %d",
-                    task()->comp_level(), method_name, entry_bci);
+          lt.print("Installing osr method (%d) %s @ %d  sca=%u",
+                    task()->comp_level(), method_name, entry_bci, (sca_entry != nullptr ? sca_entry->offset() : 0));
         }
         MutexLocker ml(CompiledMethod_lock, Mutex::_no_safepoint_check_flag);
         if (nm->make_in_use()) {
