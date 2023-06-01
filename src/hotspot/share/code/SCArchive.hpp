@@ -238,6 +238,8 @@ public:
   Metadata* read_metadata(const methodHandle& comp_method);
   bool read_oops(OopRecorder* oop_recorder, ciMethod* target);
   bool read_metadata(OopRecorder* oop_recorder, ciMethod* target);
+
+  void print_on(outputStream* st);
 };
 
 class SCAFile : public CHeapObj<mtCode> {
@@ -358,6 +360,8 @@ public:
                      bool has_unsafe_access,
                      bool has_wide_vectors,
                      bool has_monitors);
+
+  static void print_on(outputStream* st);
 };
 
 class SCArchive {

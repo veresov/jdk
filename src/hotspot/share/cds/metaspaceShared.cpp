@@ -50,6 +50,7 @@
 #include "classfile/vmClasses.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "code/codeCache.hpp"
+#include "code/SCArchive.hpp"
 #include "gc/shared/gcVMOperations.hpp"
 #include "interpreter/bytecodeStream.hpp"
 #include "interpreter/bytecodes.hpp"
@@ -1497,6 +1498,11 @@ void MetaspaceShared::initialize_shared_spaces() {
       SystemDictionaryShared::print_shared_archive(tty, false/*dynamic*/);
     }
     TrainingData::print_archived_training_data_on(tty);
+
+    if (LoadSharedCode) {
+      tty->print_cr("\n\nShared Code Archive: %s", SharedCodeArchive);
+      SCAFile::print_on(tty);
+    }
 
     // collect shared symbols and strings
     CountSharedSymbols cl;

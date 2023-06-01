@@ -2448,6 +2448,42 @@ if (UseNewCode) {
   return entry;
 }
 
+void SCAFile::print_on(outputStream* st) {
+  SCAFile* archive = open_for_read();
+  if (archive != nullptr) {
+    ReadingMark rdmk;
+
+    uint count = archive->_load_header->entries_count();
+    uint* search_entries = (uint*)archive->addr(archive->_load_header->entries_offset()); // [id, index]
+    SCAEntry* load_entries = (SCAEntry*)(search_entries + 2 * count);
+
+    for (uint i = 0; i < count; i++) {
+      int index = search_entries[2*i + 1];
+      SCAEntry* entry = &(load_entries[index]);
+
+      st->print_cr("%4u: %4u: K%u L%u offset=%u decompile=%u size=%u code_size=%u%s",
+                i, index, entry->kind(), entry->comp_level(), entry->offset(), entry->decompile(), entry->size(), entry->code_size(), entry->not_entrant() ? " not_entrant" : "");
+      st->print_raw("         ");
+      SCAReader reader(archive, entry);
+      reader.print_on(st);
+    }
+  } else {
+    st->print_cr("failed to open SCA at %s", SharedCodeArchive);
+  }
+}
+
+void SCAReader::print_on(outputStream* st) {
+  uint entry_position = _entry->offset();
+  set_read_position(entry_position);
+
+  // Read name
+  uint name_offset = entry_position + _entry->name_offset();
+  uint name_size = _entry->name_size(); // Includes '/0'
+  const char* name = addr(name_offset);
+
+  st->print_cr("  name: %s", name);
+}
+
 #define _extrs_max 80
 #define _stubs_max 120
 #define _blobs_max 80
