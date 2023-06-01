@@ -2178,7 +2178,7 @@ if (UseNewCode) tty->print_cr("=== load_nmethod: 4");
     nul_chk_table.set_size(nul_chk_length);
     nul_chk_table.set_len(nul_chk_length);
     uint nul_chk_size = nul_chk_table.size_in_bytes();
-    copy_bytes(addr(code_offset), (address)nul_chk_table.data(), nul_chk_size);
+    copy_bytes(addr(code_offset), (address)nul_chk_table.data(), nul_chk_size - sizeof(implicit_null_entry));
     code_offset += nul_chk_size;
   }
 
