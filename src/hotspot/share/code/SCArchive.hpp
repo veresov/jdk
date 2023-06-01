@@ -42,6 +42,7 @@ class OopRecorder;
 class outputStream;
 class SCAFile;
 class StubCodeGenerator;
+class RelocIterator;
 
 enum class vmIntrinsicID : int;
 enum CompLevel : signed char;
@@ -176,7 +177,7 @@ public:
   void add_C_string(const char* str);
   int  id_for_C_string(address str);
   address address_for_C_string(int idx);
-  int  id_for_address(address addr);
+  int  id_for_address(address addr, RelocIterator iter, CodeBuffer* buffer);
   address address_for_id(int id);
   bool opto_complete() const { return _opto_complete; }
   bool c1_complete() const { return _c1_complete; }

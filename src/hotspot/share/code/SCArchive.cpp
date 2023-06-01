@@ -59,6 +59,7 @@
 #include "runtime/threadIdentifier.hpp"
 #ifdef COMPILER1
 #include "c1/c1_Runtime1.hpp"
+#include "c1/c1_LIRAssembler.hpp"
 #include "gc/shared/c1/barrierSetC1.hpp"
 #include "gc/g1/c1/g1BarrierSetC1.hpp"
 #endif
@@ -144,7 +145,7 @@ SCAEntry* SCArchive::find_code_entry(const methodHandle& method, uint comp_level
     MethodData* md = method->method_data();
     uint decomp = (md == nullptr) ? 0 : md->decompile_count();
     uint hash = 0;
-    { 
+    {
       ResourceMark rm;
       const char* target_name = method->name_and_sig_as_C_string();
       hash = java_lang_String::hash_code((const jbyte*)target_name, strlen(target_name));
@@ -472,7 +473,7 @@ SCAEntry* SCAFile::find_entry(SCAEntry::Kind kind, uint id, uint comp_level, uin
     uint is = _search_entries[ix];
     if (is == id) {
       int index = _search_entries[ix + 1];
-      SCAEntry* entry = &(_load_entries[index]); 
+      SCAEntry* entry = &(_load_entries[index]);
       if (check_entry(kind, id, comp_level, decomp, entry)) {
         return entry; // Found
       }
@@ -959,7 +960,7 @@ if (UseNewCode) {
 
 bool SCAFile::write_method(Method* method) {
   if (method->is_hidden()) { // Skip such nmethod
-    set_lookup_failed(); 
+    set_lookup_failed();
     return false;
   }
   ResourceMark rm;
@@ -1356,7 +1357,7 @@ bool SCAFile::write_relocations(CodeBuffer* buffer, uint& all_reloc_size) {
         case relocInfo::opt_virtual_call_type:
         case relocInfo::static_call_type: {
           address dest = ((CallRelocation*)iter.reloc())->destination();
-          reloc_data[j] = _table->id_for_address(dest);
+          reloc_data[j] = _table->id_for_address(dest, iter, buffer);
           break;
         }
         case relocInfo::static_stub_type:
@@ -1364,7 +1365,7 @@ bool SCAFile::write_relocations(CodeBuffer* buffer, uint& all_reloc_size) {
         case relocInfo::runtime_call_type: {
           // Record offset of runtime destination
           address dest = ((CallRelocation*)iter.reloc())->destination();
-          reloc_data[j] = _table->id_for_address(dest);
+          reloc_data[j] = _table->id_for_address(dest, iter, buffer);
           break;
         }
         case relocInfo::runtime_call_w_cp_type:
@@ -1373,7 +1374,7 @@ bool SCAFile::write_relocations(CodeBuffer* buffer, uint& all_reloc_size) {
         case relocInfo::external_word_type: {
           // Record offset of runtime target
           address target = ((external_word_Relocation*)iter.reloc())->target();
-          reloc_data[j] = _table->id_for_address(target);
+          reloc_data[j] = _table->id_for_address(target, iter, buffer);
           break;
         }
         case relocInfo::internal_word_type:
@@ -2308,7 +2309,7 @@ if (UseNewCode) {
   tty->print(" domain: ");
   if (domain == nullptr) {
     tty->print("nullptr");
-  } else { 
+  } else {
     domain->print_value_on(tty);
   }
   tty->cr();
@@ -2447,10 +2448,10 @@ if (UseNewCode) {
   return entry;
 }
 
-#define _extrs_max 40
+#define _extrs_max 80
 #define _stubs_max 120
 #define _blobs_max 80
-#define _all_max 240
+#define   _all_max 280
 
 #define SET_ADDRESS(type, addr)                          \
   {                                                      \
@@ -2523,6 +2524,13 @@ void SCAddressTable::init() {
 #endif
 #if defined(AMD64)
   SET_ADDRESS(_extrs, StubRoutines::x86::arrays_hashcode_powers_of_31());
+#endif
+
+#ifdef X86
+  SET_ADDRESS(_extrs, LIR_Assembler::float_signmask_pool);
+  SET_ADDRESS(_extrs, LIR_Assembler::double_signmask_pool);
+  SET_ADDRESS(_extrs, LIR_Assembler::float_signflip_pool);
+  SET_ADDRESS(_extrs, LIR_Assembler::double_signflip_pool);
 #endif
 
   // Stubs
@@ -2656,6 +2664,7 @@ void SCAddressTable::init() {
   SET_ADDRESS(_stubs, StubRoutines::x86::float_sign_flip());
   SET_ADDRESS(_stubs, StubRoutines::x86::double_sign_mask());
   SET_ADDRESS(_stubs, StubRoutines::x86::double_sign_flip());
+  SET_ADDRESS(_stubs, StubRoutines::x86::vector_popcount_lut());
   // The iota indices are ordered by type B/S/I/L/F/D, and the offset between two types is 64.
   // See C2_MacroAssembler::load_iota_indices().
   for (int i = 0; i < 6; i++) {
@@ -2933,7 +2942,7 @@ address SCAddressTable::address_for_id(int idx) {
   return nullptr;
 }
 
-int SCAddressTable::id_for_address(address addr) {
+int SCAddressTable::id_for_address(address addr, RelocIterator reloc, CodeBuffer* buffer) {
   int id = -1;
   if (addr == (address)-1) { // Static call stub has jump to itself
     return id;
@@ -2987,6 +2996,12 @@ int SCAddressTable::id_for_address(address addr) {
           }
           fatal("Address " INTPTR_FORMAT " for runtime target '%s+%d' is missing in SCA table", p2i(addr), func_name, offset);
         } else {
+          os::print_location(tty, p2i(addr), true);
+#ifndef PRODUCT
+          reloc.print_current();
+          buffer->print();
+          buffer->decode();
+#endif // !PRODUCT
           fatal("Address " INTPTR_FORMAT " for <unknown> is missing in SCA table", p2i(addr));
         }
       }
