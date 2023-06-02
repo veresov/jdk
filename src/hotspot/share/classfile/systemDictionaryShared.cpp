@@ -822,10 +822,8 @@ InstanceKlass* SystemDictionaryShared::get_shared_lambda_proxy_class(InstanceKla
   MutexLocker ml(CDSLambda_lock, Mutex::_no_safepoint_check_flag);
   LambdaProxyClassKey key(caller_ik, invoked_name, invoked_type,
                           method_type, member_method, instantiated_method_type);
-  const RunTimeLambdaProxyClassInfo* info = _static_archive.lookup_lambda_proxy_class(&key);
-  if (info == nullptr) {
-    info = _dynamic_archive.lookup_lambda_proxy_class(&key);
-  }
+  guarantee(_static_archive.lookup_lambda_proxy_class(&key) == nullptr, "");
+  const RunTimeLambdaProxyClassInfo* info = _dynamic_archive.lookup_lambda_proxy_class(&key);
   InstanceKlass* proxy_klass = nullptr;
   if (info != nullptr) {
     InstanceKlass* curr_klass = info->proxy_klass_head();
@@ -843,7 +841,7 @@ InstanceKlass* SystemDictionaryShared::get_shared_lambda_proxy_class(InstanceKla
       proxy_klass->clear_lambda_proxy_is_available();
       if (log_is_enabled(Debug, cds)) {
         ResourceMark rm;
-        log_debug(cds)("Loaded lambda proxy: %s ", proxy_klass->external_name());
+        log_debug(cds)("Loaded lambda proxy: " PTR_FORMAT " %s ", p2i(proxy_klass), proxy_klass->external_name());
       }
     } else {
       if (log_is_enabled(Debug, cds)) {

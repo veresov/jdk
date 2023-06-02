@@ -3591,8 +3591,8 @@ JVM_ENTRY(void, JVM_RegisterLambdaProxyClassForArchiving(JNIEnv* env,
                                               jobject dynamicMethodType,
                                               jclass lambdaProxyClass))
 #if INCLUDE_CDS
-  if (!Arguments::is_dumping_archive()) {
-    return;
+  if (!DynamicDumpSharedSpaces) {
+    return; // FIXME: record lambda proxy classes only for dynamic archive to avoid duplication
   }
 
   Klass* caller_k = java_lang_Class::as_Klass(JNIHandles::resolve(caller));
