@@ -322,9 +322,14 @@ void CompileTrainingData::print_on(outputStream* st, bool name_only) const {
   MAYBE_TIME(Q, _qtime);
   MAYBE_TIME(S, _stime);
   MAYBE_TIME(E, _etime);
-  for (int i = 0, len = _init_deps.length(); i < len; i++) {
-    st->print(" dep:");
-    _init_deps.at(i)->print_on(st, true);
+  if (_init_deps.length() > 0) {
+    if (_init_deps_left > 0) {
+      st->print(" udeps=%d", _init_deps_left);
+    }
+    for (int i = 0, len = _init_deps.length(); i < len; i++) {
+      st->print(" dep:");
+      _init_deps.at(i)->print_on(st, true);
+    }
   }
 }
 
@@ -975,10 +980,26 @@ KlassTrainingData* KlassTrainingData::make(InstanceKlass* holder, bool null_if_n
 
 void KlassTrainingData::print_on(outputStream* st, bool name_only) const {
   name()->print_symbol_on(st);
-  if (name_only)  return;
-  if (!has_holder())  st->print("[SYM]");
+  if (has_holder()) {
+    switch (holder()->init_state()) {
+      case InstanceKlass::allocated:            st->print("[A]"); break;
+      case InstanceKlass::loaded:               st->print("[D]"); break;
+      case InstanceKlass::being_linked:         st->print("[l]"); break;
+      case InstanceKlass::linked:               st->print("[L]"); break;
+      case InstanceKlass::being_initialized:    st->print("[i]"); break;
+      case InstanceKlass::fully_initialized:    /*st->print("");*/ break;
+      case InstanceKlass::initialization_error: st->print("[E]"); break;
+      default: fatal("unknown state: %d", holder()->init_state());
+    }
+    if (holder()->is_interface()) {
+      st->print("I");
+    }
+  } else {
+    st->print("[SYM]");
+  }
   if (_do_not_dump)  st->print("[DND]");
-  if (_clinit_sequence_index)  st->print(" IC%d", _clinit_sequence_index);
+  if (name_only)  return;
+  if (_clinit_sequence_index)  st->print("IC%d", _clinit_sequence_index);
   for (int i = 0, len = _init_deps.length(); i < len; i++) {
     st->print(" dep:");
     _init_deps.at(i)->print_on(st, true);

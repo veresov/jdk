@@ -535,6 +535,9 @@ void CodeBuffer::finalize_oop_references(const methodHandle& mh) {
             if (m->is_methodData()) {
               m = ((MethodData*)m)->method();
             }
+            if (m->is_methodCounters()) {
+              m = ((MethodCounters*)m)->method();
+            }
             if (m->is_method()) {
               m = ((Method*)m)->method_holder();
             }
@@ -558,6 +561,9 @@ void CodeBuffer::finalize_oop_references(const methodHandle& mh) {
       if (oop_recorder()->is_real(m)) {
         if (m->is_methodData()) {
           m = ((MethodData*)m)->method();
+        }
+        if (m->is_methodCounters()) {
+          m = ((MethodCounters*)m)->method();
         }
         if (m->is_method()) {
           m = ((Method*)m)->method_holder();
@@ -1066,7 +1072,7 @@ void CodeBuffer::print() {
     return;
   }
 
-  tty->print_cr("CodeBuffer:");
+  tty->print_cr("CodeBuffer:%s", name());
   for (int n = 0; n < (int)SECT_LIMIT; n++) {
     // print each section
     CodeSection* cs = code_section(n);

@@ -3264,7 +3264,7 @@ void PhaseOutput::install() {
   } else {
     install_code(C->method(),
                  C->entry_bci(),
-                 CompileBroker::compiler2(),
+                 CompilerThread::current()->compiler(),
                  C->has_unsafe_access(),
                  SharedRuntime::is_wide_vector(C->max_vector_size()),
                  C->rtm_state());

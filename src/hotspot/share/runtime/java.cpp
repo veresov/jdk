@@ -33,6 +33,7 @@
 #include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "code/codeCache.hpp"
+#include "code/SCArchive.hpp"
 #include "compiler/compileBroker.hpp"
 #include "compiler/compilerOracle.hpp"
 #include "gc/shared/collectedHeap.hpp"
@@ -229,6 +230,9 @@ void print_bytecode_count() {
 
 // General statistics printing (profiling ...)
 void print_statistics() {
+  if (ReplayTraining && PrintTrainingInfo) {
+    TrainingData::print_archived_training_data_on(tty);
+  }
   if (CITime) {
     CompileBroker::print_times();
   }
@@ -341,6 +345,9 @@ void print_statistics() {
 #else // PRODUCT MODE STATISTICS
 
 void print_statistics() {
+  if (ReplayTraining && PrintTrainingInfo) {
+    TrainingData::print_archived_training_data_on(tty);
+  }
 
   if (PrintMethodData) {
     print_method_profiling_data();
@@ -453,6 +460,7 @@ void before_exit(JavaThread* thread, bool halt) {
   assert(!thread->has_pending_exception(), "must be");
 #endif
 
+  SCArchive::close(); // Write final data and close archive
 
   // Actual shutdown logic begins here.
 

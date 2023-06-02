@@ -386,6 +386,23 @@
           "Don't compile methods larger than this if "                      \
           "+DontCompileHugeMethods")                                        \
                                                                             \
+  product(bool, UseC2asC3, false,                                           \
+          "Use C2 as 3rd compiler when JVMCI compiler is used")             \
+                                                                            \
+  product(bool, StoreSharedCode, false,                                     \
+          "Store compiled code")                                            \
+                                                                            \
+  product(bool, LoadSharedCode, false,                                      \
+          "Load compiled code")                                             \
+                                                                            \
+  product(ccstr, SharedCodeArchive, "code.jsa",                             \
+          "File with compiled code")                                        \
+                                                                            \
+  product(uint, ReservedSharedCodeSize, 10*M,                               \
+          "Buffer size in bytes for storing shared code")                   \
+                                                                            \
+  product(bool, VerifySharedCode, false, DIAGNOSTIC,                        \
+          "Load compiled code but not publish")                             \
 
 // end of COMPILER_FLAGS
 
