@@ -676,7 +676,11 @@ public:
     return _init_deps_left;
   }
   void initialize_deps_tracking() {
-    _init_deps_left = _init_deps.length();
+    for (int i = 0; i < _init_deps.length(); i++) {
+      if (_init_deps.at(i)->has_holder()) {
+        _init_deps_left++; // ignore symbolic refs
+      }
+    }
   }
   void record_compilation_queued(CompileTask* task);
   void record_compilation_start(CompileTask* task);

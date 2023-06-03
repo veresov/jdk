@@ -365,18 +365,22 @@ void CompileTrainingData::notice_jit_observation(ciEnv* env, ciBaseObject* what)
   InstanceKlass* compiling_klass = method->method_holder();
   if (what->is_metadata()) {
     ciMetadata* md = what->as_metadata();
-    if (md->is_instance_klass()) {
-      InstanceKlass* ik = md->as_instance_klass()->get_instanceKlass();
-      KlassTrainingData* ktd = ik->training_data_or_null();
-      if (ktd != nullptr) {
-        ktd->record_touch_common(env->log(), "jit", task,
-                                 compiling_klass, nullptr,
-                                 method->name(), method->signature(),
-                                 nullptr);
-        // This JIT task is (probably) requesting that ik be initialized,
-        // so add him to my _init_deps list.
-        TrainingDataLocker l;
-        add_init_dep(ktd);
+    if (md->is_loaded() && md->is_instance_klass()) {
+      ciInstanceKlass* cik = md->as_instance_klass();
+
+      if (cik->is_initialized()) {
+        InstanceKlass* ik = md->as_instance_klass()->get_instanceKlass();
+        KlassTrainingData* ktd = ik->training_data_or_null();
+        if (ktd != nullptr) {
+          ktd->record_touch_common(env->log(), "jit", task,
+                                   compiling_klass, nullptr,
+                                   method->name(), method->signature(),
+                                   nullptr);
+          // This JIT task is (probably) requesting that ik be initialized,
+          // so add him to my _init_deps list.
+          TrainingDataLocker l;
+          add_init_dep(ktd);
+        }
       }
     }
   }
