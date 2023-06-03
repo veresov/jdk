@@ -1194,18 +1194,27 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
     if (MethodTrainingData::have_data()) {
       MethodTrainingData* mtd = MethodTrainingData::find(method);
       if (mtd != nullptr) {
-        CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
-        if (ctd != nullptr) { // had been compiled to level 4 in the training run
-          if (mtd->final_profile() != nullptr) { // have stored profile
-            if (ctd->init_deps_left() == 0) {
-              // Method had been compiled to level 4, had an MDO, all deps are met
-              if (method->method_data() == nullptr) {
-                create_mdo(method, THREAD);
-              }
-              next_level = CompLevel_full_optimization;
-            }
+        if (!mtd->only_inlined() && mtd->highest_level() > CompLevel_none) { // has been a top level compile
+          if (mtd->saw_level(CompLevel_simple)) {
+            next_level = CompLevel_simple;
           } else {
-            next_level = CompLevel_full_profile;
+            next_level = CompLevel_limited_profile;
+          }
+          CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
+          if (ctd != nullptr) { // had been compiled to level 4 in the training run
+            if (mtd->final_profile() != nullptr) { // have stored profile
+              if (ctd->init_deps_left() == 0) {
+                // Method had been compiled to level 4, had an MDO, all deps are met
+                if (cur_level != CompLevel_none || SkipTier2IfPossible) {
+                  if (method->method_data() == nullptr) {
+                    create_mdo(method, THREAD);
+                  }
+                  next_level = CompLevel_full_optimization;
+                }
+              }
+            } else {
+              next_level = CompLevel_full_profile;
+            }
           }
         }
       }
