@@ -1551,7 +1551,13 @@ void nmethod::post_compiled_method(CompileTask* task) {
   task->set_nm_content_size(content_size());
   task->set_nm_insts_size(insts_size());
   task->set_nm_total_size(total_size());
-  if (_sca_entry != nullptr && SCArchive::is_loaded(_sca_entry)) {
+
+  if (task->is_sca() && _sca_entry == nullptr) {
+    task->clear_sca();
+  }
+
+  //guarantee(task->is_sca() == (_sca_entry != nullptr), ""); // FIXME
+  if (!task->is_sca() && _sca_entry != nullptr) {
     task->set_sca();
   }
 
