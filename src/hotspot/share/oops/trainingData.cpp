@@ -304,6 +304,7 @@ CompileTrainingData* CompileTrainingData::make(MethodTrainingData* this_method,
   (*insp) = tdata;
   if (top_method->_last_toplevel_compiles[level - 1] == nullptr || top_method->_last_toplevel_compiles[level - 1]->compile_id() < compile_id) {
     top_method->_last_toplevel_compiles[level - 1] = tdata;
+    top_method->_highest_top_level = MAX2(top_method->_highest_top_level, level);
   }
   return tdata;
 }

@@ -757,6 +757,7 @@ class MethodTrainingData : public TrainingData {
   const Method* _holder;  // can be null
   CompileTrainingData* _compile;   // singly linked list, latest first
   CompileTrainingData* _last_toplevel_compiles[CompLevel_count];
+  int _highest_top_level;
   int _level_mask;  // bit-set of all possible levels
   bool _was_inlined;
   bool _was_toplevel;
@@ -778,6 +779,7 @@ class MethodTrainingData : public TrainingData {
     for (int i = 0; i < CompLevel_count; i++) {
       _last_toplevel_compiles[i] = nullptr;
     }
+    _highest_top_level = CompLevel_none;
     _level_mask = 0;
     _was_inlined = _was_toplevel = false;
   }
@@ -802,6 +804,7 @@ class MethodTrainingData : public TrainingData {
   bool never_inlined()        const { return !_was_inlined; }
   bool saw_level(CompLevel l) const { return (_level_mask & level_mask(l)) != 0; }
   int highest_level()         const { return highest_level(_level_mask); }
+  int highest_top_level()     const { return _highest_top_level; }
   MethodData* final_profile() const { return _final_profile; }
 
   CompileTrainingData* last_toplevel_compile(int level) const {

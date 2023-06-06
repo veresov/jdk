@@ -94,50 +94,9 @@ void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
     if (mtd == nullptr) {
       return;              // there is no training data recorded for m
     }
-    if (!mtd->saw_level(CompLevel_simple) &&
-        !mtd->saw_level(CompLevel_full_optimization) &&
-        mtd->only_inlined()) {
-      return;
-    }
-    CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
     CompLevel cur_level = static_cast<CompLevel>(m->highest_comp_level());
-    CompLevel next_level = cur_level;
-    CompLevel highest_training_level = static_cast<CompLevel>(mtd->highest_level());
-    bool training_has_profile = (mtd->final_profile() != nullptr);
-    if (mtd->saw_level(CompLevel_simple)) {
-      next_level = CompLevel_simple;
-    } else {
-      switch(cur_level) {
-        default: break;
-        case CompLevel_none:
-          if (highest_training_level != CompLevel_none) {
-            if (highest_training_level == CompLevel_full_optimization && ctd != nullptr && !training_has_profile) { // had a level 4 compile but don't have and MDO
-              next_level = CompLevel_full_profile;
-            } else {
-              next_level = CompLevel_limited_profile;
-              if (SkipTier2IfPossible) {
-                // fall through
-              } else {
-                break;
-              }
-            }
-          } else {
-            break;
-          }
-        case CompLevel_limited_profile:
-        case CompLevel_full_profile:
-          if (highest_training_level == CompLevel_full_optimization && training_has_profile) {
-            CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
-            if (ctd != nullptr && ctd->init_deps_left() == 0) {
-              if (m->method_data() == nullptr) {
-                create_mdo(m, THREAD);
-              }
-              next_level = CompLevel_full_optimization;
-            }
-          }
-          break;
-      }
-    }
+    CompLevel next_level = trained_transition(m, cur_level, THREAD);
+
     if (next_level != cur_level && can_be_compiled(m, next_level) && !CompileBroker::compilation_is_in_queue(m)) {
       if (PrintTieredEvents) {
         print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, next_level);
@@ -1145,7 +1104,131 @@ void CompilationPolicy::create_mdo(const methodHandle& mh, JavaThread* THREAD) {
   }
 }
 
+CompLevel CompilationPolicy::trained_transition_from_none(const methodHandle& method, CompLevel cur_level, MethodTrainingData* mtd, JavaThread* THREAD) {
+  precond(mtd != nullptr);
+  precond(cur_level == CompLevel_none);
 
+  if (mtd->only_inlined() && !mtd->saw_level(CompLevel_full_optimization)) {
+    return CompLevel_none;
+  }
+
+  bool training_has_profile = (mtd->final_profile() != nullptr);
+  if (mtd->saw_level(CompLevel_full_optimization) && !training_has_profile) {
+    return CompLevel_full_profile;
+  }
+
+  CompLevel highest_training_level = static_cast<CompLevel>(mtd->highest_top_level());
+  switch (highest_training_level) {
+    case CompLevel_limited_profile:
+    case CompLevel_full_profile:
+      return CompLevel_limited_profile;
+    case CompLevel_simple:
+      return CompLevel_simple;
+    case CompLevel_none:
+      return CompLevel_none;
+    default:
+      break;
+  }
+
+
+  // Now handle the case of level 4.
+  assert(highest_training_level == CompLevel_full_optimization, "Unexpected compilation level: %d", highest_training_level);
+  if (!training_has_profile) {
+    // The method was a part of a level 4 compile, but don't have a stored profile,
+    // we need to profile it.
+    return CompLevel_full_profile;
+  }
+  bool deopt = (static_cast<CompLevel>(method->highest_comp_level()) == CompLevel_full_optimization);
+  // If we deopted, then we reprofile
+  if (deopt) {
+    return CompLevel_full_profile;
+  }
+
+  CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
+  assert(ctd != nullptr, "Should have CTD for CompLevel_full_optimization");
+  // With SkipTier2IfPossible and all deps satisfied, go to level 4 immediately
+  if (SkipTier2IfPossible && ctd->init_deps_left() == 0) {
+    if (method->method_data() == nullptr) {
+      create_mdo(method, THREAD);
+    }
+    return CompLevel_full_optimization;
+  }
+
+  // Otherwise go to level 2
+  return CompLevel_limited_profile;
+}
+
+
+CompLevel CompilationPolicy::trained_transition_from_limited_profile(const methodHandle& method, CompLevel cur_level, MethodTrainingData* mtd, JavaThread* THREAD) {
+  precond(mtd != nullptr);
+  precond(cur_level == CompLevel_limited_profile);
+
+  // One of the main reasons that we can get here is that we're waiting for the stored C2 code to become ready.
+
+  // But first, check if we have a saved profile
+  bool training_has_profile = (mtd->final_profile() != nullptr);
+  if (!training_has_profile) {
+    return CompLevel_full_profile;
+  }
+
+
+  assert(training_has_profile, "Have to have a profile to be here");
+  // Check if the method is ready
+  CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
+  if (ctd != nullptr && ctd->init_deps_left() == 0) {
+    if (method->method_data() == nullptr) {
+      create_mdo(method, THREAD);
+    }
+    return CompLevel_full_optimization;
+  }
+
+  // Otherwise stay at the current level
+  return CompLevel_limited_profile;
+}
+
+
+CompLevel CompilationPolicy::trained_transition_from_full_profile(const methodHandle& method, CompLevel cur_level, MethodTrainingData* mtd, JavaThread* THREAD) {
+  precond(mtd != nullptr);
+  precond(cur_level == CompLevel_full_profile);
+
+  CompLevel highest_training_level = static_cast<CompLevel>(mtd->highest_top_level());
+  // We have method at the full profile level and we also know that it's possibly an important method.
+  if (highest_training_level == CompLevel_full_optimization && !mtd->only_inlined()) {
+    // Check if it is adequately profiled
+    if (is_method_profiled(method)) {
+      return CompLevel_full_optimization;
+    }
+  }
+
+  // Otherwise stay at the current level
+  return CompLevel_full_profile;
+}
+
+CompLevel CompilationPolicy::trained_transition(const methodHandle& method, CompLevel cur_level, JavaThread* THREAD) {
+  precond(MethodTrainingData::have_data());
+
+  MethodTrainingData* mtd = MethodTrainingData::find(method);
+  // If there is no training data recorded for this method, bail out.
+  if (mtd == nullptr) {
+    return cur_level;
+  }
+
+  CompLevel next_level = cur_level;
+  switch(cur_level) {
+    default: break;
+    case CompLevel_none:
+      next_level = trained_transition_from_none(method, cur_level, mtd, THREAD);
+      break;
+    case CompLevel_limited_profile:
+      next_level = trained_transition_from_limited_profile(method, cur_level, mtd, THREAD);
+      break;
+    case CompLevel_full_profile:
+      next_level = trained_transition_from_full_profile(method, cur_level, mtd, THREAD);
+      break;
+  }
+
+  return next_level;
+}
 
 /*
  * Method states:
@@ -1196,39 +1279,16 @@ CompLevel CompilationPolicy::common(const methodHandle& method, CompLevel cur_le
     next_level = CompLevel_simple;
   } else {
     if (MethodTrainingData::have_data()) {
-      MethodTrainingData* mtd = MethodTrainingData::find(method);
-      if (mtd != nullptr) {
-        if (!mtd->only_inlined() && mtd->highest_level() > CompLevel_none) { // has been a top level compile
-          if (mtd->saw_level(CompLevel_simple)) {
-            next_level = CompLevel_simple;
-          } else {
-            next_level = CompLevel_limited_profile;
-          }
-          CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
-          if (ctd != nullptr) { // had been compiled to level 4 in the training run
-            if (mtd->final_profile() != nullptr) { // have stored profile
-              if (ctd->init_deps_left() == 0) {
-                // Method had been compiled to level 4, had an MDO, all deps are met
-                if (cur_level != CompLevel_none || SkipTier2IfPossible) {
-                  if (method->method_data() == nullptr) {
-                    create_mdo(method, THREAD);
-                  }
-                  next_level = CompLevel_full_optimization;
-                }
-              }
-            } else {
-              next_level = CompLevel_full_profile;
-            }
-          }
-        }
-      }
+      next_level = trained_transition(method, cur_level, THREAD);
       if (cur_level == next_level) {
-        next_level = standard_transitions<Predicate>(method, cur_level, true, disable_feedback);
+        // If the trained transition logic returns the same level check the standard transition function
+        // but switch the delay on.
+        next_level = standard_transitions<Predicate>(method, cur_level, /*delay_profile*/ true, disable_feedback);
       }
     } else if (is_trivial(method)) {
       next_level = CompilationModeFlag::disable_intermediate() ? CompLevel_full_optimization : CompLevel_simple;
     } else {
-      next_level = standard_transitions<Predicate>(method, cur_level, false, disable_feedback);
+      next_level = standard_transitions<Predicate>(method, cur_level, /*delay_profile*/ false, disable_feedback);
     }
   }
   return (next_level != cur_level) ? limit_level(next_level) : next_level;

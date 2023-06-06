@@ -195,6 +195,12 @@ class CompilationPolicy : AllStatic {
   static CompLevel transition_from_full_profile(const methodHandle& method, CompLevel cur_level);
   template<typename Predicate>
   static CompLevel standard_transitions(const methodHandle& method, CompLevel cur_level, bool delay_profile, bool disable_feedback);
+
+  static CompLevel trained_transition_from_none(const methodHandle& method, CompLevel cur_level, MethodTrainingData* mtd, JavaThread* THREAD);
+  static CompLevel trained_transition_from_limited_profile(const methodHandle& method, CompLevel cur_level, MethodTrainingData* mtd, JavaThread* THREAD);
+  static CompLevel trained_transition_from_full_profile(const methodHandle& method, CompLevel cur_level, MethodTrainingData* mtd, JavaThread* THREAD);
+  static CompLevel trained_transition(const methodHandle& method, CompLevel cur_level, JavaThread* THREAD);
+
   // Transition functions.
   // call_event determines if a method should be compiled at a different
   // level with a regular invocation entry.
