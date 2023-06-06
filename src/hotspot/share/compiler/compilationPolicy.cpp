@@ -1132,7 +1132,7 @@ void CompilationPolicy::create_mdo(const methodHandle& mh, JavaThread* THREAD) {
   if (mh->method_data() == nullptr) {
     Method::build_profiling_method_data(mh, CHECK_AND_CLEAR);
   }
-  if (ProfileInterpreter) {
+  if (ProfileInterpreter && THREAD->has_last_Java_frame()) {
     MethodData* mdo = mh->method_data();
     if (mdo != nullptr) {
       frame last_frame = THREAD->last_frame();
