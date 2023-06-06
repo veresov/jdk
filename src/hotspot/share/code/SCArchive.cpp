@@ -826,6 +826,8 @@ bool SCAFile::store_stub(StubCodeGenerator* cgen, vmIntrinsicID id, const char* 
 }
 
 Klass* SCAReader::read_klass(const methodHandle& comp_method, bool shared) {
+  CompileTask* task = ciEnv::current()->task();
+
   uint code_offset = read_position();
   int not_init = *(int*)addr(code_offset);
   code_offset += sizeof(int);
@@ -845,10 +847,12 @@ Klass* SCAReader::read_klass(const methodHandle& comp_method, bool shared) {
     // Allow not initialized klass which was uninitialized during code caching
     if (k->is_instance_klass() && !InstanceKlass::cast(k)->is_initialized() && (not_init != 1)) {
       set_lookup_failed();
-      log_warning(sca)("Lookup failed for klass %s: not initialized", k->external_name());
+      log_warning(sca)("%d (L%d): Lookup failed for klass %s: not initialized",
+                       task->compile_id(), task->comp_level(), k->external_name());
       return nullptr;
     }
-    log_info(sca)("Shared klass lookup: %s", k->external_name());
+    log_info(sca)("%d (L%d): Shared klass lookup: %s",
+                  task->compile_id(), task->comp_level(), k->external_name());
     return k;
   }
   int name_length = *(int*)addr(code_offset);
@@ -859,7 +863,6 @@ Klass* SCAReader::read_klass(const methodHandle& comp_method, bool shared) {
   TempNewSymbol klass_sym = SymbolTable::probe(&(dest[0]), name_length);
   if (klass_sym == nullptr) {
     set_lookup_failed();
-    CompileTask* task = ciEnv::current()->task();
     log_warning(sca)("%d (L%d): Probe failed for class %s",
                      task->compile_id(), task->comp_level(), &(dest[0]));
     return nullptr;
@@ -879,14 +882,12 @@ Klass* SCAReader::read_klass(const methodHandle& comp_method, bool shared) {
     // Allow not initialized klass which was uninitialized during code caching
     if (k->is_instance_klass() && !InstanceKlass::cast(k)->is_initialized() && (not_init != 1)) {
       set_lookup_failed();
-      CompileTask* task = ciEnv::current()->task();
       log_warning(sca)("%d (L%d): Lookup failed for klass %s: not initialized", task->compile_id(), task->comp_level(), &(dest[0]));
       return nullptr;
     }
-    log_info(sca)("Klass lookup %s", k->external_name());
+    log_info(sca)("%d (L%d): Klass lookup %s", task->compile_id(), task->comp_level(), k->external_name());
   } else {
     set_lookup_failed();
-    CompileTask* task = ciEnv::current()->task();
     log_info(sca)("%d (L%d): Lookup failed for class %s", task->compile_id(), task->comp_level(), &(dest[0]));
     return nullptr;
   }
@@ -894,6 +895,8 @@ Klass* SCAReader::read_klass(const methodHandle& comp_method, bool shared) {
 }
 
 Method* SCAReader::read_method(const methodHandle& comp_method, bool shared) {
+  CompileTask* task = ciEnv::current()->task();
+
   uint code_offset = read_position();
   if (_archive->use_meta_ptrs() && shared) {
     uint method_offset = *(uint*)addr(code_offset);
@@ -911,14 +914,14 @@ Method* SCAReader::read_method(const methodHandle& comp_method, bool shared) {
     Klass* k = m->method_holder();
     if (!k->is_instance_klass()) {
       set_lookup_failed();
-      log_warning(sca)("Lookup failed for holder %s: not instance klass", k->external_name());
+      log_warning(sca)("%d (L%d): Lookup failed for holder %s: not instance klass", task->compile_id(), task->comp_level(), k->external_name());
       return nullptr;
     } else if (!InstanceKlass::cast(k)->is_linked()) {
       set_lookup_failed();
-      log_warning(sca)("Lookup failed for holder %s: not linked", k->external_name());
+      log_warning(sca)("%d (L%d): Lookup failed for holder %s: not linked", task->compile_id(), task->comp_level(), k->external_name());
       return nullptr;
     }
-    log_info(sca)("Shared method lookup: %s", m->name_and_sig_as_C_string());
+    log_info(sca)("%d (L%d): Shared method lookup: %s", task->compile_id(), task->comp_level(), m->name_and_sig_as_C_string());
     return m;
   }
   int holder_length = *(int*)addr(code_offset);
@@ -934,7 +937,6 @@ Method* SCAReader::read_method(const methodHandle& comp_method, bool shared) {
   TempNewSymbol klass_sym = SymbolTable::probe(&(dest[0]), holder_length);
   if (klass_sym == nullptr) {
     set_lookup_failed();
-    CompileTask* task = ciEnv::current()->task();
     log_warning(sca)("%d (L%d): Probe failed for class %s", task->compile_id(), task->comp_level(), &(dest[0]));
     return nullptr;
   }
@@ -952,21 +954,18 @@ Method* SCAReader::read_method(const methodHandle& comp_method, bool shared) {
   if (k != nullptr) {
     if (!k->is_instance_klass()) {
       set_lookup_failed();
-      CompileTask* task = ciEnv::current()->task();
       log_warning(sca)("%d (L%d): Lookup failed for holder %s: not instance klass",
                        task->compile_id(), task->comp_level(), &(dest[0]));
       return nullptr;
     } else if (!InstanceKlass::cast(k)->is_linked()) {
       set_lookup_failed();
-      CompileTask* task = ciEnv::current()->task();
       log_warning(sca)("%d (L%d): Lookup failed for holder %s: not linked",
                        task->compile_id(), task->comp_level(), &(dest[0]));
       return nullptr;
     }
-    log_info(sca)("Holder lookup: %s", k->external_name());
+    log_info(sca)("%d (L%d): Holder lookup: %s", task->compile_id(), task->comp_level(), k->external_name());
   } else {
     set_lookup_failed();
-    CompileTask* task = ciEnv::current()->task();
     log_info(sca)("%d (L%d): Lookup failed for holder %s",
                   task->compile_id(), task->comp_level(), &(dest[0]));
     return nullptr;
@@ -976,14 +975,12 @@ Method* SCAReader::read_method(const methodHandle& comp_method, bool shared) {
   TempNewSymbol sign_sym = SymbolTable::probe(&(dest[pos]), signat_length);
   if (name_sym == nullptr) {
     set_lookup_failed();
-    CompileTask* task = ciEnv::current()->task();
     log_warning(sca)("%d (L%d): Probe failed for method name %s",
                      task->compile_id(), task->comp_level(), &(dest[holder_length + 1]));
     return nullptr;
   }
   if (sign_sym == nullptr) {
     set_lookup_failed();
-    CompileTask* task = ciEnv::current()->task();
     log_warning(sca)("%d (L%d): Probe failed for method signature %s",
                      task->compile_id(), task->comp_level(), &(dest[pos]));
     return nullptr;
@@ -991,10 +988,9 @@ Method* SCAReader::read_method(const methodHandle& comp_method, bool shared) {
   Method* m = InstanceKlass::cast(k)->find_method(name_sym, sign_sym);
   if (m != nullptr) {
     ResourceMark rm;
-    log_info(sca)("Method lookup: %s", m->name_and_sig_as_C_string());
+    log_info(sca)("%d (L%d): Method lookup: %s", task->compile_id(), task->comp_level(), m->name_and_sig_as_C_string());
   } else {
     set_lookup_failed();
-    CompileTask* task = ciEnv::current()->task();
     log_warning(sca)("%d (L%d): Lookup failed for method %s::%s%s",
                      task->compile_id(), task->comp_level(), &(dest[0]), &(dest[holder_length + 1]), &(dest[pos]));
     return nullptr;
@@ -1003,6 +999,8 @@ Method* SCAReader::read_method(const methodHandle& comp_method, bool shared) {
 }
 
 bool SCAFile::write_klass(Klass* klass) {
+  CompileTask* task = ciEnv::current()->task();
+
   if (klass->is_hidden()) { // Skip such nmethod
     set_lookup_failed();
     return false;
@@ -1025,10 +1023,10 @@ bool SCAFile::write_klass(Klass* klass) {
     if (n != sizeof(uint)) {
       return false;
     }
-    log_info(sca)("Wrote shared klass: %s%s", klass->external_name(), (!klass->is_instance_klass() ? "" : ((not_init == 0) ? " (initialized)" : " (not-initialized)")));
+    log_info(sca)("%d (L%d): Wrote shared klass: %s%s", task->compile_id(), task->comp_level(), klass->external_name(), (!klass->is_instance_klass() ? "" : ((not_init == 0) ? " (initialized)" : " (not-initialized)")));
     return true;
   }
-  log_info(sca,cds)("Not shared klass: %s", klass->external_name());
+  log_info(sca,cds)("%d (L%d): Not shared klass: %s", task->compile_id(), task->comp_level(), klass->external_name());
   DataKind kind = DataKind::Klass;
   uint n = write_bytes(&kind, sizeof(int));
   if (n != sizeof(int)) {
@@ -1070,11 +1068,15 @@ if (UseNewCode) {
   if (n != (uint)total_length) {
     return false;
   }
-  log_info(sca)("Wrote klass: %s%s", dest, (!klass->is_instance_klass() ? "" : ((not_init == 0) ? " (initialized)" : " (not-initialized)")));
+  log_info(sca)("%d (L%d): Wrote klass: %s%s",
+                task->compile_id(), task->comp_level(),
+                dest, (!klass->is_instance_klass() ? "" : ((not_init == 0) ? " (initialized)" : " (not-initialized)")));
   return true;
 }
 
 bool SCAFile::write_method(Method* method) {
+  CompileTask* task = ciEnv::current()->task();
+
   if (method->is_hidden()) { // Skip such nmethod
     set_lookup_failed();
     return false;
@@ -1091,10 +1093,10 @@ bool SCAFile::write_method(Method* method) {
     if (n != sizeof(uint)) {
       return false;
     }
-    log_info(sca)("Wrote shared method: %s", method->name_and_sig_as_C_string());
+    log_info(sca)("%d (L%d): Wrote shared method: %s", task->compile_id(), task->comp_level(), method->name_and_sig_as_C_string());
     return true;
   }
-  log_info(sca,cds)("Not shared method: %s", method->name_and_sig_as_C_string());
+  log_info(sca,cds)("%d (L%d): Not shared method: %s", task->compile_id(), task->comp_level(), method->name_and_sig_as_C_string());
   DataKind kind = DataKind::Method;
   uint n = write_bytes(&kind, sizeof(int));
   if (n != sizeof(int)) {
@@ -1156,7 +1158,7 @@ if (UseNewCode) {
   }
   dest[holder_length] = ' ';
   dest[holder_length + 1 + name_length] = ' ';
-  log_info(sca)("Wrote method: %s", dest);
+  log_info(sca)("%d (L%d): Wrote method: %s", task->compile_id(), task->comp_level(), dest);
   return true;
 }
 
@@ -1378,6 +1380,8 @@ if (UseNewCode3) {
 }
 
 bool SCAReader::compile_blob(CodeBuffer* buffer, int* pc_offset) {
+  CompileTask* task = ciEnv::current()->task();
+
   uint entry_position = _entry->offset();
 
   // Read pc_offset
@@ -1388,10 +1392,10 @@ bool SCAReader::compile_blob(CodeBuffer* buffer, int* pc_offset) {
   uint name_size = _entry->name_size(); // Includes '/0'
   const char* name = addr(name_offset);
 
-  log_info(sca, stubs)("Reading blob '%s' with pc_offset %d from shared code archive '%s'", name, *pc_offset, _archive->archive_path());
+  log_info(sca, stubs)("%d (L%d): Reading blob '%s' with pc_offset %d from shared code archive '%s'",
+                       task->compile_id(), task->comp_level(), name, *pc_offset, _archive->archive_path());
 
   if (strncmp(buffer->name(), name, (name_size - 1)) != 0) {
-    CompileTask* task = ciEnv::current()->task();
     log_warning(sca)("%d (L%d): Saved blob's name '%s' is different from '%s'",
                      task->compile_id(), task->comp_level(), name, buffer->name());
     ((SCAFile*)_archive)->set_failed();
@@ -1414,7 +1418,8 @@ bool SCAReader::compile_blob(CodeBuffer* buffer, int* pc_offset) {
     return false;
   }
 
-  log_info(sca, stubs)("Read blob '%s' from shared code archive '%s'", name, _archive->archive_path());
+  log_info(sca, stubs)("%d (L%d): Read blob '%s' from shared code archive '%s'",
+                       task->compile_id(), task->comp_level(), name, _archive->archive_path());
 #ifdef ASSERT
 if (UseNewCode3) {
   FlagSetting fs(PrintRelocations, true);
@@ -1808,6 +1813,8 @@ bool SCAFile::write_oop_maps(OopMapSet* oop_maps) {
 }
 
 jobject SCAReader::read_oop(JavaThread* thread, const methodHandle& comp_method) {
+  CompileTask* task = ciEnv::current()->task();
+
   uint code_offset = read_position();
   oop obj = nullptr;
   DataKind kind = *(DataKind*)addr(code_offset);
@@ -1830,7 +1837,7 @@ jobject SCAReader::read_oop(JavaThread* thread, const methodHandle& comp_method)
     set_read_position(code_offset);
     BasicType bt = (BasicType)t;
     obj = java_lang_Class::primitive_mirror(bt);
-    log_info(sca)("Read primitive type klass: %s", type2name(bt));
+    log_info(sca)("%d (L%d): Read primitive type klass: %s", task->compile_id(), task->comp_level(), type2name(bt));
   } else if (kind == DataKind::String) {
     code_offset = read_position();
     int length = *(int*)addr(code_offset);
@@ -1841,22 +1848,20 @@ jobject SCAReader::read_oop(JavaThread* thread, const methodHandle& comp_method)
     obj = StringTable::intern(&(dest[0]), thread);
     if (obj == nullptr) {
       set_lookup_failed();
-      CompileTask* task = ciEnv::current()->task();
       log_warning(sca)("%d (L%d): Lookup failed for String %s",
                        task->compile_id(), task->comp_level(), &(dest[0]));
       return nullptr;
     }
     assert(java_lang_String::is_instance(obj), "must be string");
-    log_info(sca)("Read String: %s", dest);
+    log_info(sca)("%d (L%d): Read String: %s", task->compile_id(), task->comp_level(), dest);
   } else if (kind == DataKind::SysLoader) {
     obj = SystemDictionary::java_system_loader();
-    log_info(sca)("Read java_system_loader");
+    log_info(sca)("%d (L%d): Read java_system_loader", task->compile_id(), task->comp_level());
   } else if (kind == DataKind::PlaLoader) {
     obj = SystemDictionary::java_platform_loader();
-    log_info(sca)("Read java_platform_loader");
+    log_info(sca)("%d (L%d): Read java_platform_loader", task->compile_id(), task->comp_level());
   } else {
     set_lookup_failed();
-    CompileTask* task = ciEnv::current()->task();
     log_warning(sca)("%d (L%d): Unknown oop's kind: %d",
                      task->compile_id(), task->comp_level(), (int)kind);
     return nullptr;
@@ -1901,6 +1906,8 @@ if (UseNewCode) {
 }
 
 Metadata* SCAReader::read_metadata(const methodHandle& comp_method) {
+  CompileTask* task = ciEnv::current()->task();
+
   uint code_offset = read_position();
   Metadata* m = nullptr;
   DataKind kind = *(DataKind*)addr(code_offset);
@@ -1926,15 +1933,13 @@ Metadata* SCAReader::read_metadata(const methodHandle& comp_method) {
       m = method->get_method_counters(Thread::current());
       if (m == nullptr) {
         set_lookup_failed();
-        CompileTask* task = ciEnv::current()->task();
         log_warning(sca)("%d (L%d): Failed to get MethodCounters", task->compile_id(), task->comp_level());
       } else {
-        log_info(sca)("Read MethodCounters : " INTPTR_FORMAT, p2i(m));
+        log_info(sca)("%d (L%d): Read MethodCounters : " INTPTR_FORMAT, task->compile_id(), task->comp_level(), p2i(m));
       }
     }
   } else {
     set_lookup_failed();
-    CompileTask* task = ciEnv::current()->task();
     log_warning(sca)("%d (L%d): Unknown metadata's kind: %d", task->compile_id(), task->comp_level(), (int)kind);
   }
   return m;
@@ -1978,6 +1983,8 @@ if (UseNewCode) {
 }
 
 bool SCAFile::write_oop(jobject& jo) {
+  CompileTask* task = ciEnv::current()->task();
+
   DataKind kind;
   uint n = 0;
   oop obj = JNIHandles::resolve(jo);
@@ -2005,7 +2012,7 @@ bool SCAFile::write_oop(jobject& jo) {
       if (n != sizeof(int)) {
         return false;
       }
-      log_info(sca)("Write primitive type klass: %s", type2name((BasicType)bt));
+      log_info(sca)("%d (L%d): Write primitive type klass: %s", task->compile_id(), task->comp_level(), type2name((BasicType)bt));
     } else {
       Klass* klass = java_lang_Class::as_Klass(obj);
       if (!write_klass(klass)) {
@@ -2030,16 +2037,16 @@ bool SCAFile::write_oop(jobject& jo) {
     if (n != (uint)length) {
       return false;
     }
-    log_info(sca)("Write String: %s", string);
+    log_info(sca)("%d (L%d): Write String: %s", task->compile_id(), task->comp_level(), string);
   } else if (java_lang_Module::is_instance(obj)) {
     fatal("Module object unimplemented");
   } else if (java_lang_ClassLoader::is_instance(obj)) {
     if (obj == SystemDictionary::java_system_loader()) {
       kind = DataKind::SysLoader;
-      log_info(sca)("Write ClassLoader: java_system_loader");
+      log_info(sca)("%d (L%d): Write ClassLoader: java_system_loader", task->compile_id(), task->comp_level());
     } else if (obj == SystemDictionary::java_platform_loader()) {
       kind = DataKind::PlaLoader;
-      log_info(sca)("Write ClassLoader: java_platform_loader");
+      log_info(sca)("%d (L%d): Write ClassLoader: java_platform_loader", task->compile_id(), task->comp_level());
     } else {
       fatal("ClassLoader object unimplemented");
       return false;
@@ -2051,7 +2058,6 @@ bool SCAFile::write_oop(jobject& jo) {
   } else {
     // Unhandled oop - bailout
     set_lookup_failed();
-    CompileTask* task = ciEnv::current()->task();
     log_warning(sca, nmethod)("%d (L%d): Unhandled obj: " PTR_FORMAT " : %s",
                               task->compile_id(), task->comp_level(), p2i(obj), obj->klass()->external_name());
     return false;
@@ -2119,7 +2125,8 @@ bool SCAFile::write_metadata(Metadata* m) {
     if (!write_method(((MethodCounters*)m)->method())) {
       return false;
     }
-    log_info(sca)("Write MethodCounters : " INTPTR_FORMAT, p2i(m));
+    CompileTask* task = ciEnv::current()->task();
+    log_info(sca)("%d (L%d): Write MethodCounters : " INTPTR_FORMAT, task->compile_id(), task->comp_level(), p2i(m));
   } else { // Not supported
     fatal("metadata : " INTPTR_FORMAT " unimplemented", p2i(m));
     return false;
@@ -2188,7 +2195,8 @@ bool SCAFile::load_nmethod(ciEnv* env, ciMethod* target, int entry_bci, Abstract
     methodHandle method(THREAD, target->get_Method());
     const char* target_name = method->name_and_sig_as_C_string();
     uint hash = java_lang_String::hash_code((const jbyte*)target_name, strlen(target_name));
-    log_info(sca, nmethod)("Reading nmethod '%s' (comp level: %d, decomp: %d, hash: " UINT32_FORMAT_X_0 ")", target_name, (uint)comp_level, decomp, hash);
+    log_info(sca, nmethod)("%d (L%d): Reading nmethod '%s' (comp level: %d, decomp: %d, hash: " UINT32_FORMAT_X_0 ")",
+                           task->compile_id(), task->comp_level(), target_name, (uint)comp_level, decomp, hash);
   }
   ReadingMark rdmk;
   SCAReader reader(archive, entry);
@@ -2309,7 +2317,8 @@ bool SCAReader::compile(ciEnv* env, ciMethod* target, int entry_bci, AbstractCom
     return false;
   }
 
-  log_info(sca, nmethod)("Read nmethod '%s' from shared code archive '%s'", name, _archive->archive_path());
+  CompileTask* task = ciEnv::current()->task();
+  log_info(sca, nmethod)("%d (L%d): Read nmethod '%s' from shared code archive '%s'", task->compile_id(), task->comp_level(), name, _archive->archive_path());
 #ifdef ASSERT
 if (UseNewCode3) {
   FlagSetting fs(PrintRelocations, true);
@@ -2354,6 +2363,8 @@ SCAEntry* SCAFile::store_nmethod(const methodHandle& method,
                      bool has_unsafe_access,
                      bool has_wide_vectors,
                      bool has_monitors) {
+  CompileTask* task = ciEnv::current()->task();
+
   if (entry_bci != InvocationEntryBci) {
     return nullptr; // No OSR
   }
@@ -2368,11 +2379,11 @@ SCAEntry* SCAFile::store_nmethod(const methodHandle& method,
   }
   if (method->is_hidden()) {
     ResourceMark rm;
-    log_info(sca, nmethod)("Skip hidden method '%s'", method->name_and_sig_as_C_string());
+    log_info(sca, nmethod)("%d (L%d): Skip hidden method '%s'", task->compile_id(), task->comp_level(), method->name_and_sig_as_C_string());
     return nullptr;
   }
   if (buffer->before_expand() != nullptr) {
-    log_info(sca, nmethod)("Skip nmethod with expanded buffer '%s'", method->name_and_sig_as_C_string());
+    log_info(sca, nmethod)("%d (L%d): Skip nmethod with expanded buffer '%s'", task->compile_id(), task->comp_level(), method->name_and_sig_as_C_string());
   }
 #ifdef ASSERT
 if (UseNewCode3) {
@@ -2396,7 +2407,8 @@ if (UseNewCode3) {
   {
     ResourceMark rm;
     const char* name   = method->name_and_sig_as_C_string();
-    log_info(sca, nmethod)("Writing nmethod '%s' (comp level: %d, decomp: %d) to shared code archive '%s'", name, comp_level, decomp, archive->_archive_path);
+    log_info(sca, nmethod)("%d (L%d): Writing nmethod '%s' (comp level: %d, decomp: %d) to shared code archive '%s'",
+                           task->compile_id(), task->comp_level(), name, comp_level, decomp, archive->_archive_path);
 
 if (UseNewCode) {
   Klass* klass = method->method_holder();
@@ -2544,7 +2556,8 @@ if (UseNewCode) {
   {
     ResourceMark rm;
     const char* name   = method->name_and_sig_as_C_string();
-    log_info(sca, nmethod)("Wrote nmethod '%s' to shared code archive '%s'", name, archive->_archive_path);
+    log_info(sca, nmethod)("%d (L%d): Wrote nmethod '%s' to shared code archive '%s'",
+                           task->compile_id(), task->comp_level(), name, archive->_archive_path);
   }
   if (VerifySharedCode) {
     return nullptr;
@@ -2979,7 +2992,8 @@ int SCAFile::store_strings() {
         return -1;
       }
     }
-    log_info(sca, exit)("Wrote %d C strings of total length %d at offset %d to shared code archive '%s'", _C_strings_used, length, offset, _archive_path);
+    log_info(sca, exit)("Wrote %d C strings of total length %d at offset %d to shared code archive '%s'",
+                        _C_strings_used, length, offset, _archive_path);
   }
   return _C_strings_used;
 }
@@ -3132,7 +3146,9 @@ int SCAddressTable::id_for_address(address addr, RelocIterator reloc, CodeBuffer
           if (offset > 0) {
             // Could be address of C string
             uint dist = (uint)pointer_delta(addr, (address)os::init, 1);
-            log_info(sca)("Address " INTPTR_FORMAT " (offset %d) for runtime target '%s' is missing in SCA table", p2i(addr), dist, (const char*)addr);
+            CompileTask* task = ciEnv::current()->task();
+            log_info(sca)("%d (L%d): Address " INTPTR_FORMAT " (offset %d) for runtime target '%s' is missing in SCA table",
+                          task->compile_id(), task->comp_level(), p2i(addr), dist, (const char*)addr);
             assert(dist > (uint)(_all_max + MAX_STR_COUNT), "change encoding of distance");
             return dist;
           }
