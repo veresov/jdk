@@ -226,6 +226,7 @@ class CompileBroker: AllStatic {
 
   static CompilerStatistics _stats_per_level[];
   static CompilerStatistics _sca_stats;
+  static CompilerStatistics _sca_stats_per_level[];
 
   static volatile int _print_compilation_warning;
 

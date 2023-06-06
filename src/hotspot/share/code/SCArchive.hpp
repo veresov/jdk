@@ -57,6 +57,12 @@ private:
   uint _strings_offset;    // offset to recorded C strings
   uint _entries_count;     // number of recorded entries in archive
   uint _entries_offset;    // offset of SCAEntry array describing entries
+  enum Flags {
+    None = 0,
+    MetadataPointers = 1
+  };
+  uint _flags;
+  uint _dummy; // to align
 
 public:
   void init(uint version, uint archive_size, uint strings_count, uint strings_offset, uint entries_count, uint entries_offset) {
@@ -66,6 +72,7 @@ public:
     _strings_offset = strings_offset;
     _entries_count  = entries_count;
     _entries_offset = entries_offset;
+    _flags          = 0;
   }
 
   uint version()        const { return _version; }
@@ -74,6 +81,8 @@ public:
   uint strings_offset() const { return _strings_offset; }
   uint entries_count()  const { return _entries_count; }
   uint entries_offset() const { return _entries_offset; }
+  bool has_meta_ptrs()  const { return (_flags & MetadataPointers) != 0; }
+  void set_meta_ptrs()        { _flags |= MetadataPointers; }
 };
 
 // Archive's entry contain information from CodeBuffer
@@ -199,7 +208,9 @@ enum class DataKind: int {
   Primitive = 4, // primitive Class object
   SysLoader = 5, // java_system_loader
   PlaLoader = 6, // java_platform_loader
-  MethodCnts= 7
+  MethodCnts= 7,
+  Klass_Shared  = 8,
+  Method_Shared = 9
 };
 
 class SCAFile;
@@ -222,11 +233,11 @@ private:
 public:
   SCAReader(SCAFile* archive, SCAEntry* entry);
 
-  bool compile(ciEnv* env, ciMethod* target, int entry_bci, AbstractCompiler* compiler, const char* target_name);
+  bool compile(ciEnv* env, ciMethod* target, int entry_bci, AbstractCompiler* compiler);
   bool compile_blob(CodeBuffer* buffer, int* pc_offset);
 
-  Klass* read_klass(const methodHandle& comp_method);
-  Method* read_method(const methodHandle& comp_method);
+  Klass* read_klass(const methodHandle& comp_method, bool shared);
+  Method* read_method(const methodHandle& comp_method, bool shared);
 
   bool read_code(CodeBuffer* buffer, CodeBuffer* orig_buffer, uint code_offset);
   bool read_relocations(CodeBuffer* buffer, CodeBuffer* orig_buffer, OopRecorder* oop_recorder, ciMethod* target);
@@ -256,6 +267,7 @@ private:
   uint        _store_size;     // Used when writing archive
   bool _for_read;              // Open for read
   bool _for_write;             // Open for write
+  bool _use_meta_ptrs;         // Store metadata pointers
   bool _closing;               // Closing archive
   bool _failed;                // Failed read/write to/from archive (archive is broken?)
 
@@ -297,11 +309,12 @@ public:
   static void init_table();
   static void init_opto_table();
   static void init_c1_table();
-  address address_for_id(int id) const { return _table->address_for_id(id); } 
+  address address_for_id(int id) const { return _table->address_for_id(id); }
 
   bool for_read() const;
   bool for_write() const;
   bool closing() const { return _closing; }
+  bool use_meta_ptrs() const { return _use_meta_ptrs; }
 
   void set_failed()   { _failed = true; }
 

@@ -469,7 +469,7 @@ class nmethod : public CompiledMethod {
   // if this thread changed the state of the nmethod or false if
   // another thread performed the transition.
   bool  make_not_entrant();
-  bool  make_not_used()    { return make_not_entrant(); }
+  bool  make_not_used()    { _sca_entry = nullptr; return make_not_entrant(); }
 
   int get_state() const {
     return _state;

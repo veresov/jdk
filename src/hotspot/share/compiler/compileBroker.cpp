@@ -196,6 +196,7 @@ jlong CompileBroker::_peak_compilation_time        = 0;
 
 CompilerStatistics CompileBroker::_stats_per_level[CompLevel_full_optimization];
 CompilerStatistics CompileBroker::_sca_stats;
+CompilerStatistics CompileBroker::_sca_stats_per_level[CompLevel_full_optimization];
 
 CompileQueue* CompileBroker::_c3_compile_queue     = nullptr;
 CompileQueue* CompileBroker::_c2_compile_queue     = nullptr;
@@ -2604,6 +2605,10 @@ void CompileBroker::collect_statistics(CompilerThread* thread, elapsedTimer time
         _sca_stats._standard.update(time, bytes_compiled);
         _sca_stats._nmethods_size += task->nm_total_size();
         _sca_stats._nmethods_code_size += task->nm_insts_size();
+        CompilerStatistics* stats = &_sca_stats_per_level[comp_level-1];
+        stats->_standard.update(time, bytes_compiled);
+        stats->_nmethods_size += task->nm_total_size();
+        stats->_nmethods_code_size += task->nm_insts_size();
       } else if (comp_level > CompLevel_none && comp_level <= CompLevel_full_optimization) {
         CompilerStatistics* stats = &_stats_per_level[comp_level-1];
         if (is_osr) {
@@ -2727,6 +2732,13 @@ void CompileBroker::print_times(bool per_compiler, bool aggregate) {
       CompilerStatistics* stats = &_stats_per_level[tier-1];
       os::snprintf_checked(tier_name, sizeof(tier_name), "Tier%d", tier);
       print_times(tier_name, stats);
+    }
+    for (int tier = CompLevel_simple; tier <= CompilationPolicy::highest_compile_level(); tier++) {
+      CompilerStatistics* stats = &_sca_stats_per_level[tier-1];
+      if (stats->_standard._bytes > 0) {
+        os::snprintf_checked(tier_name, sizeof(tier_name), "SC T%d", tier);
+        print_times(tier_name, stats);
+      }
     }
   }
 
