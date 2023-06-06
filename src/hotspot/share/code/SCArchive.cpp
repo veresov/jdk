@@ -115,6 +115,10 @@ bool SCArchive::is_C3_on() {
   return false;
 }
 
+bool SCArchive::is_SC_load_tread_on() {
+  return UseCodeLoadThread && LoadSharedCode;
+}
+
 void SCArchive::close() {
   if (_archive != nullptr) {
     delete _archive; // Free memory

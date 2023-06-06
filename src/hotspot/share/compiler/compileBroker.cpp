@@ -133,15 +133,18 @@ AbstractCompiler* CompileBroker::_compilers[3];
 int CompileBroker::_c1_count = 0;
 int CompileBroker::_c2_count = 0;
 int CompileBroker::_c3_count = 0;
+int CompileBroker::_sc_count = 0;
 
 // An array of compiler names as Java String objects
 jobject* CompileBroker::_compiler1_objects = nullptr;
 jobject* CompileBroker::_compiler2_objects = nullptr;
 jobject* CompileBroker::_compiler3_objects = nullptr;
+jobject* CompileBroker::_sc_objects = nullptr;
 
 CompileLog** CompileBroker::_compiler1_logs = nullptr;
 CompileLog** CompileBroker::_compiler2_logs = nullptr;
 CompileLog** CompileBroker::_compiler3_logs = nullptr;
+CompileLog** CompileBroker::_sc_logs = nullptr;
 
 // These counters are used to assign an unique ID to each compilation.
 volatile jint CompileBroker::_compilation_id     = 0;
@@ -201,6 +204,8 @@ CompilerStatistics CompileBroker::_sca_stats_per_level[CompLevel_full_optimizati
 CompileQueue* CompileBroker::_c3_compile_queue     = nullptr;
 CompileQueue* CompileBroker::_c2_compile_queue     = nullptr;
 CompileQueue* CompileBroker::_c1_compile_queue     = nullptr;
+CompileQueue* CompileBroker::_sc1_compile_queue    = nullptr;
+CompileQueue* CompileBroker::_sc2_compile_queue    = nullptr;
 
 bool compileBroker_init() {
   if (LogEvents) {
@@ -549,6 +554,12 @@ void CompileBroker::print_compile_queues(outputStream* st) {
   if (_c3_compile_queue != nullptr) {
     _c3_compile_queue->print(st);
   }
+  if (_sc1_compile_queue != nullptr) {
+    _sc1_compile_queue->print(st);
+  }
+  if (_sc2_compile_queue != nullptr) {
+    _sc2_compile_queue->print(st);
+  }
 }
 
 void CompileQueue::print(outputStream* st) {
@@ -620,6 +631,7 @@ void CompileBroker::compilation_init_phase1(JavaThread* THREAD) {
   _c1_count = CompilationPolicy::c1_count();
   _c2_count = CompilationPolicy::c2_count();
   _c3_count = CompilationPolicy::c3_count();
+  _sc_count = CompilationPolicy::sc_count();
 
 #if INCLUDE_JVMCI
   if (EnableJVMCI) {
@@ -946,6 +958,17 @@ static void print_compiler_threads(stringStream& msg) {
   }
 }
 
+static void print_compiler_thread(JavaThread *ct) {
+  if (trace_compiler_threads()) {
+    ResourceMark rm;
+    ThreadsListHandle tlh;  // name() depends on the TLH.
+    assert(tlh.includes(ct), "ct=" INTPTR_FORMAT " exited unexpectedly.", p2i(ct));
+    stringStream msg;
+    msg.print("Added initial compiler thread %s", ct->name());
+    print_compiler_threads(msg);
+  }
+}
+
 void CompileBroker::init_compiler_threads() {
   // Ensure any exceptions lead to vm_exit_during_initialization.
   EXCEPTION_MARK;
@@ -970,6 +993,16 @@ void CompileBroker::init_compiler_threads() {
     _compiler3_objects = NEW_C_HEAP_ARRAY(jobject, _c3_count, mtCompiler);
     _compiler3_logs = NEW_C_HEAP_ARRAY(CompileLog*, _c3_count, mtCompiler);
   }
+  if (_sc_count > 0) {
+    if (_c1_count > 0) { // C1 is present
+      _sc1_compile_queue  = new CompileQueue("C1 SC compile queue");
+    }
+    if (_c2_count > 0) { // C2 is present
+      _sc2_compile_queue  = new CompileQueue("C2 SC compile queue");
+    }
+    _sc_objects = NEW_C_HEAP_ARRAY(jobject, _sc_count, mtCompiler);
+    _sc_logs = NEW_C_HEAP_ARRAY(CompileLog*, _sc_count, mtCompiler);
+  }
   char name_buffer[256];
 
   for (int i = 0; i < _c2_count; i++) {
@@ -989,14 +1022,7 @@ void CompileBroker::init_compiler_threads() {
       JavaThread *ct = make_thread(compiler_t, thread_handle, _c2_compile_queue, _compilers[1], THREAD);
       assert(ct != nullptr, "should have been handled for initial thread");
       _compilers[1]->set_num_compiler_threads(i + 1);
-      if (trace_compiler_threads()) {
-        ResourceMark rm;
-        ThreadsListHandle tlh;  // name() depends on the TLH.
-        assert(tlh.includes(ct), "ct=" INTPTR_FORMAT " exited unexpectedly.", p2i(ct));
-        stringStream msg;
-        msg.print("Added initial compiler thread %s", ct->name());
-        print_compiler_threads(msg);
-      }
+      print_compiler_thread(ct);
     }
   }
 
@@ -1012,14 +1038,7 @@ void CompileBroker::init_compiler_threads() {
       JavaThread *ct = make_thread(compiler_t, thread_handle, _c1_compile_queue, _compilers[0], THREAD);
       assert(ct != nullptr, "should have been handled for initial thread");
       _compilers[0]->set_num_compiler_threads(i + 1);
-      if (trace_compiler_threads()) {
-        ResourceMark rm;
-        ThreadsListHandle tlh;  // name() depends on the TLH.
-        assert(tlh.includes(ct), "ct=" INTPTR_FORMAT " exited unexpectedly.", p2i(ct));
-        stringStream msg;
-        msg.print("Added initial compiler thread %s", ct->name());
-        print_compiler_threads(msg);
-      }
+      print_compiler_thread(ct);
     }
   }
 
@@ -1031,17 +1050,37 @@ void CompileBroker::init_compiler_threads() {
     _compiler3_objects[i] = thread_handle;
     _compiler3_logs[i] = nullptr;
 
-      JavaThread *ct = make_thread(compiler_t, thread_handle, _c3_compile_queue, _compilers[2], THREAD);
+    JavaThread *ct = make_thread(compiler_t, thread_handle, _c3_compile_queue, _compilers[2], THREAD);
+    assert(ct != nullptr, "should have been handled for initial thread");
+    _compilers[2]->set_num_compiler_threads(i + 1);
+    print_compiler_thread(ct);
+  }
+
+  if (_sc_count > 0) {
+    int i = 0;
+    if (_c1_count > 0) { // C1 is present
+      os::snprintf_checked(name_buffer, sizeof(name_buffer), "C%d SC CompilerThread", 1);
+      Handle thread_oop = create_thread_oop(name_buffer, CHECK);
+      jobject thread_handle = JNIHandles::make_global(thread_oop);
+      _sc_objects[i] = thread_handle;
+      _sc_logs[i] = nullptr;
+      i++;
+
+      JavaThread *ct = make_thread(compiler_t, thread_handle, _sc1_compile_queue, _compilers[0], THREAD);
       assert(ct != nullptr, "should have been handled for initial thread");
-      _compilers[2]->set_num_compiler_threads(i + 1);
-      if (trace_compiler_threads()) {
-        ResourceMark rm;
-        ThreadsListHandle tlh;  // name() depends on the TLH.
-        assert(tlh.includes(ct), "ct=" INTPTR_FORMAT " exited unexpectedly.", p2i(ct));
-        stringStream msg;
-        msg.print("Added initial compiler thread %s", ct->name());
-        print_compiler_threads(msg);
-      }
+      print_compiler_thread(ct);
+    }
+    if (_c2_count > 0) { // C2 is present
+      os::snprintf_checked(name_buffer, sizeof(name_buffer), "C%d SC CompilerThread", 2);
+      Handle thread_oop = create_thread_oop(name_buffer, CHECK);
+      jobject thread_handle = JNIHandles::make_global(thread_oop);
+      _sc_objects[i] = thread_handle;
+      _sc_logs[i] = nullptr;
+
+      JavaThread *ct = make_thread(compiler_t, thread_handle, _sc2_compile_queue, _compilers[1], THREAD);
+      assert(ct != nullptr, "should have been handled for initial thread");
+      print_compiler_thread(ct);
+    }
   }
 
   if (UsePerfData) {
@@ -1172,6 +1211,12 @@ void CompileBroker::mark_on_stack() {
   }
   if (_c1_compile_queue != nullptr) {
     _c1_compile_queue->mark_on_stack();
+  }
+  if (_sc1_compile_queue != nullptr) {
+    _sc1_compile_queue->mark_on_stack();
+  }
+  if (_sc2_compile_queue != nullptr) {
+    _sc2_compile_queue->mark_on_stack();
   }
 }
 
@@ -1688,6 +1733,10 @@ CompileTask* CompileBroker::create_compile_task(CompileQueue*       queue,
   new_task->initialize(compile_id, method, osr_bci, comp_level,
                        hot_method, hot_count, compile_reason,
                        has_unsatisfied_deps, blocking);
+  if (new_task->is_sca() && (_sc_count > 0)) {
+    // Put it on SC queue
+    queue = is_c1_compile(comp_level) ? _sc1_compile_queue : _sc2_compile_queue;
+  }
   queue->add(new_task);
   return new_task;
 }
@@ -1907,6 +1956,11 @@ CompileLog* CompileBroker::get_log(CompilerThread* ct) {
   assert(logs != nullptr, "must be initialized at this point");
   int count = c1 ? _c1_count : (_c3_count == 0 ? _c2_count : (jvmci ? _c2_count : _c3_count));
 
+  if (ct->queue() == _sc1_compile_queue || ct->queue() == _sc2_compile_queue) {
+    compiler_objects = _sc_objects;
+    logs  = _sc_logs;
+    count = _sc_count;
+  }
   // Find Compiler number by its threadObj.
   oop compiler_obj = ct->threadObj();
   int compiler_number = 0;

@@ -389,6 +389,7 @@ public:
   static void close();
   static bool is_on() { return _archive != nullptr; }
   static bool is_C3_on();
+  static bool is_SC_load_tread_on();
   static bool is_on_for_read()  { return _archive != nullptr && _archive->for_read(); }
   static bool is_on_for_write() { return _archive != nullptr && _archive->for_write(); }
   static bool allow_const_field(ciConstant& value);

@@ -162,13 +162,13 @@ class CompileBroker: AllStatic {
   static AbstractCompiler* _compilers[3];
 
   // The maximum numbers of compiler threads to be determined during startup.
-  static int _c1_count, _c2_count, _c3_count;
+  static int _c1_count, _c2_count, _c3_count, _sc_count;
 
   // An array of compiler thread Java objects
-  static jobject *_compiler1_objects, *_compiler2_objects, *_compiler3_objects;
+  static jobject *_compiler1_objects, *_compiler2_objects, *_compiler3_objects, *_sc_objects;
 
   // An array of compiler logs
-  static CompileLog **_compiler1_logs, **_compiler2_logs, **_compiler3_logs;
+  static CompileLog **_compiler1_logs, **_compiler2_logs, **_compiler3_logs, **_sc_logs;
 
   // These counters are used for assigning id's to each compilation
   static volatile jint _compilation_id;
@@ -178,6 +178,8 @@ class CompileBroker: AllStatic {
   static CompileQueue* _c3_compile_queue;
   static CompileQueue* _c2_compile_queue;
   static CompileQueue* _c1_compile_queue;
+  static CompileQueue* _sc1_compile_queue;
+  static CompileQueue* _sc2_compile_queue;
 
   // performance counters
   static PerfCounter* _perf_total_compilation;
@@ -401,6 +403,12 @@ public:
     assert(_compiler3_objects != nullptr, "must be initialized");
     assert(idx < _c3_count, "oob");
     return _compiler3_objects[idx];
+  }
+
+  static jobject sc_object(int idx) {
+    assert(_sc_objects != nullptr, "must be initialized");
+    assert(idx < _sc_count, "oob");
+    return _sc_objects[idx];
   }
 
   static AbstractCompiler* compiler1() { return _compilers[0]; }

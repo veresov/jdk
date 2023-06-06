@@ -175,7 +175,7 @@ class CompilationPolicy : AllStatic {
   friend class LoopPredicate;
 
   static jlong _start_time;
-  static int _c1_count, _c2_count, _c3_count;
+  static int _c1_count, _c2_count, _c3_count, _sc_count;
   static double _increase_threshold_at_ratio;
 
   // Set carry flags in the counters (in Method* and MDO).
@@ -234,6 +234,7 @@ class CompilationPolicy : AllStatic {
   static void set_c1_count(int x) { _c1_count = x;    }
   static void set_c2_count(int x) { _c2_count = x;    }
   static void set_c3_count(int x) { _c3_count = x;    }
+  static void set_sc_count(int x) { _sc_count = x;    }
 
   enum EventType { CALL, LOOP, COMPILE, FORCE_COMPILE, REMOVE_FROM_QUEUE, UPDATE_IN_QUEUE, REPROFILE, MAKE_NOT_ENTRANT };
   static void print_event(EventType type, Method* m, Method* im, int bci, CompLevel level);
@@ -264,6 +265,7 @@ class CompilationPolicy : AllStatic {
   static int c1_count() { return _c1_count; }
   static int c2_count() { return _c2_count; }
   static int c3_count() { return _c3_count; }
+  static int sc_count() { return _sc_count; }
   static int compiler_count(CompLevel comp_level);
 
   // If m must_be_compiled then request a compilation from the CompileBroker.

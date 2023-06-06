@@ -58,6 +58,7 @@ jlong CompilationPolicy::_start_time = 0;
 int CompilationPolicy::_c1_count = 0;
 int CompilationPolicy::_c2_count = 0;
 int CompilationPolicy::_c3_count = 0;
+int CompilationPolicy::_sc_count = 0;
 double CompilationPolicy::_increase_threshold_at_ratio = 0;
 
 void compilationPolicy_init() {
@@ -610,6 +611,9 @@ void CompilationPolicy::initialize() {
       {
         set_c1_count(MAX2(count / 3, 1));
         set_c2_count(MAX2(count - c1_count(), 1));
+      }
+      if (SCArchive::is_SC_load_tread_on()) {
+        set_sc_count((c1_only || c2_only) ? 1 : 2); // At minimum we need 2 threads to load C1 and C2 cached code in parallel
       }
     }
     assert(count == c1_count() + c2_count(), "inconsistent compiler thread count");

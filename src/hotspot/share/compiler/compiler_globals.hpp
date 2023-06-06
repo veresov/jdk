@@ -398,6 +398,9 @@
   product(bool, UseMetadataPointers, false,                                 \
           "Store Metadata pointers")                                        \
                                                                             \
+  product(bool, UseCodeLoadThread, true,                                    \
+          "Use separate thread for cached code load")                       \
+                                                                            \
   product(ccstr, SharedCodeArchive, "code.jsa",                             \
           "File with compiled code")                                        \
                                                                             \
