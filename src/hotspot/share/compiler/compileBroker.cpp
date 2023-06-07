@@ -2258,10 +2258,6 @@ void CompileBroker::invoke_compiler_on_method(CompileTask* task) {
   elapsedTimer time;
 
   DirectiveSet* directive = task->directive();
-  if (directive->PrintCompilationOption) {
-    ResourceMark rm;
-    task->print_tty();
-  }
 
   CompilerThread* thread = CompilerThread::current();
   ResourceMark rm(thread);
@@ -2456,6 +2452,11 @@ void CompileBroker::invoke_compiler_on_method(CompileTask* task) {
 
   if (tdata != nullptr) {
     tdata->record_compilation_end(task);
+  }
+
+  if (directive->PrintCompilationOption) {
+    ResourceMark rm;
+    task->print_tty();
   }
 
   methodHandle method(thread, task->method());

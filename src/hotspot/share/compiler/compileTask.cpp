@@ -247,13 +247,15 @@ void CompileTask::print_impl(outputStream* st, Method* method, int compile_id, i
                              jlong time_queued, jlong time_started) {
   if (!short_form) {
     // Print current time
-    st->print("%7d ", (int)tty->time_stamp().milliseconds());
-    if (Verbose && time_queued != 0) {
+    stringStream ss;
+    ss.print("%c%d", (time_started != 0 ? 'F' : 'S'), (int)tty->time_stamp().milliseconds());
+    st->print("%7s ", ss.freeze());
+    if (time_queued != 0) {
       // Print time in queue and time being processed by compiler thread
       jlong now = os::elapsed_counter();
-      st->print("%d ", (int)TimeHelper::counter_to_millis(now-time_queued));
+      st->print("Q%d ", (int)TimeHelper::counter_to_millis(now-time_queued));
       if (time_started != 0) {
-        st->print("%d ", (int)TimeHelper::counter_to_millis(now-time_started));
+        st->print("S%d ", (int)TimeHelper::counter_to_millis(now-time_started));
       }
     }
   }
