@@ -1875,7 +1875,10 @@ bool CompileBroker::init_compiler_runtime() {
     ThreadInVMfromNative tv(thread);
 
     // Perform per-thread and global initializations
-    SCAFile::init_table();
+    {
+      MutexLocker only_one (thread, CompileThread_lock);
+      SCAFile::init_table();
+    }
     comp->initialize();
   }
 
@@ -2835,6 +2838,11 @@ void CompileBroker::print_times(bool per_compiler, bool aggregate) {
   tty->print_cr("    Invalidated            : %7.3f s, Average : %2.3f s",
                 CompileBroker::_t_invalidated_compilation.seconds(),
                 total_invalidated_count == 0 ? 0.0 : CompileBroker::_t_invalidated_compilation.seconds() / total_invalidated_count);
+
+  if (StoreSharedCode || LoadSharedCode) {
+    tty->cr();
+    SCArchive::print_timers();
+  }
 
   AbstractCompiler *comp = compiler(CompLevel_simple);
   if (comp != nullptr) {

@@ -398,6 +398,7 @@ public:
   static SCAEntry* find_code_entry(const methodHandle& method, uint comp_level);
 
   static void add_C_string(const char* str);
+  static void print_timers();
 };
 
 #endif // SHARE_CODE_SCARCHIVE_HPP
