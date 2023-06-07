@@ -95,6 +95,8 @@ class ciMethod : public ciMetadata {
   bool _has_reserved_stack_access;
   bool _is_overpass;
 
+  GrowableArray<int>* _has_trap_at_bci;
+
   // Lazy fields, filled in on demand
   address              _code;
   ciExceptionHandler** _exception_handlers;
@@ -381,6 +383,10 @@ class ciMethod : public ciMetadata {
   void print_short_name(outputStream* st = tty);
 
   static bool is_consistent_info(ciMethod* declared_method, ciMethod* resolved_method);
+  bool has_trap_at(int bci) {
+    return _has_trap_at_bci != nullptr &&
+           _has_trap_at_bci->contains(bci);
+  }
 };
 
 #endif // SHARE_CI_CIMETHOD_HPP

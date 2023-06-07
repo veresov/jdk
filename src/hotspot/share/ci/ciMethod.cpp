@@ -35,6 +35,7 @@
 #include "ci/ciReplay.hpp"
 #include "ci/ciSymbols.hpp"
 #include "ci/ciUtilities.inline.hpp"
+#include "compiler/compileTask.hpp"
 #include "compiler/abstractCompiler.hpp"
 #include "compiler/compilerDefinitions.inline.hpp"
 #include "compiler/methodLiveness.hpp"
@@ -158,6 +159,22 @@ ciMethod::ciMethod(const methodHandle& h_m, ciInstanceKlass* holder) :
   if (ReplayCompiles) {
     ciReplay::initialize(this);
   }
+  DirectiveSet* directives = DirectivesStack::getMatchingDirective(h_m, CURRENT_ENV->task()->compiler());
+  ccstrlist bci_list = directives->TooManyTrapsAtBCIOption;
+  int len = strlen(bci_list);
+  Arena* arena = CURRENT_ENV->arena();
+  _has_trap_at_bci = new (arena) GrowableArray<int>(arena, 2, 0, 0);
+  for (int i = 0; i < len; i++) {
+    int v = -1;
+    int read;
+    if (sscanf(bci_list + i, "%i%n", &v, &read) != 1) {
+      warning("wrong format for TooManyTrapsAtBCI option: \"%s\"", bci_list);
+      break;
+    }
+    assert(v >= 0 && v < (1<<16), "%i", v);
+    _has_trap_at_bci->append_if_missing(v);
+    i += read;
+  }
 }
 
 
@@ -178,6 +195,7 @@ ciMethod::ciMethod(ciInstanceKlass* holder,
   _inline_instructions_size(-1),
   _can_be_statically_bound(false),
   _can_omit_stack_trace(true),
+  _has_trap_at_bci(        nullptr),
   _liveness(               nullptr)
 #if defined(COMPILER2)
   ,
