@@ -1048,6 +1048,20 @@ void InstanceKlass::initialize_impl(TRAPS) {
 
   JavaThread* jt = THREAD;
 
+  if (ForceProfiling) {
+    // Preallocate MDOs.
+    for (int i = 0; i < methods()->length(); i++) {
+      assert(!HAS_PENDING_EXCEPTION, "");
+      methodHandle m(THREAD, methods()->at(i));
+      Method::build_profiling_method_data(m, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        ResourceMark rm;
+        log_warning(cds)("MDO preallocation failed for %s", external_name());
+        CLEAR_PENDING_EXCEPTION;
+        break;
+      }
+    }
+  }
   // refer to the JVM book page 47 for description of steps
   // Step 1
   {

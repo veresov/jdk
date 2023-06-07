@@ -1204,6 +1204,9 @@ const int ObjectAlignmentInBytes = 8;
           "CompileThreshold) before using the method's profile")            \
           range(0, 100)                                                     \
                                                                             \
+  product(bool, ForceProfiling, false, DIAGNOSTIC,                          \
+          "Eagerly allocate MDOs")                                          \
+                                                                            \
   product(bool, PrintMethodData, false, DIAGNOSTIC,                         \
           "Print the results of +ProfileInterpreter at end of run")         \
                                                                             \
