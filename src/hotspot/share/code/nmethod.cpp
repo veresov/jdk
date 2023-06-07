@@ -1552,14 +1552,11 @@ void nmethod::post_compiled_method(CompileTask* task) {
   task->set_nm_insts_size(insts_size());
   task->set_nm_total_size(total_size());
 
-  if (task->is_sca() && _sca_entry == nullptr) {
-    task->clear_sca();
-  }
-
-  //guarantee(task->is_sca() == (_sca_entry != nullptr), ""); // FIXME
-  if (!task->is_sca() && _sca_entry != nullptr) {
-    task->set_sca();
-  }
+  // task->is_sca() is true only for loaded cached code.
+  // nmethod::_sca_entry is set for loaded and stored cached code
+  // to invalidate the entry when nmethod is deoptimized.
+  // There is option to not store in archive not entrant cached code.
+  guarantee((_sca_entry != nullptr) || !task->is_sca(), "sanity");
 
   // JVMTI -- compiled method notification (must be done outside lock)
   post_compiled_method_load_event();

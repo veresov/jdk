@@ -2467,7 +2467,7 @@ void CompileBroker::invoke_compiler_on_method(CompileTask* task) {
   if (PrintCompilation && PrintCompilation2) {
     tty->print("%7d ", (int) tty->time_stamp().milliseconds());  // print timestamp
     tty->print("%4d ", compile_id);    // print compilation number
-    tty->print("%s ", (is_osr ? "%" : " "));
+    tty->print("%s ", (is_osr ? "%" : (task->is_sca() ? "A" : " ")));
     if (task->is_success()) {
       tty->print("size: %d(%d) ", task->nm_total_size(), task->nm_insts_size());
     }

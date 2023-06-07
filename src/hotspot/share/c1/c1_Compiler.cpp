@@ -245,11 +245,23 @@ bool Compiler::is_intrinsic_supported(const methodHandle& method) {
 }
 
 void Compiler::compile_method(ciEnv* env, ciMethod* method, int entry_bci, bool install_code, DirectiveSet* directive) {
+  CompileTask* task = env->task();
+  if (install_code && task->is_sca()) {
+    bool success = SCAFile::load_nmethod(env, method, entry_bci, this, CompLevel(task->comp_level()));
+    if (success) {
+      assert(task->is_success(), "sanity");
+      return;
+    }
+    SCArchive::invalidate(task->sca_entry()); // mark sca_entry as not entrant
+    if (SCArchive::is_SC_load_tread_on()) {
+      env->record_failure("Failed to load cached code");
+      // Bail out if failed to load cached code in SC thread
+      return;
+    }
+    task->clear_sca();
+  }
   BufferBlob* buffer_blob = CompilerThread::current()->get_buffer_blob();
   assert(buffer_blob != nullptr, "Must exist");
-  if (install_code && SCAFile::load_nmethod(env, method, entry_bci, this, CompLevel(env->task()->comp_level()))) {
-    return;
-  }
   // invoke compilation
   {
     // We are nested here because we need for the destructor

@@ -96,7 +96,7 @@ void MethodCounters::print_data_on(outputStream* st) const {
   ResourceMark rm;
   st->print_cr("  - invocation_counter: %d carry=%d", _invocation_counter.count(), _invocation_counter.carry());
   st->print_cr("  - backedge_counter: %d carry=%d",   _backedge_counter.count(), _backedge_counter.carry());
-  st->print_cr("  - prev_time: %ld",         _prev_time);
+  st->print_cr("  - prev_time: " JLONG_FORMAT,        _prev_time);
   st->print_cr("  - rate: %.3f",             _rate);
   st->print_cr("  - invoke_mask: %d",        _invoke_mask);
   st->print_cr("  - backedge_mask: %d",      _backedge_mask);

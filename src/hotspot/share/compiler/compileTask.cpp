@@ -110,7 +110,6 @@ void CompileTask::initialize(int compile_id,
 
   _is_complete = false;
   _is_success = false;
-  _is_sca = false;
 
   _hot_method = nullptr;
   _hot_method_holder = nullptr;
@@ -152,13 +151,10 @@ void CompileTask::initialize(int compile_id,
     }
   }
 
-  _entry = nullptr;
+  _sca_entry = nullptr;
   if (osr_bci == InvocationEntryBci && !has_unsatisfied_deps && SCArchive::is_on_for_read()) {
     // Check for cached code.
-    _entry = SCArchive::find_code_entry(method, comp_level);
-    if (_entry != nullptr) {
-      _is_sca = true;
-    }
+    _sca_entry = SCArchive::find_code_entry(method, comp_level);
   }
   _next = nullptr;
 }

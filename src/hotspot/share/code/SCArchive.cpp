@@ -834,6 +834,12 @@ Klass* SCAReader::read_klass(const methodHandle& comp_method, bool shared) {
     code_offset += sizeof(uint);
     set_read_position(code_offset);
     Klass* k = (Klass*)((address)SharedBaseAddress + klass_offset);
+    if (!MetaspaceShared::is_in_shared_metaspace((address)k)) {
+      // Something changed in CDS
+      set_lookup_failed();
+      log_warning(sca)("Lookup failed for shared klass: " INTPTR_FORMAT " is not in CDS ", p2i((address)k));
+      return nullptr;
+    }
     assert(k->is_klass(), "sanity");
     ResourceMark rm;
     // Allow not initialized klass which was uninitialized during code caching
@@ -894,6 +900,12 @@ Method* SCAReader::read_method(const methodHandle& comp_method, bool shared) {
     code_offset += sizeof(uint);
     set_read_position(code_offset);
     Method* m = (Method*)((address)SharedBaseAddress + method_offset);
+    if (!MetaspaceShared::is_in_shared_metaspace((address)m)) {
+      // Something changed in CDS
+      set_lookup_failed();
+      log_warning(sca)("Lookup failed for shared method: " INTPTR_FORMAT " is not in CDS ", p2i((address)m));
+      return nullptr;
+    }
     assert(m->is_method(), "sanity");
     ResourceMark rm;
     Klass* k = m->method_holder();
@@ -2163,9 +2175,6 @@ if (UseNewCode) {
 
 bool SCAFile::load_nmethod(ciEnv* env, ciMethod* target, int entry_bci, AbstractCompiler* compiler, CompLevel comp_level) {
   CompileTask* task = env->task();
-  if (!task->is_sca()) {
-    return false;
-  }
   SCAEntry* entry = task->sca_entry();
   assert(entry != nullptr, "sanity");
   SCAFile* archive = open_for_read();
@@ -2183,7 +2192,13 @@ bool SCAFile::load_nmethod(ciEnv* env, ciMethod* target, int entry_bci, Abstract
   }
   ReadingMark rdmk;
   SCAReader reader(archive, entry);
-  return reader.compile(env, target, entry_bci, compiler);
+  bool success = reader.compile(env, target, entry_bci, compiler);
+  if (success) {
+    task->set_num_inlined_bytecodes(entry->num_inlined_bytecodes());
+  } else {
+    entry->set_not_entrant();
+  }
+  return success;
 }
 
 SCAReader::SCAReader(SCAFile* archive, SCAEntry* entry) {
@@ -2195,12 +2210,10 @@ SCAReader::SCAReader(SCAFile* archive, SCAEntry* entry) {
 }
 
 bool SCAReader::compile(ciEnv* env, ciMethod* target, int entry_bci, AbstractCompiler* compiler) {
-if (UseNewCode) tty->print_cr("=== load_nmethod: 1");
   uint entry_position = _entry->offset();
   uint code_offset = entry_position + _entry->code_offset();
   set_read_position(code_offset);
 
-if (UseNewCode) tty->print_cr("=== load_nmethod: 2");
   // Read flags
   int flags = *(int*)addr(code_offset);
   code_offset += sizeof(int);
@@ -2216,8 +2229,6 @@ if (UseNewCode) tty->print_cr("=== load_nmethod: 2");
   // Read offsets
   CodeOffsets* offsets = (CodeOffsets*)addr(code_offset);
   code_offset += sizeof(CodeOffsets);
-
-if (UseNewCode) tty->print_cr("=== load_nmethod: 3; %d, %d, %d, %d", flags, orig_pc_offset, frame_size, code_offset);
 
   // Create Debug Information Recorder to record scopes, oopmaps, etc.
   OopRecorder* oop_recorder = new OopRecorder(env->arena());
@@ -2239,8 +2250,6 @@ if (UseNewCode) tty->print_cr("=== load_nmethod: 3; %d, %d, %d, %d", flags, orig
     return false;
   }
   env->set_debug_info(recorder);
-
-if (UseNewCode) tty->print_cr("=== load_nmethod: 4");
 
   // Read Dependencies (compressed already)
   Dependencies* dependencies = new Dependencies(env);
@@ -2278,8 +2287,6 @@ if (UseNewCode) tty->print_cr("=== load_nmethod: 4");
     copy_bytes(addr(code_offset), (address)nul_chk_table.data(), nul_chk_size - sizeof(implicit_null_entry));
     code_offset += nul_chk_size;
   }
-
-if (UseNewCode) tty->print_cr("=== load_nmethod: 5");
 
   uint reloc_size = _entry->reloc_size();
   CodeBuffer buffer("Compile::Fill_buffer", _entry->code_size(), reloc_size);
@@ -2325,8 +2332,7 @@ if (UseNewCode3) {
                        has_monitors,
                        0, NoRTM,
                        (SCAEntry *)_entry);
-  env->task()->set_num_inlined_bytecodes(_entry->num_inlined_bytecodes());
-  return true;
+  return env->task()->is_success();
 }
 
 // No concurency for writing to archive file because this method is called from

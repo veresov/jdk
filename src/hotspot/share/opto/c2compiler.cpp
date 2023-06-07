@@ -110,9 +110,20 @@ void C2Compiler::initialize() {
 
 void C2Compiler::compile_method(ciEnv* env, ciMethod* target, int entry_bci, bool install_code, DirectiveSet* directive) {
   assert(is_initialized(), "Compiler thread must be initialized");
-
-  if (install_code && SCAFile::load_nmethod(env, target, entry_bci, this, CompLevel_full_optimization)) {
-    return;
+  CompileTask* task = env->task();
+  if (install_code && task->is_sca()) {
+    bool success = SCAFile::load_nmethod(env, target, entry_bci, this, CompLevel_full_optimization);
+    if (success) {
+      assert(task->is_success(), "sanity");
+      return;
+    }
+    SCArchive::invalidate(task->sca_entry()); // mark sca_entry as not entrant
+    if (SCArchive::is_SC_load_tread_on()) {
+      env->record_failure("Failed to load cached code");
+      // Bail out if failed to load cached code in SC thread
+      return;
+    }
+    task->clear_sca();
   }
   bool subsume_loads = SubsumeLoads;
   bool do_escape_analysis = DoEscapeAnalysis;
