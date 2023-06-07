@@ -960,7 +960,9 @@ KlassTrainingData* KlassTrainingData::make(InstanceKlass* holder, bool null_if_n
   KlassTrainingData* ktd = nullptr;
   if (td != nullptr) {
     ktd = td->as_KlassTrainingData();
+    ktd->refresh_from(holder);
     holder->init_training_data(ktd);
+    guarantee(ktd->has_holder() && ktd->holder() == holder, "");
     return ktd;
   }
   TrainingDataLocker l;
@@ -979,6 +981,7 @@ KlassTrainingData* KlassTrainingData::make(InstanceKlass* holder, bool null_if_n
   ktd->refresh_from(holder);
   bool ok = holder->init_training_data(ktd);
   assert(ok, "CAS under mutex cannot fail");
+  guarantee(ktd->has_holder() && ktd->holder() == holder, "");
   return ktd;
 }
 
@@ -1099,7 +1102,7 @@ void KlassTrainingData::notice_fully_initialized() {
   TrainingDataLocker l; // Not a real lock if we don't collect the data,
                         // that's why we need the atomic decrement below.
   for (int i = 0; i < comp_dep_count(); i++) {
-    comp_dep(i)->dec_init_deps_left();
+    comp_dep(i)->dec_init_deps_left(this);
   }
 }
 
@@ -1760,6 +1763,7 @@ void KlassTrainingData::remove_unshareable_info() {
   TrainingData::remove_unshareable_info();
   _static_fields = nullptr;
   _no_static_fields = nullptr;
+  _holder_mirror = nullptr;
   _init_deps.remove_unshareable_info();
   _comp_deps.remove_unshareable_info();
 }

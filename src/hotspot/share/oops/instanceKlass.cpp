@@ -1202,6 +1202,7 @@ void InstanceKlass::initialize_impl(TRAPS) {
   if (TrainingData::have_data()) {
     KlassTrainingData* ktd = KlassTrainingData::find(this);
     if (ktd != nullptr) {
+      guarantee(ktd->has_holder(), "");
       ktd->notice_fully_initialized();
 
       ResourceMark rm;

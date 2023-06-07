@@ -319,6 +319,15 @@ public:
         return _deps_dyn->append_if_missing(dep);
       }
     }
+    bool contains(E dep) {
+      for (int i = 0; i < length(); i++) {
+        if (dep == at(i)) {
+          return true; // found
+        }
+      }
+      return false; // not found
+    }
+
 #if INCLUDE_CDS
     void remove_unshareable_info() {
       _deps_dyn = nullptr;
@@ -668,8 +677,9 @@ public:
     ktd->add_comp_dep(this);
     _init_deps.append_if_missing(ktd);
   }
-  void dec_init_deps_left() {
-    assert(_init_deps_left > 0, "Must be");
+  void dec_init_deps_left(KlassTrainingData* ktd) {
+    assert(verify_init_deps(ktd), "");
+    assert(_init_deps_left > 0, "");
     Atomic::sub(&_init_deps_left, 1);
   }
   int init_deps_left() const {
@@ -720,6 +730,17 @@ public:
   static CompileTrainingData* allocate(MethodTrainingData* this_method,
                                        MethodTrainingData* top_method,
                                        int level, int compile_id);
+
+#ifdef ASSERT
+  bool verify_init_deps(KlassTrainingData* ktd) {
+    if (ktd->has_holder() && _init_deps.contains(ktd)) {
+      return true;
+    }
+    tty->print("CTD "); this->print_on(tty); tty->cr();
+    tty->print("KTD "); ktd->print_on(tty); tty->cr();
+    return false;
+  }
+#endif // ASSERT
 };
 
 // Record information about a method at the time compilation is requested.
