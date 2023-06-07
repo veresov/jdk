@@ -103,6 +103,29 @@
   product(bool, ArchiveFieldReferences, true, DIAGNOSTIC,                   \
           "Archive resolved JVM_CONSTANT_Fieldref in ConstantPool")         \
                                                                             \
+  product(int, PreloadArchivedClasses, 0, DIAGNOSTIC,                       \
+          "Preload classes from archives")                                  \
+           range(0, 2)                                                      \
+                                                                            \
+  product(int, Preresolve, 0, DIAGNOSTIC,                                   \
+          "Preload classes from archives")                                  \
+           range(0, 7)                                                      \
+                                                                            \
+  product(int, PrecompileBarriers, 0, DIAGNOSTIC,                           \
+          "Preload classes from archives")                                  \
+           range(0, 63)                                                     \
+                                                                            \
+  product(int, PrecompileLevel, 4, DIAGNOSTIC,                              \
+          "Precompile archived methods")                                    \
+           range(0, 4)                                                      \
+                                                                            \
+  product(bool, ForcePrecompilation, false, DIAGNOSTIC,                     \
+          "Precompile all methods")                                         \
+                                                                            \
+  product(int, ForcePrecompilationLevel, 0, DIAGNOSTIC,                     \
+          "Precompile archived methods")                                    \
+           range(0, 4)                                                      \
+                                                                            \
 // end of CDS_FLAGS
 
 DECLARE_FLAGS(CDS_FLAGS)

@@ -614,6 +614,7 @@ ciKlass* ciEnv::get_klass_by_index_impl(const constantPoolHandle& cpool,
     if (!k->is_loaded()) {
       is_accessible = false;
     } else if (k->loader() != accessor->loader() &&
+               !SystemDictionary::is_builtin_class_loader(accessor->loader()) &&
                get_klass_by_name_impl(accessor, cpool, k->name(), true) == nullptr) {
       // Loaded only remotely.  Not linked yet.
       is_accessible = false;
@@ -923,10 +924,8 @@ ciMethod* ciEnv::get_method_by_index_impl(const constantPoolHandle& cpool,
       constantTag tag = cpool->tag_ref_at(index, bc);
       assert(accessor->get_instanceKlass() == cpool->pool_holder(), "not the pool holder?");
       Method* m = lookup_method(accessor, holder, name_sym, sig_sym, bc, tag);
-      if (m != nullptr &&
-          (bc == Bytecodes::_invokestatic
-           ?  m->method_holder()->is_not_initialized()
-           : !m->method_holder()->is_loaded())) {
+      assert(m == nullptr || m->method_holder()->is_loaded(), "");
+      if (m != nullptr && !m->method_holder()->is_loaded()) {
         m = nullptr;
       }
       if (m != nullptr && ReplayCompiles && !ciReplay::is_loaded(m)) {
@@ -1781,4 +1780,12 @@ void ciEnv::dump_inline_data(int compile_id) {
       }
     }
   }
+}
+
+bool ciEnv::is_precompiled() {
+  if (task() != nullptr) {
+    return task()->compile_reason() == CompileTask::Reason_Precompile ||
+           task()->compile_reason() == CompileTask::Reason_Recorded;
+  }
+  return false;
 }

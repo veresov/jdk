@@ -1199,6 +1199,10 @@ class Compile : public Phase {
   bool needs_clinit_barrier(ciMethod* ik,        ciMethod* accessing_method);
   bool needs_clinit_barrier(ciInstanceKlass* ik, ciMethod* accessing_method);
 
+  bool needs_clinit_barrier_precompiled(ciField* ik,         ciMethod* accessing_method);
+  bool needs_clinit_barrier_precompiled(ciMethod* ik,        ciMethod* accessing_method);
+  bool needs_clinit_barrier_precompiled(ciInstanceKlass* ik, ciMethod* accessing_method);
+
 #ifdef IA32
  private:
   bool _select_24_bit_instr;   // We selected an instruction with a 24-bit result

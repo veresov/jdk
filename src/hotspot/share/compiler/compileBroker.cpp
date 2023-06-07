@@ -1236,8 +1236,9 @@ void CompileBroker::compile_method_base(const methodHandle& method,
   guarantee(!method->is_abstract(), "cannot compile abstract methods");
   assert(method->method_holder()->is_instance_klass(),
          "sanity check");
-  assert(!method->method_holder()->is_not_initialized(),
-         "method holder must be initialized");
+  assert(!method->method_holder()->is_not_initialized() ||
+         compile_reason == CompileTask::Reason_Precompile ||
+         compile_reason == CompileTask::Reason_Recorded, "method holder must be initialized");
   assert(!method->is_method_handle_intrinsic(), "do not enqueue these guys");
 
   if (CIPrintRequests) {
@@ -1456,7 +1457,9 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
   assert(method->method_holder()->is_instance_klass(), "not an instance method");
   assert(osr_bci == InvocationEntryBci || (0 <= osr_bci && osr_bci < method->code_size()), "bci out of range");
   assert(!method->is_abstract() && (osr_bci == InvocationEntryBci || !method->is_native()), "cannot compile abstract/native methods");
-  assert(!method->method_holder()->is_not_initialized(), "method holder must be initialized");
+  assert(!method->method_holder()->is_not_initialized() ||
+         compile_reason == CompileTask::Reason_Precompile ||
+         compile_reason == CompileTask::Reason_Recorded, "method holder must be initialized");
   // return quickly if possible
 
   // lock, make sure that the compilation
@@ -1571,7 +1574,9 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
     if (!should_compile_new_jobs()) {
       return nullptr;
     }
-    bool is_blocking = !directive->BackgroundCompilationOption || ReplayCompiles;
+    bool is_blocking = !directive->BackgroundCompilationOption || ReplayCompiles ||
+                       compile_reason == CompileTask::Reason_Precompile ||
+                       compile_reason == CompileTask::Reason_Recorded;
     compile_method_base(method, osr_bci, comp_level, hot_method, hot_count, compile_reason, has_unsatisfied_deps, is_blocking, THREAD);
   }
 

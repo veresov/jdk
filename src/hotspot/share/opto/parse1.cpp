@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "cds/cds_globals.hpp"
 #include "compiler/compileLog.hpp"
 #include "interpreter/linkResolver.hpp"
 #include "memory/resourceArea.hpp"
@@ -1142,9 +1143,19 @@ SafePointNode* Parse::create_entry_map() {
   _caller->map()->delete_replaced_nodes();
 
   // If this is an inlined method, we may have to do a receiver null check.
-  if (_caller->has_method() && is_normal_parse() && !method()->is_static()) {
+  if (_caller->has_method() && is_normal_parse()) {
     GraphKit kit(_caller);
-    kit.null_check_receiver_before_call(method());
+    if (!method()->is_static()) {
+      kit.null_check_receiver_before_call(method());
+    } else if (env()->is_precompiled() && (PrecompileBarriers & 32) == 32) {
+      assert(method()->is_static(), "");
+
+      ciMethod* declared_method = kit.method()->get_method_at_bci(kit.bci());
+      const int nargs = declared_method->arg_size();
+      kit.inc_sp(nargs);
+      kit.clinit_barrier_precompiled(method()->holder(), nullptr);
+      kit.dec_sp(nargs);
+    }
     _caller = kit.transfer_exceptions_into_jvms();
     if (kit.stopped()) {
       _exits.add_exception_states_from(_caller);

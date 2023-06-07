@@ -1793,6 +1793,7 @@ void LinkResolver::resolve_invokedynamic(CallInfo& result, const constantPoolHan
   // Any subsequent invokedynamic instruction which shares
   // this bootstrap method will encounter the resolution of MethodHandleInError.
 
+  SystemDictionaryShared::record_init_info(pool->pool_holder(), indy_index);
   resolve_dynamic_call(result, bootstrap_specifier, CHECK);
 
   LogTarget(Debug, methodhandles, indy) lt_indy;

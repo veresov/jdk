@@ -1031,13 +1031,12 @@ bool CompilationPolicy::is_method_profiled(const methodHandle& method) {
 
 
 // Determine is a method is mature.
-bool CompilationPolicy::is_mature(Method* method) {
+bool CompilationPolicy::is_mature(MethodData* mdo) {
   if (Arguments::is_compiler_only()) {
     // Always report profiles as immature with -Xcomp
     return false;
   }
-  methodHandle mh(Thread::current(), method);
-  MethodData* mdo = method->method_data();
+  methodHandle mh(Thread::current(), mdo->method());
   if (mdo != nullptr) {
     int i = mdo->invocation_count();
     int b = mdo->backedge_count();

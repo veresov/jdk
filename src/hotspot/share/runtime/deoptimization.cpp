@@ -2035,6 +2035,8 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* current, jint tr
 
     CompiledMethod* nm = cvf->code();
 
+    bool is_precompiled = (nm->is_nmethod() && nm->as_nmethod()->from_recorded_data());
+
     ScopeDesc*      trap_scope  = cvf->scope();
 
     bool is_receiver_constraint_failure = COMPILER2_PRESENT(VerifyReceiverTypes &&) (reason == Deoptimization::Reason_receiver_constraint);
@@ -2250,6 +2252,14 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* current, jint tr
     // and until the compiler gets around to recompiling the trapping method.
     //
     // The other actions cause immediate removal of the present code.
+
+    if (is_precompiled && action != Action_none) {
+      if (Arguments::is_interpreter_only() || TieredStopAtLevel == CompLevel_none) {
+        action = Action_none;
+      } else {
+        action = Action_maybe_recompile;
+      }
+    }
 
     // Traps caused by injected profile shouldn't pollute trap counts.
     bool injected_profile_trap = trap_method->has_injected_profile() &&
@@ -2685,6 +2695,7 @@ const char* Deoptimization::_trap_reason_name[] = {
   "speculate_class_check",
   "speculate_null_check",
   "speculate_null_assert",
+  "speculate_value_assert",
   "rtm_state_change",
   "unstable_if",
   "unstable_fused_if",

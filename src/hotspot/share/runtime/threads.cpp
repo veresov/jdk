@@ -32,6 +32,7 @@
 #include "classfile/javaClasses.hpp"
 #include "classfile/javaThreadStatus.hpp"
 #include "classfile/systemDictionary.hpp"
+#include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "compiler/compileBroker.hpp"
@@ -817,6 +818,14 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
     MetaspaceShared::preload_and_dump();
     ShouldNotReachHere();
   }
+
+#if INCLUDE_CDS
+//  if (PreloadArchivedClasses > 0) {
+    assert(!HAS_PENDING_EXCEPTION, "");
+    SystemDictionaryShared::preload_archived_classes(THREAD);
+    assert(!HAS_PENDING_EXCEPTION, "");
+//  }
+#endif // INCLUDE_CDS
 
   return JNI_OK;
 }

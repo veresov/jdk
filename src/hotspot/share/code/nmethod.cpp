@@ -444,6 +444,8 @@ void nmethod::init_defaults() {
   _state                      = not_installed;
   _has_flushed_dependencies   = 0;
   _load_reported              = false; // jvmti state
+  _from_recorded_data         = false;
+  _from_recorded_data_marked  = false;
 
   _oops_do_mark_link       = nullptr;
   _osr_link                = nullptr;

@@ -58,6 +58,8 @@ class CompileTask : public CHeapObj<mtCompiler> {
       Reason_Whitebox,         // Whitebox API
       Reason_MustBeCompiled,   // Used for -Xcomp or AlwaysCompileLoopMethods (see CompilationPolicy::must_be_compiled())
       Reason_Bootstrap,        // JVMCI bootstrap
+      Reason_Precompile,
+      Reason_Recorded,
       Reason_Count
   };
 
@@ -70,7 +72,9 @@ class CompileTask : public CHeapObj<mtCompiler> {
       "replay",
       "whitebox",
       "must_be_compiled",
-      "bootstrap"
+      "bootstrap",
+      "precompile",
+      "recorded",
     };
     return reason_names[compile_reason];
   }
@@ -202,15 +206,17 @@ class CompileTask : public CHeapObj<mtCompiler> {
   CompileTrainingData* training_data() const     { return _training_data; }
   void set_training_data(CompileTrainingData*td) { _training_data = td; }
 
+  CompileReason compile_reason()                 { return _compile_reason; }
+
   // RedefineClasses support
   void         metadata_do(MetadataClosure* f);
   void         mark_on_stack();
 
 private:
   static void  print_impl(outputStream* st, Method* method, int compile_id, int comp_level,
-                                      bool is_osr_method = false, int osr_bci = -1, bool is_blocking = false, bool is_sca = false,
-                                      const char* compiler_name = nullptr,
-                                      const char* msg = nullptr, bool short_form = false, bool cr = true,
+                                      bool is_osr_method = false, int osr_bci = -1, bool is_blocking = false,
+                                      bool is_sca = false, bool from_recorded_data = false,
+                                      const char* compiler_name = nullptr, const char* msg = nullptr, bool short_form = false, bool cr = true,
                                       jlong time_queued = 0, jlong time_started = 0);
 
 public:
@@ -219,7 +225,7 @@ public:
   static void  print(outputStream* st, const nmethod* nm, const char* msg = nullptr, bool short_form = false, bool cr = true) {
     print_impl(st, nm->method(), nm->compile_id(), nm->comp_level(),
                            nm->is_osr_method(), nm->is_osr_method() ? nm->osr_entry_bci() : -1, /*is_blocking*/ false,
-                           nm->sca_entry() != nullptr, nm->compiler_name(), msg, short_form, cr);
+                           nm->sca_entry() != nullptr, nm->from_recorded_data(), nm->compiler_name(), msg, short_form, cr);
   }
   static void  print_ul(const nmethod* nm, const char* msg = nullptr);
 

@@ -1038,7 +1038,6 @@ void KlassTrainingData::init_holder(const InstanceKlass* klass) {
   }
 
   // reset state derived from any previous klass
-  _static_fields = nullptr;
   _fieldinit_count = 0;
   _clinit_is_done = false;
   _clinit_sequence_index = 0;
