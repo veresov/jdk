@@ -259,6 +259,12 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
       fmi_cpcache_index++;
       break;
     case JVM_CONSTANT_Methodref:
+      if (cp->cache() != nullptr) {
+        ConstantPoolCacheEntry* cpce = cp->cache()->entry_at(fmi_cpcache_index);
+        if (cpce->is_resolved(Bytecodes::_invokevirtual) || cpce->is_resolved(Bytecodes::_invokespecial)) {
+          list.append(cp_index);
+        }
+      }
       fmi_cpcache_index++;
       break;
     case JVM_CONSTANT_InterfaceMethodref:

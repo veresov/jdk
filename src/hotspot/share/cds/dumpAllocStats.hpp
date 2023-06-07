@@ -69,6 +69,8 @@ public:
   int _num_field_cp_entries_archived;
   int _num_klass_cp_entries;
   int _num_klass_cp_entries_archived;
+  int _num_method_cp_entries;
+  int _num_method_cp_entries_archived;
 
 public:
   enum { RO = 0, RW = 1 };
@@ -80,6 +82,8 @@ public:
     _num_field_cp_entries_archived = 0;
     _num_klass_cp_entries = 0;
     _num_klass_cp_entries_archived = 0;
+    _num_method_cp_entries = 0;
+    _num_method_cp_entries_archived = 0;
   };
 
   CompactHashtableStats* symbol_stats() { return &_symbol_stats; }
@@ -114,6 +118,11 @@ public:
   void record_klass_cp_entry(bool archived) {
     _num_klass_cp_entries ++;
     _num_klass_cp_entries_archived += archived ? 1 : 0;
+  }
+
+  void record_method_cp_entry(bool archived) {
+    _num_method_cp_entries ++;
+    _num_method_cp_entries_archived += archived ? 1 : 0;
   }
 
   void print_stats(int ro_all, int rw_all);

@@ -186,19 +186,33 @@ bool ClassPrelinker::can_archive_resolved_klass(InstanceKlass* cp_holder, Klass*
   return false;
 }
 
-bool ClassPrelinker::can_archive_resolved_field(ConstantPool* cp, int cp_index) {
+Klass* ClassPrelinker::get_fmi_ref_resolved_archivable_klass(ConstantPool* cp, int cp_index) {
   assert(!is_in_archivebuilder_buffer(cp), "sanity");
-  assert(cp->tag_at(cp_index).is_field(), "must be");
 
   int klass_cp_index = cp->uncached_klass_ref_index_at(cp_index);
   if (!cp->tag_at(klass_cp_index).is_klass()) {
     // Not yet resolved
-    return false;
+    return nullptr;
   }
   Klass* k = cp->resolved_klass_at(klass_cp_index);
   if (!can_archive_resolved_klass(cp->pool_holder(), k)) {
     // When we access this field at runtime, the target klass may
     // have a different definition.
+    return nullptr;
+  }
+  return k;
+}
+
+bool ClassPrelinker::can_archive_resolved_method(ConstantPool* cp, int cp_index) {
+  assert(cp->tag_at(cp_index).is_method(), "must be");
+  return get_fmi_ref_resolved_archivable_klass(cp, cp_index) != nullptr;
+}
+
+bool ClassPrelinker::can_archive_resolved_field(ConstantPool* cp, int cp_index) {
+  assert(cp->tag_at(cp_index).is_field(), "must be");
+
+  Klass* k = get_fmi_ref_resolved_archivable_klass(cp, cp_index);
+  if (k == nullptr) {
     return false;
   }
 
@@ -265,6 +279,7 @@ Klass* ClassPrelinker::find_loaded_class(JavaThread* THREAD, oop class_loader, S
   return nullptr;
 }
 
+#if 0 // not used today
 Klass* ClassPrelinker::maybe_resolve_class(constantPoolHandle cp, int cp_index, TRAPS) {
   assert(!is_in_archivebuilder_buffer(cp()), "sanity");
   InstanceKlass* cp_holder = cp->pool_holder();
@@ -299,6 +314,7 @@ Klass* ClassPrelinker::maybe_resolve_class(constantPoolHandle cp, int cp_index, 
 
   return resolved_klass;
 }
+#endif
 
 #if INCLUDE_CDS_JAVA_HEAP
 void ClassPrelinker::resolve_string(constantPoolHandle cp, int cp_index, TRAPS) {

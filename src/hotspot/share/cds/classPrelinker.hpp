@@ -97,6 +97,8 @@ class ClassPrelinker :  AllStatic {
   static Array<InstanceKlass*>* record_initiated_klasses(ClassesTable* table);
   static void runtime_preload(PreloadedKlasses* table, Handle loader, TRAPS);
   static void jvmti_agent_error(InstanceKlass* expected, InstanceKlass* actual, const char* type);
+  static Klass* get_fmi_ref_resolved_archivable_klass(ConstantPool* cp, int cp_index);
+
 public:
   static void initialize();
   static void dispose();
@@ -120,6 +122,7 @@ public:
   // Similar to can_archive_resolved_klass() -- returns true if cp_index is
   // guaranteed to resolve to the same result both dump time and run time.
   static bool can_archive_resolved_field(ConstantPool* cp, int cp_index);
+  static bool can_archive_resolved_method(ConstantPool* cp, int cp_index);
 
   static void record_preloaded_klasses(bool is_static_archive);
   static void record_initiated_klasses(bool is_static_archive);

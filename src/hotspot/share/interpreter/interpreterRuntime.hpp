@@ -97,6 +97,10 @@ class InterpreterRuntime: AllStatic {
                               methodHandle& m,
                               constantPoolHandle& pool,
                               ConstantPoolCacheEntry* cp_cache_entry, TRAPS);
+  static void cds_resolve_invoke(Bytecodes::Code bytecode, int raw_index,
+                                 methodHandle& m,
+                                 constantPoolHandle& pool,
+                                 ConstantPoolCacheEntry* cp_cache_entry, TRAPS);
  private:
   // Statics & fields
   static void resolve_get_put(JavaThread* current, Bytecodes::Code bytecode);
@@ -106,6 +110,10 @@ class InterpreterRuntime: AllStatic {
   static void resolve_invokehandle (JavaThread* current);
   static void resolve_invokedynamic(JavaThread* current);
 
+  static void update_invoke_cp_cache_entry(CallInfo& info, Bytecodes::Code bytecode,
+                                           methodHandle& resolved_method,
+                                           constantPoolHandle& pool,
+                                           ConstantPoolCacheEntry* cp_cache_entry);
  public:
   // Synchronization
   static void    monitorenter(JavaThread* current, BasicObjectLock* elem);

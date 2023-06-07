@@ -375,7 +375,10 @@ class ConstantPoolCacheEntry {
     assert((((u4)-1 >> tos_state_shift) & ~tos_state_mask) == 0, "no need for tos_state mask");
   }
 
-  void mark_and_relocate() NOT_CDS_RETURN;
+  bool mark_and_relocate(ConstantPool* src_cp) NOT_CDS_RETURN_(false);
+private:
+  bool mark_and_relocate_method_entry(ConstantPool* src_cp) NOT_CDS_RETURN_(false);
+  bool mark_and_relocate_field_entry(ConstantPool* src_cp) NOT_CDS_RETURN_(false);
 };
 
 
