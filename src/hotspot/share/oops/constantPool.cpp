@@ -28,6 +28,7 @@
 #include "cds/archiveBuilder.hpp"
 #include "cds/classPrelinker.hpp"
 #include "cds/heapShared.hpp"
+#include "classfile/classLoader.hpp"
 #include "classfile/classLoaderData.hpp"
 #include "classfile/javaClasses.inline.hpp"
 #include "classfile/metadataOnStackMark.hpp"
@@ -62,7 +63,8 @@
 #include "runtime/handles.inline.hpp"
 #include "runtime/init.hpp"
 #include "runtime/javaCalls.hpp"
-#include "runtime/javaThread.hpp"
+#include "runtime/javaThread.inline.hpp"
+#include "runtime/perfData.hpp"
 #include "runtime/signature.hpp"
 #include "runtime/vframe.inline.hpp"
 #include "utilities/copy.hpp"
@@ -1085,7 +1087,9 @@ oop ConstantPool::resolve_constant_at_impl(const constantPoolHandle& this_cp,
     }
 
   case JVM_CONSTANT_Dynamic:
-    {
+    { PerfTraceTimedEvent timer(ClassLoader::perf_resolve_invokedynamic_time(),
+                                ClassLoader::perf_resolve_invokedynamic_count(),
+                                THREAD->class_being_initialized() == nullptr);
       // Resolve the Dynamically-Computed constant to invoke the BSM in order to obtain the resulting oop.
       BootstrapInfo bootstrap_specifier(this_cp, index);
 
@@ -1143,7 +1147,9 @@ oop ConstantPool::resolve_constant_at_impl(const constantPoolHandle& this_cp,
     break;
 
   case JVM_CONSTANT_MethodHandle:
-    {
+    { PerfTraceTimedEvent timer(ClassLoader::perf_resolve_method_handle_time(),
+                                ClassLoader::perf_resolve_method_handle_count(),
+                                THREAD->class_being_initialized() == nullptr);
       int ref_kind                 = this_cp->method_handle_ref_kind_at(index);
       int callee_index             = this_cp->method_handle_klass_index_at(index);
       Symbol*  name =      this_cp->method_handle_name_ref_at(index);
@@ -1191,7 +1197,9 @@ oop ConstantPool::resolve_constant_at_impl(const constantPoolHandle& this_cp,
     }
 
   case JVM_CONSTANT_MethodType:
-    {
+    { PerfTraceTimedEvent timer(ClassLoader::perf_resolve_method_type_time(),
+                                ClassLoader::perf_resolve_method_type_count(),
+                                THREAD->class_being_initialized() == nullptr);
       Symbol*  signature = this_cp->method_type_signature_at(index);
       { ResourceMark rm(THREAD);
         log_debug(class, resolve)("resolve JVM_CONSTANT_MethodType [%d/%d] %s",

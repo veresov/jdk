@@ -27,6 +27,7 @@
 #include "cds/classListWriter.hpp"
 #include "cds/dynamicArchive.hpp"
 #include "cds/methodProfiler.hpp"
+#include "classfile/classLoader.hpp"
 #include "classfile/classLoaderDataGraph.hpp"
 #include "classfile/javaClasses.hpp"
 #include "classfile/stringTable.hpp"
@@ -63,6 +64,7 @@
 #include "runtime/continuation.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/flags/flagSetting.hpp"
+#include "runtime/globals_extension.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/init.hpp"
 #include "runtime/interfaceSupport.inline.hpp"
@@ -340,6 +342,11 @@ void print_statistics() {
   }
 
   ThreadsSMRSupport::log_statistics();
+
+  if (UsePerfData) {
+    SharedRuntime::print_counters();
+    ClassLoader::print_counters();
+  }
 }
 
 #else // PRODUCT MODE STATISTICS
@@ -391,6 +398,11 @@ void print_statistics() {
   }
 
   ThreadsSMRSupport::log_statistics();
+
+  if (UsePerfData) {
+    SharedRuntime::print_counters();
+    ClassLoader::print_counters();
+  }
 }
 
 #endif
