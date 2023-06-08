@@ -1267,6 +1267,18 @@ void InstanceKlass::set_initialization_state_and_notify(ClassState state, JavaTh
     set_init_thread(nullptr); // reset _init_thread before changing _init_state
     set_init_state(state);
   }
+
+  if (RecordTraining && state == ClassState::fully_initialized) {
+    KlassTrainingData* ktd = KlassTrainingData::make(this);
+    for (JavaFieldStream fs(this); !fs.done(); fs.next()) {
+      if (fs.access_flags().is_static() &&
+          fs.access_flags().is_final() &&
+          fs.initval_index() == 0) { // skip constants initialized directly by the JVM
+        SystemDictionaryShared::record_static_field_value(fs.field_descriptor());
+      }
+    }
+  }
+
   ml.notify_all();
 }
 
@@ -4155,6 +4167,8 @@ void InstanceKlass::set_init_state(ClassState state) {
 #endif
   assert(_init_thread == nullptr, "should be cleared before state change");
   Atomic::store(&_init_state, state);
+
+  SystemDictionaryShared::record_init_info(this);
 }
 
 #if INCLUDE_JVMTI

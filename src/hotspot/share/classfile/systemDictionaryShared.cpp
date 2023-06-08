@@ -83,14 +83,10 @@
 SystemDictionaryShared::ArchiveInfo SystemDictionaryShared::_static_archive;
 SystemDictionaryShared::ArchiveInfo SystemDictionaryShared::_dynamic_archive;
 
-DumpTimeSharedClassTable* SystemDictionaryShared::_dumptime_table = nullptr;
+DumpTimeSharedClassTable*           SystemDictionaryShared::_dumptime_table                         = nullptr;
 DumpTimeLambdaProxyClassDictionary* SystemDictionaryShared::_dumptime_lambda_proxy_class_dictionary = nullptr;
-
-DumpTimeMethodInfoDictionary* SystemDictionaryShared::_dumptime_method_info_dictionary = nullptr;
-DumpTimeMethodInfoDictionary* SystemDictionaryShared::_cloned_dumptime_method_info_dictionary = nullptr;
-
-GrowableArray<InitInfo>* SystemDictionaryShared::_dumptime_init_list = nullptr;
-GrowableArray<InitInfo>* SystemDictionaryShared::_cloned_dumptime_init_list = nullptr;
+DumpTimeMethodInfoDictionary*       SystemDictionaryShared::_dumptime_method_info_dictionary        = nullptr;
+GrowableArray<InitInfo>*            SystemDictionaryShared::_dumptime_init_list                     = nullptr;
 
 // Used by NoClassLoadingMark
 DEBUG_ONLY(bool SystemDictionaryShared::_class_loading_may_happen = true;)
