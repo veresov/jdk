@@ -638,18 +638,101 @@ void ConstantPoolCacheEntry::verify(outputStream* st) const {
 }
 
 #if INCLUDE_CDS
-void ConstantPoolCacheEntry::mark_and_relocate() {
+static void mark_and_update_orig_to_buffered(address* p) {
+  assert(*p != nullptr, "sanity");
+  if (!ArchiveBuilder::current()->is_in_mapped_static_archive(*p)) {
+    *p = ArchiveBuilder::current()->get_buffered_addr(*p);
+  }
+  ArchivePtrMarker::mark_pointer(p);
+}
+
+bool ConstantPoolCacheEntry::mark_and_relocate(ConstantPool* src_cp) {
+  if (is_method_entry()) {
+    return mark_and_relocate_method_entry(src_cp);
+  } else {
+    return mark_and_relocate_field_entry(src_cp);
+  }
+}
+
+bool ConstantPoolCacheEntry::mark_and_relocate_method_entry(ConstantPool* src_cp) {
+  assert(is_method_entry(), "sanity");
+
+  Bytecodes::Code invoke_code = bytecode_1();
+  if (invoke_code != (Bytecodes::Code)0) {
+    Metadata* f1 = f1_ord();
+    if (f1 != nullptr) {
+      mark_and_update_orig_to_buffered((address*)&_f1);
+      switch (invoke_code) {
+      case Bytecodes::_invokeinterface:
+        assert(0, "not implemented");
+        //assert(f1->is_klass(), "");
+        //mark_and_update_orig_to_buffered((address*)&_f2); // f2 is interface method
+        return false;
+      case Bytecodes::_invokestatic:
+        assert(0, "not implemented");
+        return false;
+      case Bytecodes::_invokespecial:
+        assert(f1->is_method(), "must be");
+        break;
+      case Bytecodes::_invokehandle:
+        assert(0, "not implemented");
+        // assert(f1->is_method(), "");
+        return false;
+      default:
+        ShouldNotReachHere();
+        break;
+      }
+    }
+  }
+
+  // TODO test case: can invokespecial and invokevirtual share the same CP?
+  invoke_code = bytecode_2();
+  if (invoke_code != (Bytecodes::Code)0) {
+    assert(invoke_code == Bytecodes::_invokevirtual, "must be");
+    if (is_vfinal()) {
+      // f2 is vfinal method
+      mark_and_update_orig_to_buffered((address*)&_f2); // f2 is final method
+    } else {
+      // f2 is vtable index, no need to mark
+      if (DynamicDumpSharedSpaces) {
+        // InstanceKlass::methods() is has been resorted, so we need to
+        // update the vtable_index.
+        int holder_index = src_cp->uncached_klass_ref_index_at(constant_pool_index());
+        Klass* src_klass = src_cp->resolved_klass_at(holder_index);
+        Method* src_m = src_klass->method_at_vtable(f2_as_index());
+        if (!ArchiveBuilder::current()->is_in_mapped_static_archive(src_m->method_holder()) &&
+            !ArchiveBuilder::current()->is_in_mapped_static_archive(src_m)) {
+          Klass* buffered_klass = ArchiveBuilder::current()->get_buffered_addr(src_klass);
+          Method* buffered_m = ArchiveBuilder::current()->get_buffered_addr(src_m);
+          int vtable_index;
+          if (src_m->method_holder()->is_interface()) { // default or miranda method
+            assert(src_m->vtable_index() < 0, "must be");
+            assert(buffered_klass->is_instance_klass(), "must be");
+            vtable_index = InstanceKlass::cast(buffered_klass)->vtable_index_of_interface_method(buffered_m);
+            assert(vtable_index >= 0, "must be");
+          } else {
+            vtable_index = buffered_m->vtable_index();
+            assert(vtable_index >= 0, "must be");
+          }
+          if (_f2 != vtable_index) {
+            log_trace(cds, resolve)("vtable_index changed %d => %d", (int)_f2, vtable_index);
+            _f2 = vtable_index;
+          }
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool ConstantPoolCacheEntry::mark_and_relocate_field_entry(ConstantPool* src_cp) {
+  assert(is_field_entry(), "sanity");
   assert(is_resolved(Bytecodes::_getfield), "only this is implemented for now");
   Klass* klass = (Klass*)_f1;
   assert(klass != NULL && klass->is_klass(), "must be");
-  if (klass->is_shared()) {
-    assert(DynamicDumpSharedSpaces, "A dynamically dumped class refers to a class in the static archive");
-  } else {
-    // Relocate it to point to the buffered klass.
-    Klass* buffered = ArchiveBuilder::get_buffered_klass(klass);
-    _f1 = buffered;
-  }
-  ArchivePtrMarker::mark_pointer((address*)(&_f1));
+  mark_and_update_orig_to_buffered((address*)&_f1);
+  return true;
 }
 #endif
 

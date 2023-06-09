@@ -803,8 +803,8 @@ void ClassListParser::parse_constant_pool_tag() {
 
   ResourceMark rm(THREAD);
   ConstantPool* cp = ik->constants();
-  GrowableArray<bool> resolve_field_list(cp->length(), cp->length(), false);
-  bool has_field_index = false;
+  GrowableArray<bool> resolve_fmi_list(cp->length(), cp->length(), false);
+  bool has_fmi_index = false;
   while (*_token) {
     int cp_index;
     skip_whitespaces();
@@ -827,8 +827,12 @@ void ClassListParser::parse_constant_pool_tag() {
       // ignore
       break;
     case JVM_CONSTANT_Fieldref:
-      resolve_field_list.at_put(cp_index, true);
-      has_field_index = true;
+      resolve_fmi_list.at_put(cp_index, true);
+      has_fmi_index = true;
+      break;
+    case JVM_CONSTANT_Methodref:
+      resolve_fmi_list.at_put(cp_index, true);
+      has_fmi_index = true;
       break;
     default:
       constant_pool_resolution_warning("Unsupported constant pool index %d (type=%d)",
@@ -837,17 +841,20 @@ void ClassListParser::parse_constant_pool_tag() {
     }
   }
 
-  if (has_field_index && cp->cache() != nullptr) {
+  if (has_fmi_index && cp->cache() != nullptr) {
     // Resolve all getfield/setfield bytecodes if possible.
     for (int i = 0; i < ik->methods()->length(); i++) {
       Method* m = ik->methods()->at(i);
       BytecodeStream bcs(methodHandle(THREAD, m));
       while (!bcs.is_last_bytecode()) {
         bcs.next();
-        switch (bcs.raw_code()) {
+        Bytecodes::Code bc = bcs.raw_code();
+        switch (bc) {
         case Bytecodes::_getfield:
         case Bytecodes::_putfield:
-          maybe_resolve_field(ik, m, bcs.raw_code(), bcs.get_index_u2_cpcache(), &resolve_field_list, THREAD);
+        case Bytecodes::_invokespecial:
+        case Bytecodes::_invokevirtual:
+          maybe_resolve_fmi_ref(ik, m, bc, bcs.get_index_u2_cpcache(), &resolve_fmi_list, THREAD);
           if (HAS_PENDING_EXCEPTION) {
             CLEAR_PENDING_EXCEPTION; // just ignore
           }
@@ -860,31 +867,47 @@ void ClassListParser::parse_constant_pool_tag() {
   }
 }
 
-void ClassListParser::maybe_resolve_field(InstanceKlass* ik, Method* m, Bytecodes::Code bc, int which,
-                                          GrowableArray<bool>* resolve_field_list, TRAPS) {
+void ClassListParser::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecodes::Code bc, int raw_index,
+                                            GrowableArray<bool>* resolve_fmi_list, TRAPS) {
   methodHandle mh(THREAD, m);
   constantPoolHandle cp(THREAD, ik->constants());
 
-  int cpc_index = cp->decode_cpcache_index(which);
+  int cpc_index = cp->decode_cpcache_index(raw_index);
   ConstantPoolCacheEntry* cp_cache_entry = cp->cache()->entry_at(cpc_index);
   if (cp_cache_entry->is_resolved(bc)) {
     return;
   }
   int cp_index = cp_cache_entry->constant_pool_index();
-  if (!resolve_field_list->at(cp_index)) {
-    // This field wasn't resolved during thr trial run. Don't attempt to resolve it. Otherwise
+  if (!resolve_fmi_list->at(cp_index)) {
+    // This field wasn't resolved during the trial run. Don't attempt to resolve it. Otherwise
     // the compiler may generate less efficient code.
     return;
   }
 
-  InterpreterRuntime::resolve_get_put(bc, which, mh, cp, cp_cache_entry, CHECK);
+  const char* ref_kind = "";
+  switch (bc) {
+  case Bytecodes::_getfield:
+  case Bytecodes::_putfield:
+    InterpreterRuntime::resolve_get_put(bc, raw_index, mh, cp, cp_cache_entry, CHECK);
+    ref_kind = "field ";
+    break;
+  case Bytecodes::_invokevirtual:
+    InterpreterRuntime::cds_resolve_invoke(bc, raw_index, mh, cp, cp_cache_entry, CHECK);
+    ref_kind = "method";
+    break;
+  case Bytecodes::_invokespecial:
+    // Not implemented yet.
+    return;
+  default:
+    ShouldNotReachHere();
+  }
 
   if (log_is_enabled(Trace, cds, resolve)) {
     ResourceMark rm(THREAD);
-    Klass* resolved_klass = cp->klass_ref_at(which, bc, CHECK);
-    Symbol* name = cp->name_ref_at(which, bc);
-    Symbol* signature = cp->signature_ref_at(which, bc);
-    log_trace(cds, resolve)("Resolved field [%d] %s -> %s.%s:%s", cp_index, ik->external_name(),
+    Klass* resolved_klass = cp->klass_ref_at(raw_index, bc, CHECK);
+    Symbol* name = cp->name_ref_at(raw_index, bc);
+    Symbol* signature = cp->signature_ref_at(raw_index, bc);
+    log_trace(cds, resolve)("Resolved %s [%3d] %s -> %s.%s:%s", ref_kind, cp_index, ik->external_name(),
                             resolved_klass->external_name(),
                             name->as_C_string(), signature->as_C_string());
   }

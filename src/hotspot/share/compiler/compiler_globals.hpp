@@ -395,7 +395,7 @@
   product(bool, LoadSharedCode, false,                                      \
           "Load compiled code")                                             \
                                                                             \
-  product(bool, UseMetadataPointers, false,                                 \
+  product(bool, UseMetadataPointers, true,                                  \
           "Store Metadata pointers")                                        \
                                                                             \
   product(bool, UseCodeLoadThread, true,                                    \

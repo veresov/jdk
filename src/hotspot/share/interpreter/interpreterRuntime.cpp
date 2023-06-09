@@ -877,8 +877,16 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
 
   // check if link resolution caused cpCache to be updated
   ConstantPoolCacheEntry* cp_cache_entry = last_frame.cache_entry();
-  if (cp_cache_entry->is_resolved(bytecode)) return;
 
+  update_invoke_cp_cache_entry(info, bytecode, resolved_method, pool, cp_cache_entry);
+}
+
+
+void InterpreterRuntime::update_invoke_cp_cache_entry(CallInfo& info, Bytecodes::Code bytecode,
+                                                      methodHandle& resolved_method,
+                                                      constantPoolHandle& pool,
+                                                      ConstantPoolCacheEntry* cp_cache_entry) {
+  if (cp_cache_entry->is_resolved(bytecode)) return;
 #ifdef ASSERT
   if (bytecode == Bytecodes::_invokeinterface) {
     if (resolved_method->method_holder() == vmClasses::Object_klass()) {
@@ -933,6 +941,19 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
   }
 }
 
+
+void InterpreterRuntime::cds_resolve_invoke(Bytecodes::Code bytecode, int raw_index,
+                                            methodHandle& m,
+                                            constantPoolHandle& pool,
+                                            ConstantPoolCacheEntry* cp_cache_entry, TRAPS) {
+  assert(bytecode == Bytecodes::_invokevirtual, "only this is supported now");
+  LinkInfo link_info(pool, raw_index, Bytecodes::_invokevirtual, CHECK);
+  CallInfo call_info;
+  LinkResolver::cds_resolve_virtual_call(call_info, link_info, CHECK);
+
+  methodHandle resolved_method(THREAD, call_info.resolved_method());
+  update_invoke_cp_cache_entry(call_info, bytecode, resolved_method, pool, cp_cache_entry);
+}
 
 // First time execution:  Resolve symbols, create a permanent MethodType object.
 void InterpreterRuntime::resolve_invokehandle(JavaThread* current) {

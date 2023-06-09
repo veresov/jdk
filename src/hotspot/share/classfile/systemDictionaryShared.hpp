@@ -368,15 +368,15 @@ private:
 
   static void cleanup_init_list();
 
-  static bool is_jfr_event_class(InstanceKlass *k);
   static bool is_registered_lambda_proxy_class(InstanceKlass* ik);
   static bool check_for_exclusion_impl(InstanceKlass* k);
   static void remove_dumptime_info(InstanceKlass* k) NOT_CDS_RETURN;
-  static bool has_been_redefined(InstanceKlass* k);
 
   DEBUG_ONLY(static bool _class_loading_may_happen;)
 
 public:
+  static bool has_been_redefined(InstanceKlass* k);
+  static bool is_jfr_event_class(InstanceKlass *k);
   static bool is_hidden_lambda_proxy(InstanceKlass* ik);
   static bool is_early_klass(InstanceKlass* k);   // Was k loaded while JvmtiExport::is_early_phase()==true
   static bool has_archived_enum_objs(InstanceKlass* ik);

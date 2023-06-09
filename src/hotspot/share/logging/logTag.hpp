@@ -104,6 +104,7 @@ class outputStream;
   LOG_TAG(jvmci) \
   LOG_TAG(jvmti) \
   LOG_TAG(lambda) \
+  LOG_TAG(leyden) \
   LOG_TAG(library) \
   LOG_TAG(liveness) \
   LOG_TAG(load) /* Trace all classes loaded */ \
@@ -200,6 +201,7 @@ class outputStream;
   LOG_TAG(timer) \
   LOG_TAG(tlab) \
   LOG_TAG(tracking) \
+  LOG_TAG(training) \
   LOG_TAG(unload) /* Trace unloading of classes */ \
   LOG_TAG(unshareable) \
   NOT_PRODUCT(LOG_TAG(upcall)) \

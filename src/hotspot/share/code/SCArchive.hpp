@@ -31,6 +31,7 @@ class ciEnv;
 class ciMethod;
 class CodeBuffer;
 class CodeOffsets;
+class CompileTask;
 class DebugInformationRecorder;
 class Dependencies;
 class ExceptionTable;
@@ -225,13 +226,18 @@ private:
   void  set_read_position(uint pos);
   const char* addr(uint offset) const { return _load_buffer + offset; }
 
+  uint _compile_id;
+  uint _comp_level;
+  uint compile_id() const { return _compile_id; }
+  uint comp_level() const { return _comp_level; }
+
   bool _lookup_failed;       // Failed to lookup for info (skip only this code load)
   void set_lookup_failed()     { _lookup_failed = true; }
   void clear_lookup_failed()   { _lookup_failed = false; }
   bool lookup_failed()   const { return _lookup_failed; }
 
 public:
-  SCAReader(SCAFile* archive, SCAEntry* entry);
+  SCAReader(SCAFile* archive, SCAEntry* entry, CompileTask* task);
 
   bool compile(ciEnv* env, ciMethod* target, int entry_bci, AbstractCompiler* compiler);
   bool compile_blob(CodeBuffer* buffer, int* pc_offset);
@@ -278,6 +284,11 @@ private:
   SCAEntry* _store_entries;    // Used when writing archive
   const char* _C_strings_buf;  // Loaded buffer for _C_strings[] table
   uint      _store_entries_cnt;
+
+  uint _compile_id;
+  uint _comp_level;
+  uint compile_id() const { return _compile_id; }
+  uint comp_level() const { return _comp_level; }
 
   static SCAFile* open_for_read();
   static SCAFile* open_for_write();
@@ -398,6 +409,7 @@ public:
   static SCAEntry* find_code_entry(const methodHandle& method, uint comp_level);
 
   static void add_C_string(const char* str);
+  static void print_timers();
 };
 
 #endif // SHARE_CODE_SCARCHIVE_HPP

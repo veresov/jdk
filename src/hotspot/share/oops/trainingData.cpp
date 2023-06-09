@@ -211,7 +211,6 @@ MethodTrainingData* MethodTrainingData::make(const methodHandle& method,
       return mtd;
     }
   }
-
   assert(td == nullptr && mtd == nullptr, "Should return if have result");
   KlassTrainingData* ktd = KlassTrainingData::make(method->method_holder());
   {
@@ -307,6 +306,19 @@ CompileTrainingData* CompileTrainingData::make(MethodTrainingData* this_method,
     top_method->_highest_top_level = MAX2(top_method->_highest_top_level, level);
   }
   return tdata;
+}
+
+void CompileTrainingData::dec_init_deps_left(KlassTrainingData* ktd) {
+  LogStreamHandle(Trace, training) log;
+  if (log.is_enabled()) {
+    log.print("CTD "); print_on(&log); log.cr();
+    log.print("KTD "); ktd->print_on(&log); log.cr();
+  }
+  assert(ktd!= nullptr && ktd->has_holder(), "");
+  assert(_init_deps.contains(ktd), "");
+  assert(_init_deps_left > 0, "");
+
+  Atomic::sub(&_init_deps_left, 1);
 }
 
 void CompileTrainingData::print_on(outputStream* st, bool name_only) const {
@@ -1084,7 +1096,7 @@ bool KlassTrainingData::add_initialization_touch(Klass* requester) {
   if (requester == nullptr || !requester->is_instance_klass())
     return false;
   auto rtd = KlassTrainingData::make(InstanceKlass::cast(requester));
-  if (rtd != nullptr) {
+  if (rtd != nullptr && rtd != this) {
     // The requester is asking that I be initialized; this means
     // that I should be added to his _init_deps list.up
     TrainingDataLocker l;
@@ -1570,7 +1582,26 @@ TrainingData* TrainingData::lookup_archived_training_data(const Key* k) {
     return nullptr;
   }
   uint hash = TrainingData::Key::cds_hash(k);
-  return _archived_training_data_dictionary.lookup(k, hash, -1 /*unused*/);
+  TrainingData* td = _archived_training_data_dictionary.lookup(k, hash, -1 /*unused*/);
+  if (td != nullptr) {
+    if ((td->is_KlassTrainingData()  && td->as_KlassTrainingData()->has_holder()) ||
+        (td->is_MethodTrainingData() && td->as_MethodTrainingData()->has_holder())) {
+      return td;
+    } else {
+      // FIXME: decide what to do with symbolic TD
+      LogStreamHandle(Info,training) log;
+      if (log.is_enabled()) {
+        ResourceMark rm;
+        log.print_cr("Ignored symbolic TrainingData:");
+        log.print_cr("  Key: %s %s",
+                     (k->name1() != nullptr ? k->name1()->as_C_string() : "(null)"),
+                     (k->name2() != nullptr ? k->name2()->as_C_string() : "(null)"));
+        td->print_on(&log);
+        log.cr();
+      }
+    }
+  }
+  return nullptr;
 }
 
 template <typename T>
