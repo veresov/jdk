@@ -115,7 +115,7 @@
           "Preload classes from archives")                                  \
            range(0, 63)                                                     \
                                                                             \
-  product(int, PrecompileLevel, 4, DIAGNOSTIC,                              \
+  product(int, PrecompileLevel, 0, DIAGNOSTIC,                              \
           "Precompile archived methods")                                    \
            range(0, 4)                                                      \
                                                                             \
