@@ -1720,11 +1720,13 @@ void InitInfo::print_on(outputStream* st) {
       st->print(" ");
       if (klass() != nullptr) {
         klass()->print_value_on(st);
+      } else if (name() != nullptr) {
+        st->print("[SYM]%s", name()->as_C_string());
       }
       InstanceKlass::ClassState s = (InstanceKlass::ClassState)(value());
       st->print(" %s", InstanceKlass::state2name(s));
       break;
-    }// fall-through
+    }
     case invokedynamic: {
       st->print(" ");
       if (klass() != nullptr) {
@@ -1775,7 +1777,7 @@ void InitInfo::print_on(outputStream* st) {
           st->print(" +%d = " JLONG_FORMAT, _val, _value._long);
         }
       } else {
-        st->print("(SYM)%s+%d = " JLONG_FORMAT, name()->as_C_string(), _val, _value._long);
+        st->print("[SYM]%s+%d = " JLONG_FORMAT, name()->as_C_string(), _val, _value._long);
       }
       break;
     }
