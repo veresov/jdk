@@ -1496,16 +1496,18 @@ bool SCAFile::write_relocations(CodeBuffer* buffer, uint& all_reloc_size) {
         case relocInfo::virtual_call_type:  // Fall through. They all call resolve_*_call blobs.
         case relocInfo::opt_virtual_call_type:
         case relocInfo::static_call_type: {
+          address addr = ((CallRelocation*)iter.reloc())->addr();
           address dest = ((CallRelocation*)iter.reloc())->destination();
-          reloc_data[j] = _table->id_for_address(dest, iter, buffer);
+          reloc_data[j] = (addr != dest ? _table->id_for_address(dest, iter, buffer) : -1); // FIXME: AARCH64: trampoline?
           break;
         }
         case relocInfo::static_stub_type:
           break;
         case relocInfo::runtime_call_type: {
           // Record offset of runtime destination
+          address addr = ((CallRelocation*)iter.reloc())->addr();
           address dest = ((CallRelocation*)iter.reloc())->destination();
-          reloc_data[j] = _table->id_for_address(dest, iter, buffer);
+          reloc_data[j] = (addr != dest ? _table->id_for_address(dest, iter, buffer) : -1); // FIXME: AARCH64: trampoline?
           break;
         }
         case relocInfo::runtime_call_w_cp_type:
@@ -1527,6 +1529,9 @@ bool SCAFile::write_relocations(CodeBuffer* buffer, uint& all_reloc_size) {
           break;
         case relocInfo::post_call_nop_type:
           break;
+        case relocInfo::trampoline_stub_type:
+        case relocInfo::entry_guard_type:
+          break; // FIXME
         default:
           fatal("relocation %d unimplemented", (int)iter.type());
           break;
@@ -2833,6 +2838,7 @@ void SCAddressTable::init() {
   SET_ADDRESS(_stubs, StubRoutines::aarch64::float_sign_flip());
   SET_ADDRESS(_stubs, StubRoutines::aarch64::double_sign_mask());
   SET_ADDRESS(_stubs, StubRoutines::aarch64::double_sign_flip());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::zero_blocks());
 #endif
 
   // Blobs
