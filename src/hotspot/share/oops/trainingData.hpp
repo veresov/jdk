@@ -439,6 +439,7 @@ class KlassTrainingData : public TrainingData {
   }
   void add_init_dep(KlassTrainingData* ktd) {
     TrainingDataLocker::assert_locked();
+    guarantee(ktd != this, "");
     _init_deps.append_if_missing(ktd);
   }
 
@@ -677,18 +678,15 @@ public:
     ktd->add_comp_dep(this);
     _init_deps.append_if_missing(ktd);
   }
-  void dec_init_deps_left(KlassTrainingData* ktd) {
-    assert(verify_init_deps(ktd), "");
-    assert(_init_deps_left > 0, "");
-    Atomic::sub(&_init_deps_left, 1);
-  }
+  void dec_init_deps_left(KlassTrainingData* ktd);
   int init_deps_left() const {
     return _init_deps_left;
   }
   void initialize_deps_tracking() {
     for (int i = 0; i < _init_deps.length(); i++) {
-      if (_init_deps.at(i)->has_holder()) {
-        _init_deps_left++; // ignore symbolic refs
+      KlassTrainingData* dep = _init_deps.at(i);
+      if (dep->has_holder() && !dep->holder()->is_initialized()) {
+        _init_deps_left++; // ignore symbolic refs && already initialized classes
       }
     }
   }
@@ -730,17 +728,6 @@ public:
   static CompileTrainingData* allocate(MethodTrainingData* this_method,
                                        MethodTrainingData* top_method,
                                        int level, int compile_id);
-
-#ifdef ASSERT
-  bool verify_init_deps(KlassTrainingData* ktd) {
-    if (ktd->has_holder() && _init_deps.contains(ktd)) {
-      return true;
-    }
-    tty->print("CTD "); this->print_on(tty); tty->cr();
-    tty->print("KTD "); ktd->print_on(tty); tty->cr();
-    return false;
-  }
-#endif // ASSERT
 };
 
 // Record information about a method at the time compilation is requested.
