@@ -125,8 +125,6 @@ class Method : public Metadata {
 #if INCLUDE_CDS
   void remove_unshareable_info();
   void restore_unshareable_info(TRAPS);
-
-  int _cds_info; // FIXME: doesn't work with static archive
 #endif
 
   // accessors for instance variables

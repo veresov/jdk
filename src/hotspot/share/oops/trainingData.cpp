@@ -301,9 +301,12 @@ CompileTrainingData* CompileTrainingData::make(MethodTrainingData* this_method,
   }
   tdata->_next = (*insp);
   (*insp) = tdata;
-  if (top_method->_last_toplevel_compiles[level - 1] == nullptr || top_method->_last_toplevel_compiles[level - 1]->compile_id() < compile_id) {
-    top_method->_last_toplevel_compiles[level - 1] = tdata;
+  if (top_method->_last_compiles[level - 1] == nullptr || top_method->_last_compiles[level - 1]->compile_id() < compile_id) {
+    top_method->_last_compiles[level - 1] = tdata;
     top_method->_highest_top_level = MAX2(top_method->_highest_top_level, level);
+  }
+  if (top_method->_first_compiles[level - 1] == nullptr || top_method->_first_compiles[level - 1]->compile_id() > compile_id) {
+    top_method->_first_compiles[level - 1] = tdata;
   }
   return tdata;
 }
@@ -311,14 +314,21 @@ CompileTrainingData* CompileTrainingData::make(MethodTrainingData* this_method,
 void CompileTrainingData::dec_init_deps_left(KlassTrainingData* ktd) {
   LogStreamHandle(Trace, training) log;
   if (log.is_enabled()) {
-    log.print("CTD "); print_on(&log); log.cr();
-    log.print("KTD "); ktd->print_on(&log); log.cr();
+    log.print("CTD "); print_on(&log);
+    log.print("; KTD "); ktd->print_on(&log);
   }
   assert(ktd!= nullptr && ktd->has_holder(), "");
   assert(_init_deps.contains(ktd), "");
   assert(_init_deps_left > 0, "");
 
-  Atomic::sub(&_init_deps_left, 1);
+  int v = Atomic::sub(&_init_deps_left, 1);
+
+  if (v == 0) {
+    LogStreamHandle(Info, training) log;
+    if (log.is_enabled()) {
+      log.print("CTD "); print_on(&log); log.cr();
+    }
+  }
 }
 
 void CompileTrainingData::print_on(outputStream* st, bool name_only) const {
@@ -1624,7 +1634,8 @@ void MethodTrainingData::metaspace_pointers_do(MetaspaceClosure* iter) {
   iter->push((Method**)&_holder);
   iter->push(&_compile);
   for (int i = 0; i < CompLevel_count; i++) {
-    iter->push(&_last_toplevel_compiles[i]);
+    iter->push(&_first_compiles[i]);
+    iter->push(&_last_compiles[i]);
   }
   iter->push(&_final_profile);
   iter->push(&_final_counters);
@@ -1758,10 +1769,9 @@ void TrainingDataPrinter::do_value(const RunTimeMethodDataInfo* record) {
 }
 
 void TrainingDataPrinter::do_value(TrainingData* td) {
-  assert(td == TrainingData::lookup_archived_training_data(td->key()), "");
-
   TrainingData::Key key(td->key()->name1(), td->key()->name2(), td->key()->holder());
-  assert(td == TrainingData::lookup_archived_training_data(&key), "");
+  assert(td == TrainingData::archived_training_data_dictionary()->lookup(td->key(), TrainingData::Key::cds_hash(td->key()), -1), "");
+  assert(td == TrainingData::archived_training_data_dictionary()->lookup(&key, TrainingData::Key::cds_hash(&key), -1), "");
 
   const char* type = (td->is_KlassTrainingData()   ? "K" :
                       td->is_MethodTrainingData()  ? "M" :

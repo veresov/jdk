@@ -120,7 +120,6 @@ Method::Method(ConstMethod* xconst, AccessFlags access_flags, Symbol* name) {
   }
 
 #if INCLUDE_CDS
-  _cds_info = 0;
 //  _archived_method_counters = nullptr;
 //  _archived_method_data = nullptr;
 #endif // INCLUDE_CDS
