@@ -34,6 +34,7 @@
 #include "classfile/metadataOnStackMark.hpp"
 #include "classfile/stringTable.hpp"
 #include "classfile/systemDictionary.hpp"
+#include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "code/codeCache.hpp"
@@ -383,14 +384,20 @@ void ConstantPool::remove_unshareable_info() {
   set_resolved_reference_length(
     resolved_references() != nullptr ? resolved_references()->length() : 0);
   set_resolved_references(OopHandle());
+}
 
+void ConstantPool::archive_entries() {
+  if (!_pool_holder->is_linked() && !_pool_holder->verified_at_dump_time()) {
+    return;
+  }
   ResourceMark rm;
   GrowableArray<bool> keep_cpcache(cache()->length(), cache()->length(), false);
   bool archived = false;
   int fmi_cpcache_index = 0; // cpcache index for Fieldref/Methodref/InterfaceMethodref
 
   for (int index = 1; index < length(); index++) { // Index 0 is unused
-    switch (tag_at(index).value()) {
+    int cp_tag = tag_at(index).value();
+    switch (cp_tag) {
     case JVM_CONSTANT_UnresolvedClass:
       ArchiveBuilder::alloc_stats()->record_klass_cp_entry(false);
       break;
@@ -413,17 +420,23 @@ void ConstantPool::remove_unshareable_info() {
       break;
     case JVM_CONSTANT_Fieldref:
       if (ArchiveFieldReferences) {
-        archived = maybe_archive_resolved_fieldref_at(index, fmi_cpcache_index);
-        ArchiveBuilder::alloc_stats()->record_field_cp_entry(archived);
+        archived = maybe_archive_resolved_fmi_ref_at(index, fmi_cpcache_index, cp_tag);
       } else {
         archived = false;
       }
+      ArchiveBuilder::alloc_stats()->record_field_cp_entry(archived);
       break;
     case JVM_CONSTANT_Methodref:
-      archived = false;
+      if (ArchiveMethodReferences) {
+        archived = maybe_archive_resolved_fmi_ref_at(index, fmi_cpcache_index, cp_tag);
+      } else {
+        archived = false;
+      }
+      ArchiveBuilder::alloc_stats()->record_method_cp_entry(archived);
       break;
     case JVM_CONSTANT_InterfaceMethodref:
       archived = false;
+      ArchiveBuilder::alloc_stats()->record_method_cp_entry(archived);
       break;
     default:
       break;
@@ -470,7 +483,7 @@ bool ConstantPool::maybe_archive_resolved_klass_at(int cp_index) {
     if (ClassPrelinker::can_archive_resolved_klass(src_cp, cp_index)) {
       if (log_is_enabled(Debug, cds, resolve)) {
         ResourceMark rm;
-        log_debug(cds, resolve)("archived klass CP entry [%3d]: %s => %s", cp_index,
+        log_debug(cds, resolve)("archived klass  CP entry [%3d]: %s => %s", cp_index,
                                 pool_holder()->external_name(), k->external_name());
       }
       return true;
@@ -484,35 +497,68 @@ bool ConstantPool::maybe_archive_resolved_klass_at(int cp_index) {
   return false;
 }
 
-bool ConstantPool::maybe_archive_resolved_fieldref_at(int cp_index, int cpc_index) {
+bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index, int cp_tag) {
   if (pool_holder()->is_hidden()) { // Not sure how to handle this yet ...
     return false;
   }
 
   ConstantPool* src_cp = ArchiveBuilder::current()->get_source_addr(this);
-  if (!ClassPrelinker::can_archive_resolved_field(src_cp, cp_index)) {
-    return false;
+  if (cp_tag == JVM_CONSTANT_Fieldref) {
+    if (!ClassPrelinker::can_archive_resolved_field(src_cp, cp_index)) {
+      return false;
+    }
+  } else {
+    if (!ClassPrelinker::can_archive_resolved_method(src_cp, cp_index)) {
+      return false;
+    }
   }
 
+  int klass_cp_index = uncached_klass_ref_index_at(cp_index);
+  Klass* resolved_klass = resolved_klass_at(klass_cp_index);
+  if (!resolved_klass->is_instance_klass()) {
+    // FIXME: is it value to have a non-instance klass in FMI refs?
+    return false;
+  }
   ConstantPoolCacheEntry* cpce = cache()->entry_at(cpc_index);
-  if (!cpce->is_resolved(Bytecodes::_getfield)) {
-    // FIXME -- should we automatically marked both getfield/putfield as resolved?
-    return false;
+  switch (cp_tag) {
+  case JVM_CONSTANT_Fieldref:
+    if (!cpce->is_resolved(Bytecodes::_getfield)) {
+      // FIXME -- should we automatically marked both getfield/putfield as resolved?
+      return false;
+    }
+    break;
+  case JVM_CONSTANT_Methodref:
+    if (!cpce->is_resolved(Bytecodes::_invokevirtual) && !cpce->is_resolved(Bytecodes::_invokespecial)) {
+      return false;
+    }
+    if (resolved_klass->is_instance_klass()) {
+      InstanceKlass* ik = InstanceKlass::cast(resolved_klass);
+      if (SystemDictionaryShared::is_jfr_event_class(ik)) {
+        // Some methods in JRF event klasses may be redefined.
+        return false;
+      }
+      if (SystemDictionaryShared::has_been_redefined(ik)) {
+        return false;
+      }
+    }
+    break;
   }
 
-  cpce->mark_and_relocate();
   if (log_is_enabled(Debug, cds, resolve)) {
     ResourceMark rm;
-    int klass_cp_index = uncached_klass_ref_index_at(cp_index);
-    Klass* k = resolved_klass_at(klass_cp_index);
     Symbol* name = uncached_name_ref_at(cp_index);
     Symbol* signature = uncached_signature_ref_at(cp_index);
-    log_debug(cds, resolve)("archived field CP entry [%3d]: %s => %s.%s:%s", cp_index,
-                            pool_holder()->external_name(), k->external_name(),
+    const char* type = (cp_tag == JVM_CONSTANT_Fieldref) ? "field " : "method";
+    log_debug(cds, resolve)("archived %s CP entry [%3d]: %s => %s.%s:%s", type, cp_index,
+                            pool_holder()->external_name(), resolved_klass->external_name(),
                             name->as_C_string(), signature->as_C_string());
   }
-  return true;
+
+  // work-o-in-progress, mark_and_relocate could return false if it doesn't know how to
+  // archive the cpce.
+  return cpce->mark_and_relocate(src_cp);
 }
+
 #endif // INCLUDE_CDS
 
 int ConstantPool::cp_to_object_index(int cp_index) {
