@@ -26,6 +26,7 @@
 #include "cds/archiveHeapWriter.hpp"
 #include "cds/filemap.hpp"
 #include "cds/heapShared.hpp"
+#include "classfile/javaClasses.hpp"
 #include "gc/shared/collectedHeap.hpp"
 #include "memory/iterator.inline.hpp"
 #include "memory/oopFactory.hpp"
@@ -427,7 +428,11 @@ oop ArchiveHeapWriter::load_oop_from_buffer(narrowOop* buffered_addr) {
 
 template <typename T> void ArchiveHeapWriter::relocate_field_in_buffer(T* field_addr_in_buffer, CHeapBitMap* oopmap) {
   oop source_referent = load_source_oop_from_buffer<T>(field_addr_in_buffer);
-  if (!CompressedOops::is_null(source_referent)) {
+  if (source_referent != nullptr) {
+    if (java_lang_Class::is_instance(source_referent)) {
+      source_referent = HeapShared::scratch_java_mirror(source_referent);
+      assert(source_referent != nullptr, "must be");
+    }
     oop request_referent = source_obj_to_requested_obj(source_referent);
     store_requested_oop_in_buffer<T>(field_addr_in_buffer, request_referent);
     mark_oop_pointer<T>(field_addr_in_buffer, oopmap);
