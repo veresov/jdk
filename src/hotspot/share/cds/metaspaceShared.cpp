@@ -96,6 +96,7 @@ intx MetaspaceShared::_relocation_delta;
 char* MetaspaceShared::_requested_base_address;
 bool MetaspaceShared::_use_optimized_module_handling = true;
 bool MetaspaceShared::_use_full_module_graph = true;
+Array<Method*>* MetaspaceShared::_archived_method_handle_intrinsics = NULL;
 
 // The CDS archive is divided into the following regions:
 //     rw  - read-write metadata
@@ -293,6 +294,7 @@ void MetaspaceShared::post_initialize(TRAPS) {
 
 static GrowableArrayCHeap<OopHandle, mtClassShared>* _extra_interned_strings = nullptr;
 static GrowableArrayCHeap<Symbol*, mtClassShared>* _extra_symbols = nullptr;
+static GrowableArray<Method*>* _method_handle_intrinsics = NULL;
 
 void MetaspaceShared::read_extra_data(JavaThread* current, const char* filename) {
   _extra_interned_strings = new GrowableArrayCHeap<OopHandle, mtClassShared>(10000);
@@ -343,6 +345,25 @@ void MetaspaceShared::read_extra_data(JavaThread* current, const char* filename)
   }
 }
 
+void MetaspaceShared::make_method_handle_intrinsics_shareable() {
+  for (int i = 0; i < _method_handle_intrinsics->length(); i++) {
+    Method* m = ArchiveBuilder::current()->get_buffered_addr(_method_handle_intrinsics->at(i));
+    m->remove_unshareable_info();
+    // Each method has its own constant pool (which is distinct from m->method_holder()->constants());
+    m->constants()->remove_unshareable_info();
+  }
+}
+
+void MetaspaceShared::write_method_handle_intrinsics() {
+  int len = _method_handle_intrinsics->length();
+  _archived_method_handle_intrinsics = ArchiveBuilder::new_ro_array<Method*>(len);
+  for (int i = 0; i < len; i++) {
+    ArchiveBuilder::current()->write_pointer_in_buffer(_archived_method_handle_intrinsics->adr_at(i),
+                                                       _method_handle_intrinsics->at(i));
+  }
+  log_info(cds)("Archived %d method handle intrinsics", len);
+}
+
 // Read/write a data stream for restoring/preserving metadata pointers and
 // miscellaneous data from/to the shared archive file.
 
@@ -388,6 +409,8 @@ void MetaspaceShared::serialize(SerializeClosure* soc) {
   soc->do_tag(--tag);
 
   CDS_JAVA_HEAP_ONLY(ClassLoaderDataShared::serialize(soc);)
+  soc->do_ptr((void**)&_archived_method_handle_intrinsics);
+
 
   LambdaFormInvokers::serialize(soc);
   soc->do_tag(666);
@@ -469,6 +492,10 @@ public:
         it->push(_extra_symbols->adr_at(i));
       }
     }
+
+    for (int i = 0; i < _method_handle_intrinsics->length(); i++) {
+      it->push(_method_handle_intrinsics->adr_at(i));
+    }
   }
 };
 
@@ -477,6 +504,7 @@ char* VM_PopulateDumpSharedSpace::dump_read_only_tables() {
 
   SystemDictionaryShared::write_to_archive();
   ClassPrelinker::record_initiated_klasses(true);
+  MetaspaceShared::write_method_handle_intrinsics();
 
   // Write lambform lines into archive
   LambdaFormInvokers::dump_static_archive_invokers();
@@ -520,6 +548,7 @@ void VM_PopulateDumpSharedSpace::doit() {
 
   log_info(cds)("Make classes shareable");
   builder.make_klasses_shareable();
+  MetaspaceShared::make_method_handle_intrinsics_shareable();
 
   char* serialized_data = dump_read_only_tables();
 
@@ -608,6 +637,13 @@ bool MetaspaceShared::link_class_for_cds(InstanceKlass* ik, TRAPS) {
 
 void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
   ClassPrelinker::initialize();
+
+  // LambdaFormInvokers::regenerate_holder_classes creates a lot of method handle
+  // intrinsics that are not useful for normal apps, so save only what we have
+  // at this point.
+  _method_handle_intrinsics = new (mtClassShared) GrowableArray<Method*>(256, mtClassShared);
+  SystemDictionary::get_all_method_handle_intrinsics(_method_handle_intrinsics);
+
   if (!jcmd_request && !DynamicDumpSharedSpaces) {
     // If we have regenerated invoker classes in the dynamic archive,
     // they will conflict with the resolved CONSTANT_Klass references that are stored
