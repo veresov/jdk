@@ -197,9 +197,6 @@ public:
   };
 
 private:
-  static void check_enum_obj(int level, KlassSubGraphInfo* subgraph_info,
-                             oop orig_obj);
-
   typedef ResourceHashtable<oop, CachedOopInfo,
       36137, // prime number
       AnyObj::C_HEAP,
@@ -408,7 +405,6 @@ private:
   static void write_subgraph_info_table() NOT_CDS_JAVA_HEAP_RETURN;
   static void serialize_root(SerializeClosure* soc) NOT_CDS_JAVA_HEAP_RETURN;
   static void serialize_tables(SerializeClosure* soc) NOT_CDS_JAVA_HEAP_RETURN;
-  static bool initialize_enum_klass(InstanceKlass* k, TRAPS) NOT_CDS_JAVA_HEAP_RETURN_(false);
 
   // Returns the address of a heap object when it's mapped at the
   // runtime requested address. See comments in archiveBuilder.hpp.
