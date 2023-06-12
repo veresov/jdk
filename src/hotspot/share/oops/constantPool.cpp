@@ -290,19 +290,36 @@ objArrayOop ConstantPool::prepare_resolved_references_for_archiving() {
 
   objArrayOop rr = resolved_references();
   if (rr != nullptr) {
+    ResourceMark rm;
+    int rr_len = rr->length();
+    GrowableArray<bool> keep_resolved_refs(rr_len, rr_len, false);
+    if (cache() != nullptr && ArchiveInvokeDynamic && pool_holder()->name()->equals("ConcatA")) {
+      Array<ResolvedIndyEntry>* indy_entries = cache()->resolved_indy_entries();
+      for (int i = 0; i < indy_entries->length(); i++) {
+        if (indy_entries->at(i).is_resolved()) {
+          // FIXME -- check if the BSM is supported
+          int rr_index = indy_entries->at(i).resolved_references_index();
+          keep_resolved_refs.at_put(rr_index, true);
+        }
+      }
+    }
+
     Array<u2>* ref_map = reference_map();
     int ref_map_len = ref_map == nullptr ? 0 : ref_map->length();
-    int rr_len = rr->length();
     for (int i = 0; i < rr_len; i++) {
       oop obj = rr->obj_at(i);
       rr->obj_at_put(i, nullptr);
-      if (obj != nullptr && i < ref_map_len) {
-        int index = object_to_cp_index(i);
-        if (tag_at(index).is_string()) {
-          assert(java_lang_String::is_instance(obj), "must be");
-          if (!ArchiveHeapWriter::is_string_too_large_to_archive(obj)) {
-            rr->obj_at_put(i, obj);
+      if (obj != nullptr) {
+        if (i < ref_map_len) {
+          int index = object_to_cp_index(i);
+          if (tag_at(index).is_string()) {
+            assert(java_lang_String::is_instance(obj), "must be");
+            if (!ArchiveHeapWriter::is_string_too_large_to_archive(obj)) {
+              rr->obj_at_put(i, obj);
+            }
           }
+        } else if (keep_resolved_refs.at(i)) {
+          rr->obj_at_put(i, obj);
         }
       }
     }

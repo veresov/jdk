@@ -73,6 +73,7 @@
 #include "runtime/arguments.hpp"
 #include "runtime/globals_extension.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/javaCalls.hpp"
 #include "runtime/os.inline.hpp"
 #include "runtime/safepointVerifiers.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -638,12 +639,6 @@ bool MetaspaceShared::link_class_for_cds(InstanceKlass* ik, TRAPS) {
 void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
   ClassPrelinker::initialize();
 
-  // LambdaFormInvokers::regenerate_holder_classes creates a lot of method handle
-  // intrinsics that are not useful for normal apps, so save only what we have
-  // at this point.
-  _method_handle_intrinsics = new (mtClassShared) GrowableArray<Method*>(256, mtClassShared);
-  SystemDictionary::get_all_method_handle_intrinsics(_method_handle_intrinsics);
-
   if (!jcmd_request && !DynamicDumpSharedSpaces) {
     // If we have regenerated invoker classes in the dynamic archive,
     // they will conflict with the resolved CONSTANT_Klass references that are stored
@@ -651,6 +646,9 @@ void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
     // it for dynamic archive for now.
     LambdaFormInvokers::regenerate_holder_classes(CHECK);
   }
+
+  _method_handle_intrinsics = new (mtClassShared) GrowableArray<Method*>(256, mtClassShared);
+  SystemDictionary::get_all_method_handle_intrinsics(_method_handle_intrinsics);
 
   // Collect all loaded ClassLoaderData.
   CollectCLDClosure collect_cld(THREAD);
@@ -829,6 +827,17 @@ void MetaspaceShared::preload_and_dump_impl(TRAPS) {
   ArchiveHeapWriter::init();
   if (use_full_module_graph()) {
     HeapShared::reset_archived_object_states(CHECK);
+  }
+
+  if (ArchiveInvokeDynamic) {
+    // Do this just before going into the safepoint.
+    // We also assume no other Java threads are running
+    // This makes sure that the MethodType and MethodTypeForm objects are clean.
+    JavaValue result(T_VOID);
+    JavaCalls::call_static(&result, vmClasses::MethodType_klass(),
+                           vmSymbols::dumpSharedArchive(),
+                           vmSymbols::void_method_signature(),
+                           CHECK);
   }
 #endif
 

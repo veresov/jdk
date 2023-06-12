@@ -993,6 +993,15 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
   pool->cache()->set_dynamic_call(info, pool->decode_invokedynamic_index(index));
 }
 
+void InterpreterRuntime::cds_resolve_invokedynamic(int raw_index,
+                                                   constantPoolHandle& pool, TRAPS) {
+  const Bytecodes::Code bytecode = Bytecodes::_invokedynamic;
+  CallInfo info;
+  LinkResolver::resolve_invoke(info, Handle(), pool,
+                               raw_index, bytecode, CHECK);
+  pool->cache()->set_dynamic_call(info, pool->decode_invokedynamic_index(raw_index));
+}
+
 // This function is the interface to the assembly code. It returns the resolved
 // cpCache entry.  This doesn't safepoint, but the helper routines safepoint.
 // This function will check for redefinition!

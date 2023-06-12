@@ -32,7 +32,10 @@ import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
@@ -43,6 +46,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Stream;
 
 import jdk.internal.access.SharedSecrets;
+import jdk.internal.misc.CDS;
 import jdk.internal.vm.annotation.Stable;
 import sun.invoke.util.BytecodeDescriptor;
 import sun.invoke.util.VerifyType;
@@ -232,6 +236,26 @@ class MethodType
 
     static final Class<?>[] NO_PTYPES = {};
 
+    private static Object[] archivedObjects;
+
+    private static @Stable HashMap<MethodType,MethodType> archivedMethodTypes;
+
+    private static @Stable MethodType[] objectOnlyTypes;
+
+    @SuppressWarnings("unchecked")
+    static void doit() {
+        CDS.initializeFromArchive(MethodType.class);
+        if (archivedObjects != null) {
+            archivedMethodTypes = (HashMap<MethodType,MethodType>)archivedObjects[0];
+            objectOnlyTypes = (MethodType[])archivedObjects[1];
+        } else {
+            objectOnlyTypes = new MethodType[20];
+        }
+    }
+    static {
+        doit();
+    }
+
     /**
      * Finds or creates an instance of the given method type.
      * @param rtype  the return type
@@ -390,6 +414,14 @@ class MethodType
             ptypes = NO_PTYPES; trusted = true;
         }
         MethodType primordialMT = new MethodType(rtype, ptypes);
+        if (USE_ARCHIVE && archivedMethodTypes != null) {
+            MethodType mt = archivedMethodTypes.get(primordialMT);
+            if (mt != null) {
+                if (DEBUG2) {System.out.println("GOT");}
+                return mt;
+            }
+        }
+
         MethodType mt = internTable.get(primordialMT);
         if (mt != null)
             return mt;
@@ -408,7 +440,6 @@ class MethodType
         mt.form = MethodTypeForm.findForm(mt);
         return internTable.add(mt);
     }
-    private static final @Stable MethodType[] objectOnlyTypes = new MethodType[20];
 
     /**
      * Finds or creates a method type whose components are {@code Object} with an optional trailing {@code Object[]} array.
@@ -946,6 +977,22 @@ class MethodType
             sj.add(ptypes[i].getSimpleName());
         }
         return sj.toString();
+    }
+
+    String toStringFull() {
+        StringJoiner sj = new StringJoiner(",", "(",
+                ")" + rtype.getName());
+        for (int i = 0; i < ptypes.length; i++) {
+            sj.add(ptypes[i].getName());
+        }
+        String s = sj.toString();
+
+        s += "\n form: " + form;
+        s += "\n wrapAlt: " + wrapAlt;
+        s += "\n invokers: " + invokers;
+        s += "\n methodDescriptor: " + methodDescriptor;
+
+        return s;
     }
 
     /** True if my parameter list is effectively identical to the given full list,
@@ -1495,6 +1542,175 @@ s.writeObject(this.parameterArray());
                 return hashcode;
             }
 
+        }
+
+        void print() {
+            int n = 0;
+            for (var entry : map.entrySet()) {
+                WeakEntry<T> value = entry.getValue();
+                MethodType res = (MethodType)value.get();
+                System.out.println("[" + n + "] ==================================================");
+                System.out.println(res.toStringFull());
+                n++;
+            }
+
+            for (int i = 0; i < objectOnlyTypes.length; i++) {
+                System.out.println("[" + i + "] objectOnlyTypes===================================");
+                MethodType t = objectOnlyTypes[i];
+                if (t != null) {
+                    System.out.println(t.toStringFull());
+                }
+            }
+        }
+
+        HashMap<MethodType,MethodType> archive(Archiver archiver) {
+            HashMap<MethodType,MethodType> archivedSet = new HashMap<>();
+
+            if (DUMP_SET) {
+                for (var entry : map.entrySet()) {
+                    WeakEntry<T> value = entry.getValue();
+                    MethodType t = (MethodType)value.get();
+                    MethodType a = archiver.clean(t);
+                    if (a != null) {
+                        archivedSet.put(a, a);
+                    }
+                }
+                if (DEBUG2) {
+                    for (var a : archivedSet.keySet()) {
+                    }
+                }
+            }
+
+            return archivedSet;
+        }
+
+    }
+
+    static void printCache() {
+        internTable.print();
+    }
+
+    static class Archiver {
+        HashSet<MethodType> cleanedTypes = new HashSet<>();
+        HashSet<MethodType> droppedTypes = new HashSet<>();
+        ArrayList<MethodType> archived = new ArrayList<>();
+
+        boolean canArchive(Class<?> c) {
+            if (c == String.class || c == Object.class || c.isPrimitive()
+                || c == DelegatingMethodHandle.class
+                || c == DirectMethodHandle.class
+                || c == BoundMethodHandle.class
+                || c == CallSite.class
+                || c == Class.class
+                || c == LambdaForm.class
+                || c == MethodHandle.class
+                || c == MethodType.class
+                || c == MemberName.class
+                || c == MethodHandles.Lookup.class
+                || c == Object[].class
+                ) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        boolean canArchive(Class<?>[] ptypes) {
+            for (var c : ptypes) {
+                if (!canArchive(c)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        MethodType clean(MethodType t) {
+            if (t == null || t.form == null) { // HACK!
+                return null;
+            }
+            if (droppedTypes.contains(t)) {
+                return null;
+            }
+            if (cleanedTypes.contains(t)) {
+                return t;
+            }
+
+            if (t.wrapAlt != null) { // What is this??
+                droppedTypes.add(t);
+                return null;
+            }
+
+            //if (t.invokers != null) { // Hmmmm ...
+            //    droppedTypes.add(t);
+            //    return null;
+            //}
+
+            if (!canArchive(t.rtype) || !canArchive(t.ptypes)) {
+                //System.out.println(t);
+                droppedTypes.add(t);
+                return null;
+            }
+
+            if (t != t.form.erasedType && clean(t.form.erasedType) == null) {
+                //System.out.println(t);
+                droppedTypes.add(t);
+                return null;
+            }
+            if (t != t.form.basicType && clean(t.form.basicType) == null) {
+                //System.out.println(t);
+                droppedTypes.add(t);
+                return null;
+            }
+
+            t.form.cleanMethodTypeForm();
+            if (t.invokers != null) {
+                t.invokers.cleanInvokers();
+            }
+
+            archived.add(t);
+            cleanedTypes.add(t);
+            return t;
+        }
+    }
+
+    static void dumpSharedArchive() {
+        Archiver archiver = new Archiver();
+
+        MethodType[] objectOnlyTypesCopy = new MethodType[objectOnlyTypes.length];
+        for (int i = 0; i < objectOnlyTypes.length; i++) {
+            MethodType t = archiver.clean(objectOnlyTypes[i]);
+            if (t != null) {
+                //System.out.println("archived: " + t.toStringFull());
+                objectOnlyTypesCopy[i] = t;
+            }
+        }
+
+        archivedObjects = new Object[2];
+        archivedObjects[0] = internTable.archive(archiver);
+        archivedObjects[1] = objectOnlyTypesCopy;
+
+        for (var t : archiver.archived) {
+            //if (DEBUG2) {
+            //    System.out.println("archived: " +  t.toStringFull());
+            //}
+        }
+
+        DirectMethodHandle.dumpSharedArchive();
+        LambdaForm.NamedFunction.dumpSharedArchive();
+    }
+
+    static final boolean DUMP_SET = !"false".equals(sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.dumpset"));
+    static final boolean DEBUG2   = (sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.debug2") != null);
+    static final boolean USE_ARCHIVE   = !"false".equals(sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.use.archive"));
+    static {
+        String s = sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.debug");
+        if (s != null) {
+            Runtime.getRuntime().addShutdownHook(new Thread() {
+                    public void run() {
+                        //printCache();
+                        dumpSharedArchive();
+                    }
+                });
         }
     }
 

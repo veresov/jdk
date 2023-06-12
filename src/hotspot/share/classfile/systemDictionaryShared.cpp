@@ -85,6 +85,7 @@ DumpTimeLambdaProxyClassDictionary* SystemDictionaryShared::_dumptime_lambda_pro
 
 DumpTimeMethodInfoDictionary* SystemDictionaryShared::_dumptime_method_info_dictionary = nullptr;
 DumpTimeMethodInfoDictionary* SystemDictionaryShared::_cloned_dumptime_method_info_dictionary = nullptr;
+static Array<InstanceKlass*>* _archived_lambda_form_classes = NULL;
 
 // Used by NoClassLoadingMark
 DEBUG_ONLY(bool SystemDictionaryShared::_class_loading_may_happen = true;)
@@ -315,9 +316,12 @@ bool SystemDictionaryShared::check_for_exclusion_impl(InstanceKlass* k) {
   }
 
   if (k->is_hidden() && !is_registered_lambda_proxy_class(k)) {
-    ResourceMark rm;
-    log_debug(cds)("Skipping %s: Hidden class", k->name()->as_C_string());
-    return true;
+    if (ArchiveInvokeDynamic && k->name()->starts_with("java/lang/invoke/LambdaForm$")) {
+      // let's try to save DMH classes ...
+    } else {
+      log_debug(cds)("Skipping %s: Hidden class", k->name()->as_C_string());
+      return true;
+    }
   }
 
   InstanceKlass* super = k->java_super();
@@ -594,6 +598,9 @@ void SystemDictionaryShared::validate_before_archiving(InstanceKlass* k) {
   guarantee(!info->is_excluded(), "Should not attempt to archive excluded class %s", name);
   if (is_builtin(k)) {
     if (k->is_hidden()) {
+      if (ArchiveInvokeDynamic) { // FIXME -- clean up
+        return;
+      }
       assert(is_registered_lambda_proxy_class(k), "unexpected hidden class %s", name);
     }
     guarantee(!k->is_shared_unregistered_class(),
@@ -1638,3 +1645,5 @@ void SystemDictionaryShared::cleanup_method_info_dictionary() {
   CleanupDumpTimeMethodInfoTable cleanup_method_info;
   _dumptime_method_info_dictionary->unlink(&cleanup_method_info);
 }
+
+

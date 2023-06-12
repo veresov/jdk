@@ -277,6 +277,8 @@ private:
   static KlassSubGraphInfo* _default_subgraph_info;
 
   static GrowableArrayCHeap<oop, mtClassShared>* _pending_roots;
+  static GrowableArrayCHeap<oop, mtClassShared>* _trace; // for debugging unarchivable objects
+  static GrowableArrayCHeap<const char*, mtClassShared>* _context; // for debugging unarchivable objects
   static OopHandle _roots;
   static OopHandle _scratch_basic_type_mirrors[T_VOID+1];
   static KlassToOopHandleTable* _scratch_java_mirror_table;
@@ -290,6 +292,9 @@ private:
     delete _seen_objects_table;
     _seen_objects_table = nullptr;
   }
+
+  class ArchivingObjectMark;
+  class ContextMark;
 
   // Statistics (for one round of start_recording_subgraph ... done_recording_subgraph)
   static int _num_new_walked_objs;
@@ -336,6 +341,7 @@ private:
   static bool can_mirror_be_used_in_subgraph(oop orig_java_mirror);
   static void archive_java_mirrors();
   static void archive_strings();
+  static void exit_on_error();
  public:
   static void reset_archived_object_states(TRAPS);
   static void create_archived_object_cache() {

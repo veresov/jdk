@@ -275,6 +275,15 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
     }
   }
 
+  if (cp->cache() != nullptr && (ik->name()->equals("ConcatA") /*|| ik->name()->starts_with("Concat")*/)) {
+    Array<ResolvedIndyEntry>* indy_entries = cp->cache()->resolved_indy_entries();
+    for (int i = 0; i < indy_entries->length(); i++) {
+      if (indy_entries->at(i).is_resolved()) {
+        list.append(indy_entries->at(i).constant_pool_index());
+      }
+    }
+  }
+
   if (list.length() > 0) {
     outputStream* stream = _classlist_file;
     stream->print("@cp %s", ik->name()->as_C_string());

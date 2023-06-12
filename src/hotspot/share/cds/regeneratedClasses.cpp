@@ -71,6 +71,13 @@ bool RegeneratedClasses::has_been_regenerated(address orig_obj) {
   }
 }
 
+address RegeneratedClasses::get_regenerated_object(address orig_obj) {
+  assert(_renegerated_objs != nullptr, "must be");
+  address* p =_renegerated_objs->get(orig_obj);
+  assert(p != nullptr, "must be");
+  return *p;
+}
+
 void RegeneratedClasses::record_regenerated_objects() {
   if (_renegerated_objs != nullptr) {
     auto doit = [&] (address orig_obj, address regen_obj) {

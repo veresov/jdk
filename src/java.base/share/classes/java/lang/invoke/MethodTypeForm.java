@@ -93,6 +93,26 @@ final class MethodTypeForm {
             LF_COLLECTOR               = 25,  // collector handle
             LF_LIMIT                   = 26;
 
+    void cleanMethodTypeForm() {
+        //System.out.println("----");
+        if (methodHandles != null) {
+            for (int i = 0; i < methodHandles.length; i++) {
+                //if (methodHandles[i] != null) {
+                //    System.out.println(i + "=: " + methodHandles[i].get());
+                //}
+                methodHandles[i] = null;
+            }
+        }
+        if (lambdaForms != null) {
+            for (int i = 0; i < lambdaForms.length; i++) {
+                //if (lambdaForms[i] != null) {
+                //    System.out.println(i + "=: " + lambdaForms[i].get());
+                //}
+                lambdaForms[i] = null;
+            }
+        }
+    }
+
     /** Return the type corresponding uniquely (1-1) to this MT-form.
      *  It might have any primitive returns or arguments, but will have no references except Object.
      */

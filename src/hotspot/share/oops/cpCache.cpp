@@ -638,14 +638,6 @@ void ConstantPoolCacheEntry::verify(outputStream* st) const {
 }
 
 #if INCLUDE_CDS
-static void mark_and_update_orig_to_buffered(address* p) {
-  assert(*p != nullptr, "sanity");
-  if (!ArchiveBuilder::current()->is_in_mapped_static_archive(*p)) {
-    *p = ArchiveBuilder::current()->get_buffered_addr(*p);
-  }
-  ArchivePtrMarker::mark_pointer(p);
-}
-
 bool ConstantPoolCacheEntry::mark_and_relocate(ConstantPool* src_cp) {
   if (is_method_entry()) {
     return mark_and_relocate_method_entry(src_cp);
@@ -661,12 +653,12 @@ bool ConstantPoolCacheEntry::mark_and_relocate_method_entry(ConstantPool* src_cp
   if (invoke_code != (Bytecodes::Code)0) {
     Metadata* f1 = f1_ord();
     if (f1 != nullptr) {
-      mark_and_update_orig_to_buffered((address*)&_f1);
+      ArchiveBuilder::current()->mark_and_relocate_to_buffered_addr(&_f1);
       switch (invoke_code) {
       case Bytecodes::_invokeinterface:
         assert(0, "not implemented");
         //assert(f1->is_klass(), "");
-        //mark_and_update_orig_to_buffered((address*)&_f2); // f2 is interface method
+        //ArchiveBuilder::current()->mark_and_relocate_to_buffered_addr(&_f2); // f2 is interface method
         return false;
       case Bytecodes::_invokestatic:
         assert(0, "not implemented");
@@ -691,7 +683,7 @@ bool ConstantPoolCacheEntry::mark_and_relocate_method_entry(ConstantPool* src_cp
     assert(invoke_code == Bytecodes::_invokevirtual, "must be");
     if (is_vfinal()) {
       // f2 is vfinal method
-      mark_and_update_orig_to_buffered((address*)&_f2); // f2 is final method
+      ArchiveBuilder::current()->mark_and_relocate_to_buffered_addr(&_f2); // f2 is final method
     } else {
       // f2 is vtable index, no need to mark
       if (DynamicDumpSharedSpaces) {
@@ -731,7 +723,7 @@ bool ConstantPoolCacheEntry::mark_and_relocate_field_entry(ConstantPool* src_cp)
   assert(is_resolved(Bytecodes::_getfield), "only this is implemented for now");
   Klass* klass = (Klass*)_f1;
   assert(klass != NULL && klass->is_klass(), "must be");
-  mark_and_update_orig_to_buffered((address*)&_f1);
+  ArchiveBuilder::current()->mark_and_relocate_to_buffered_addr(&_f1);
   return true;
 }
 #endif
@@ -812,7 +804,19 @@ void ConstantPoolCache::remove_unshareable_info(const GrowableArray<bool>* keep_
 
   if (_resolved_indy_entries != nullptr) {
     for (int i = 0; i < _resolved_indy_entries->length(); i++) {
-      resolved_indy_entry_at(i)->remove_unshareable_info();
+      ResolvedIndyEntry *rei = resolved_indy_entry_at(i);
+      bool save = false;
+      if (ArchiveInvokeDynamic && constant_pool()->pool_holder()->name()->equals("ConcatA") &&
+          rei->is_resolved()) {
+        // FIXME: use common function to check whether to save -- also for
+        // ConstantPool::prepare_resolved_references_for_archiving()
+        save = true;
+      }
+      if (save) {
+        rei->mark_and_relocate();
+      } else {
+        rei->remove_unshareable_info();
+      }
     }
   }
 }

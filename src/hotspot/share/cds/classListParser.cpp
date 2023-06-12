@@ -802,7 +802,7 @@ void ClassListParser::parse_constant_pool_tag() {
   }
 
   ResourceMark rm(THREAD);
-  ConstantPool* cp = ik->constants();
+  constantPoolHandle cp(THREAD, ik->constants());
   GrowableArray<bool> resolve_fmi_list(cp->length(), cp->length(), false);
   bool has_fmi_index = false;
   while (*_token) {
@@ -833,6 +833,20 @@ void ClassListParser::parse_constant_pool_tag() {
     case JVM_CONSTANT_Methodref:
       resolve_fmi_list.at_put(cp_index, true);
       has_fmi_index = true;
+      break;
+    case JVM_CONSTANT_InvokeDynamic:
+      if (ArchiveInvokeDynamic && cp->cache() != nullptr) {
+        Array<ResolvedIndyEntry>* indy_entries = cp->cache()->resolved_indy_entries();
+        for (int i = 0; i < indy_entries->length(); i++) {
+          ResolvedIndyEntry* rie = indy_entries->adr_at(i);
+          if (rie->constant_pool_index() == cp_index && !rie->is_resolved()) {
+            InterpreterRuntime::cds_resolve_invokedynamic(ConstantPool::encode_invokedynamic_index(i), cp, THREAD);
+            if (HAS_PENDING_EXCEPTION) {
+              CLEAR_PENDING_EXCEPTION; // just ignore
+            }
+          }
+        }
+      }
       break;
     default:
       constant_pool_resolution_warning("Unsupported constant pool index %d (type=%d)",

@@ -329,6 +329,9 @@ public:
   static bool is_supported_invokedynamic(BootstrapInfo* bsi) NOT_CDS_RETURN_(false);
   DEBUG_ONLY(static bool class_loading_may_happen() {return _class_loading_may_happen;})
 
+  static void record_archived_lambda_form_classes();
+  static void init_archived_lambda_form_classes(TRAPS);
+
   static MethodData* lookup_method_data(Method* m) {
     const RunTimeMethodDataInfo* info = _dynamic_archive.lookup_method_info(m);
     if (info != nullptr) {
