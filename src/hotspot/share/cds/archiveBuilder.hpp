@@ -372,7 +372,7 @@ public:
   void dump_rw_metadata();
   void dump_ro_metadata();
   void relocate_metaspaceobj_embedded_pointers();
-  void record_regenerated_object(address orig_obj, address regen_obj);
+  void record_regenerated_object(address orig_src_obj, address regen_src_obj);
   void make_klasses_shareable();
   void relocate_to_requested();
   void write_archive(FileMapInfo* mapinfo, ArchiveHeapInfo* heap_info);

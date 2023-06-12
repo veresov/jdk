@@ -30,8 +30,8 @@
 #include "cds/cppVtables.hpp"
 #include "cds/dumpAllocStats.hpp"
 #include "cds/heapShared.hpp"
-#include "cds/lambdaFormInvokers.hpp"
 #include "cds/metaspaceShared.hpp"
+#include "cds/regeneratedClasses.hpp"
 #include "classfile/classLoaderDataShared.hpp"
 #include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionaryShared.hpp"
@@ -433,7 +433,7 @@ bool ArchiveBuilder::gather_one_source_obj(MetaspaceClosure::Ref* enclosing_ref,
   if (src_obj == nullptr) {
     return false;
   }
-  if (LambdaFormInvokers::has_been_regenerated(src_obj)) {
+  if (RegeneratedClasses::has_been_regenerated(src_obj)) {
     // No need to copy it. We will later relocate it to point to the regenerated klass/method.
     return false;
   }
@@ -452,8 +452,8 @@ bool ArchiveBuilder::gather_one_source_obj(MetaspaceClosure::Ref* enclosing_ref,
 #ifdef ASSERT
   if (ref->msotype() == MetaspaceObj::MethodType) {
     Method* m = (Method*)ref->obj();
-    assert(!LambdaFormInvokers::has_been_regenerated((address)m->method_holder()),
-           "Should not archive to methods in a class that has been regenerated");
+    assert(!RegeneratedClasses::has_been_regenerated((address)m->method_holder()),
+           "Should not archive methods in a class that has been regenerated");
   }
 #endif
 
@@ -472,15 +472,15 @@ bool ArchiveBuilder::gather_one_source_obj(MetaspaceClosure::Ref* enclosing_ref,
   }
 }
 
-void ArchiveBuilder::record_regenerated_object(address orig_obj, address regen_obj) {
-  // Record the fact that orig_obj has been replaced by regen_obj. All calls to get_buffered_addr(orig_obj)
-  // should return the same value as get_buffered_addr(regen_obj).
-  SourceObjInfo* p = _src_obj_table.get(regen_obj);
+void ArchiveBuilder::record_regenerated_object(address orig_src_obj, address regen_src_obj) {
+  // Record the fact that orig_src_obj has been replaced by regen_src_obj. All calls to get_buffered_addr(orig_src_obj)
+  // should return the same value as get_buffered_addr(regen_src_obj).
+  SourceObjInfo* p = _src_obj_table.get(regen_src_obj);
   assert(p != nullptr, "regenerated object should always be dumped");
-  SourceObjInfo src_info(orig_obj, p->buffered_addr());
+  SourceObjInfo src_info(orig_src_obj, p->buffered_addr());
   bool created;
-  _src_obj_table.put_if_absent(orig_obj, src_info, &created);
-  assert(created, "must be");
+  _src_obj_table.put_if_absent(orig_src_obj, src_info, &created);
+  assert(created, "We shouldn't have archived the original copy of an regenerated object");
 }
 
 void ArchiveBuilder::remember_embedded_pointer_in_gathered_obj(MetaspaceClosure::Ref* enclosing_ref,
@@ -610,7 +610,7 @@ void ArchiveBuilder::dump_ro_metadata() {
   }
 #endif
 
-  LambdaFormInvokers::record_regenerated_objects();
+  RegeneratedClasses::record_regenerated_objects();
 }
 
 void ArchiveBuilder::make_shallow_copies(DumpRegion *dump_region,
