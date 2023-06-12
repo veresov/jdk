@@ -151,9 +151,38 @@ void ciInstanceKlass::compute_shared_init_state() {
   )
 }
 
+static bool is_fully_initialized(CompileTask* task, InstanceKlass* ik) {
+  if (task->method()->method_holder() == ik) {
+    return true;
+  }
+  MethodTrainingData* mtd = TrainingData::lookup_mtd_for(task->method());
+  if (mtd != nullptr) {
+    CompileTrainingData* ctd = mtd->last_toplevel_compile(task->comp_level());
+    if (ctd != nullptr) {
+      for (int i = 0; i < ctd->init_dep_count(); i++) {
+        KlassTrainingData* dep = ctd->init_dep(i);
+        if (dep->has_holder() && dep->holder() == ik) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 InstanceKlass::ClassState ciInstanceKlass::compute_init_state(InstanceKlass* ik) {
-  if (CURRENT_ENV != nullptr && CURRENT_ENV->is_precompiled()) {
-    return SystemDictionaryShared::lookup_init_state(ik);
+  ASSERT_IN_VM;
+  ciEnv* env = CURRENT_ENV;
+  if (env != nullptr && env->is_precompiled()) {
+    if (StoreSharedCode && PreloadArchivedClasses < 2) {
+      if (is_fully_initialized(env->task(), ik)) {
+        return InstanceKlass::ClassState::fully_initialized;
+      } else {
+        return InstanceKlass::ClassState::linked; // not yet initialized // FIXME: how to distinguish from unloaded case?
+      }
+    } else {
+      return SystemDictionaryShared::lookup_init_state(ik);
+    }
   } else {
     return ik->init_state();
   }

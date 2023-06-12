@@ -358,6 +358,9 @@ public:
   virtual void cleanup() = 0;
 
   static TrainingData* lookup_archived_training_data(const Key* k);
+
+  static KlassTrainingData*  lookup_ktd_for(InstanceKlass* ik);
+  static MethodTrainingData* lookup_mtd_for(Method* m);
 };
 
 

@@ -1993,34 +1993,9 @@ public:
   }
 };
 
-static KlassTrainingData* lookup_ktd_for(InstanceKlass* ik) {
-  if (TrainingData::have_data() && ik != nullptr && ik->is_loaded()) {
-    TrainingData::Key key(ik);
-    TrainingData* td = TrainingData::lookup_archived_training_data(&key);
-    if (td != nullptr && td->is_KlassTrainingData()) {
-      return td->as_KlassTrainingData();
-    }
-  }
-  return nullptr;
-}
-
-static MethodTrainingData* lookup_mtd_for(Method* m) {
-  if (TrainingData::have_data() && m != nullptr) {
-    KlassTrainingData* holder_ktd = lookup_ktd_for(m->method_holder());
-    if (holder_ktd != nullptr) {
-      TrainingData::Key key(m->name(), m->signature(), holder_ktd);
-      TrainingData* td = TrainingData::lookup_archived_training_data(&key);
-      if (td != nullptr && td->is_MethodTrainingData()) {
-        return td->as_MethodTrainingData();
-      }
-    }
-  }
-  return nullptr;
-}
-
 static int compile_id(methodHandle mh, int level) {
   if (TrainingData::have_data()) {
-    MethodTrainingData* mtd = lookup_mtd_for(mh());
+    MethodTrainingData* mtd = TrainingData::lookup_mtd_for(mh());
     if (mtd != nullptr) {
       CompileTrainingData* ctd = mtd->first_compile(level);
       if (ctd != nullptr) {
@@ -2033,7 +2008,7 @@ static int compile_id(methodHandle mh, int level) {
 
 static int compile_id(methodHandle mh) {
   if (TrainingData::have_data()) {
-    MethodTrainingData* mtd = lookup_mtd_for(mh());
+    MethodTrainingData* mtd = TrainingData::lookup_mtd_for(mh());
     if (mtd != nullptr) {
       CompileTrainingData* ctd = mtd->first_compile();
       if (ctd != nullptr) {

@@ -1615,6 +1615,31 @@ TrainingData* TrainingData::lookup_archived_training_data(const Key* k) {
   return nullptr;
 }
 
+KlassTrainingData* TrainingData::lookup_ktd_for(InstanceKlass* ik) {
+  if (TrainingData::have_data() && ik != nullptr && ik->is_loaded()) {
+    TrainingData::Key key(ik);
+    TrainingData* td = TrainingData::lookup_archived_training_data(&key);
+    if (td != nullptr && td->is_KlassTrainingData()) {
+      return td->as_KlassTrainingData();
+    }
+  }
+  return nullptr;
+}
+
+MethodTrainingData* TrainingData::lookup_mtd_for(Method* m) {
+  if (TrainingData::have_data() && m != nullptr) {
+    KlassTrainingData* holder_ktd = TrainingData::lookup_ktd_for(m->method_holder());
+    if (holder_ktd != nullptr) {
+      TrainingData::Key key(m->name(), m->signature(), holder_ktd);
+      TrainingData* td = TrainingData::lookup_archived_training_data(&key);
+      if (td != nullptr && td->is_MethodTrainingData()) {
+        return td->as_MethodTrainingData();
+      }
+    }
+  }
+  return nullptr;
+}
+
 template <typename T>
 void TrainingData::DepList<T>::metaspace_pointers_do(MetaspaceClosure* iter) {
   iter->push(&_deps);
