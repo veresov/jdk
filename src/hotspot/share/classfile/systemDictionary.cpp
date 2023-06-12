@@ -1187,7 +1187,9 @@ void SystemDictionary::load_shared_class_misc(InstanceKlass* ik, ClassLoaderData
   // package was loaded.
   if (loader_data->is_the_null_class_loader_data()) {
     int path_index = ik->shared_classpath_index();
-    ik->set_classpath_index(path_index);
+    if (path_index >= 0) { // FIXME ... for lambda form classes
+      ik->set_classpath_index(path_index);
+    }
   }
 
   // notify a class loaded from shared object

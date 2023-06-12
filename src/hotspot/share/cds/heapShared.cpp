@@ -900,6 +900,24 @@ void HeapShared::resolve_classes_for_subgraph_of(JavaThread* current, Klass* k) 
   }
 }
 
+void HeapShared::init_prelinked_invokedynamic(InstanceKlass* ik, TRAPS) {
+  if (!UseSharedSpaces) {
+    return;
+  }
+  if (
+#ifndef PRODUCT
+      (_test_class_name != NULL && ik->name()->equals(_test_class_name)) ||
+#endif
+      (ik->name()->starts_with("Concat"))) {
+    resolve_or_init("java/lang/invoke/Invokers$Holder", true, CHECK);
+    resolve_or_init("java/lang/invoke/MethodHandle", true, CHECK);
+    resolve_or_init("java/lang/invoke/DirectMethodHandle$Holder", true, CHECK);
+    resolve_or_init("java/lang/invoke/DelegatingMethodHandle$Holder", true, CHECK);
+    resolve_or_init("java/lang/invoke/LambdaForm$Holder", true, CHECK);
+    resolve_or_init("java/lang/invoke/BoundMethodHandle$Species_L", true, CHECK);
+  }
+}
+
 void HeapShared::initialize_from_archived_subgraph(JavaThread* current, Klass* k) {
   JavaThread* THREAD = current;
   if (!ArchiveHeapLoader::is_in_use()) {
@@ -988,6 +1006,16 @@ HeapShared::resolve_or_init_classes_for_subgraph_of(Klass* k, bool do_init, TRAP
   }
 
   return record;
+}
+
+void HeapShared::resolve_or_init(const char* klass_name, bool do_init, TRAPS) {
+  TempNewSymbol klass_name_sym =  SymbolTable::new_symbol(klass_name);
+  InstanceKlass* k = SystemDictionaryShared::find_builtin_class(klass_name_sym);
+  assert(k != NULL && k->is_shared_boot_class(), "sanity");
+  resolve_or_init(k, false, CHECK);
+  if (do_init) {
+    resolve_or_init(k, true, CHECK);
+  }
 }
 
 void HeapShared::resolve_or_init(Klass* k, bool do_init, TRAPS) {

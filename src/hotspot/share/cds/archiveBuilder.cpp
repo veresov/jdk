@@ -756,7 +756,22 @@ void ArchiveBuilder::make_klasses_shareable() {
         // For static dump, class loader type are already set.
         ik->assign_class_loader_type();
       }
-      if (ik->is_shared_boot_class()) {
+      if (ik->is_hidden()) {
+        oop loader = k->class_loader();
+        if (loader == nullptr) {
+          type = "boot";
+          num_boot_klasses ++;
+        } else if (loader == SystemDictionary::java_platform_loader()) {
+          type = "plat";
+          num_platform_klasses ++;
+        } else if (loader == SystemDictionary::java_system_loader()) {
+          type = "app";
+          num_app_klasses ++;
+        } else {
+          type = "bad";
+          assert(0, "shouldn't happen");
+        }
+      } else if (ik->is_shared_boot_class()) {
         type = "boot";
         num_boot_klasses ++;
       } else if (ik->is_shared_platform_class()) {

@@ -1040,6 +1040,9 @@ void InstanceKlass::clean_initialization_error_table() {
 void InstanceKlass::initialize_impl(TRAPS) {
   HandleMark hm(THREAD);
 
+  // FIXME -- check for circular dependency?
+  HeapShared::init_prelinked_invokedynamic(this, CHECK);
+
   // Make sure klass is linked (verified) before initialization
   // A class could already be verified, since it has been reflected upon.
   link_class(CHECK);

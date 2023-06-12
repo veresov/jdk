@@ -85,7 +85,7 @@ DumpTimeLambdaProxyClassDictionary* SystemDictionaryShared::_dumptime_lambda_pro
 
 DumpTimeMethodInfoDictionary* SystemDictionaryShared::_dumptime_method_info_dictionary = nullptr;
 DumpTimeMethodInfoDictionary* SystemDictionaryShared::_cloned_dumptime_method_info_dictionary = nullptr;
-static Array<InstanceKlass*>* _archived_lambda_form_classes = NULL;
+static Array<InstanceKlass*>* _archived_lambda_form_classes = nullptr;
 
 // Used by NoClassLoadingMark
 DEBUG_ONLY(bool SystemDictionaryShared::_class_loading_may_happen = true;)
@@ -1379,6 +1379,7 @@ void SystemDictionaryShared::serialize_vm_classes(SerializeClosure* soc) {
   for (auto id : EnumRange<vmClassID>{}) {
     soc->do_ptr(vmClasses::klass_addr_at(id));
   }
+  soc->do_ptr((void**)&_archived_lambda_form_classes);
 }
 
 const RunTimeClassInfo*
@@ -1646,4 +1647,48 @@ void SystemDictionaryShared::cleanup_method_info_dictionary() {
   _dumptime_method_info_dictionary->unlink(&cleanup_method_info);
 }
 
+void SystemDictionaryShared::record_archived_lambda_form_classes() {
+  GrowableArray<Klass*>* klasses = ArchiveBuilder::current()->klasses();
+  GrowableArray<InstanceKlass*> list;
 
+  for (int i = 0; i < klasses->length(); i++) {
+    Klass* k = klasses->at(i);
+    //assert(ArchiveBuilder::current()->is_in_buffer_space(k), "must be");
+    if (k->is_instance_klass()) {
+      InstanceKlass* ik = InstanceKlass::cast(k);
+      if (ik->is_hidden() && (ik->name()->starts_with("java/lang/invoke/LambdaForm$MH+") ||
+                              ik->name()->starts_with("java/lang/invoke/LambdaForm$DMH+"))) {
+        assert(ArchiveInvokeDynamic, "lambda form classes are archived only if ArchiveInvokeDynamic is true");
+        list.append(ik);
+      }
+    }
+  }
+
+  _archived_lambda_form_classes = ArchiveBuilder::new_ro_array<InstanceKlass*>(list.length());
+  for (int i = 0; i < list.length(); i++) {
+    ArchiveBuilder::current()->write_pointer_in_buffer(_archived_lambda_form_classes->adr_at(i), list.at(i));
+  }
+}
+
+void SystemDictionaryShared::init_archived_lambda_form_classes(TRAPS) {
+  ClassLoaderData* loader_data = ClassLoaderData::the_null_class_loader_data();
+  Handle null_domain;
+
+  for (int i = 0; i < _archived_lambda_form_classes->length(); i++) {
+    InstanceKlass* ik = _archived_lambda_form_classes->at(i);
+    if (log_is_enabled(Debug, cds, heap)) {
+      ResourceMark rm;
+      log_debug(cds, heap)("Init archived lambda form class: %s ", ik->external_name());
+    }
+
+    assert(ik->super() == vmClasses::Object_klass(), "must be");
+    assert(ik->local_interfaces()->length() == 0, "must be");
+
+    ik->restore_unshareable_info(loader_data, null_domain, NULL, CHECK);
+    SystemDictionary::load_shared_class_misc(ik, loader_data);
+    ik->add_to_hierarchy(THREAD);
+
+    assert(ik->is_loaded(), "Must be in at least loaded state");
+    ik->link_class(CHECK); // TODO also set it to initialized ?? What about classData? That should bee saved in the archived heap.
+  }
+}
