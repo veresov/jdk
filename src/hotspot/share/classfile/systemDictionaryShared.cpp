@@ -1993,23 +1993,68 @@ public:
   }
 };
 
+static KlassTrainingData* lookup_ktd_for(InstanceKlass* ik) {
+  if (TrainingData::have_data() && ik != nullptr && ik->is_loaded()) {
+    TrainingData::Key key(ik);
+    TrainingData* td = TrainingData::lookup_archived_training_data(&key);
+    if (td != nullptr && td->is_KlassTrainingData()) {
+      return td->as_KlassTrainingData();
+    }
+  }
+  return nullptr;
+}
+
+static MethodTrainingData* lookup_mtd_for(Method* m) {
+  if (TrainingData::have_data() && m != nullptr) {
+    KlassTrainingData* holder_ktd = lookup_ktd_for(m->method_holder());
+    if (holder_ktd != nullptr) {
+      TrainingData::Key key(m->name(), m->signature(), holder_ktd);
+      TrainingData* td = TrainingData::lookup_archived_training_data(&key);
+      if (td != nullptr && td->is_MethodTrainingData()) {
+        return td->as_MethodTrainingData();
+      }
+    }
+  }
+  return nullptr;
+}
+
 static int compile_id(methodHandle mh, int level) {
-  MethodTrainingData* mtd = MethodTrainingData::find(mh);
-  if (mtd != nullptr) {
-    CompileTrainingData* ctd = mtd->first_compile(level);
-    if (ctd != nullptr) {
-      return ctd->compile_id();
+  if (TrainingData::have_data()) {
+    MethodTrainingData* mtd = lookup_mtd_for(mh());
+    if (mtd != nullptr) {
+      CompileTrainingData* ctd = mtd->first_compile(level);
+      if (ctd != nullptr) {
+        return ctd->compile_id();
+      }
     }
   }
   return 0;
 }
 
-static int compare_by_cds_info(Method** m1, Method** m2) {
+static int compile_id(methodHandle mh) {
+  if (TrainingData::have_data()) {
+    MethodTrainingData* mtd = lookup_mtd_for(mh());
+    if (mtd != nullptr) {
+      CompileTrainingData* ctd = mtd->first_compile();
+      if (ctd != nullptr) {
+        return ctd->compile_id();
+      }
+    }
+  }
+  return 0;
+}
+
+static int compare_by_compile_id(Method** m1, Method** m2) {
   JavaThread* jt = JavaThread::current();
   methodHandle mh1(jt, *m1);
   methodHandle mh2(jt, *m2);
   int id1 = compile_id(mh1, CompLevel_full_optimization);
   int id2 = compile_id(mh2, CompLevel_full_optimization);
+
+  if (id1 == 0 && id2 == 0) {
+    id1 = compile_id(mh1);
+    id2 = compile_id(mh2);
+  }
 
   if (id1 == 0) {
     return 1;
@@ -2275,7 +2320,7 @@ void SystemDictionaryShared::preload_archived_classes(TRAPS) {
         _dynamic_archive._builtin_dictionary.iterate(&comp);
       }
 
-      comp._methods.sort(&compare_by_cds_info);
+      comp._methods.sort(&compare_by_compile_id);
 
       int count = 0;
       for (int i = 0; i < comp._methods.length(); i++) {

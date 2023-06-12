@@ -978,6 +978,7 @@ KlassTrainingData* KlassTrainingData::make(const char* name, const char* loader_
 }
 
 KlassTrainingData* KlassTrainingData::make(InstanceKlass* holder, bool null_if_not_found) {
+  guarantee(holder != nullptr, "");
   Key key(holder);
   TrainingData* td = have_data() ? lookup_archived_training_data(&key) : nullptr;
   KlassTrainingData* ktd = nullptr;

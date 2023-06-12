@@ -30,6 +30,7 @@
 #include "classfile/systemDictionaryShared.hpp"
 #include "classfile/javaClasses.hpp"
 #include "classfile/vmClasses.hpp"
+#include "compiler/compileTask.hpp"
 #include "memory/allocation.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/resourceArea.hpp"

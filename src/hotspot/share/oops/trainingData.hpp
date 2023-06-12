@@ -802,6 +802,19 @@ class MethodTrainingData : public TrainingData {
     return nullptr;
   }
 
+  CompileTrainingData* first_compile() const {
+    CompileTrainingData* ctd = nullptr;
+    for (int level = CompLevel_simple; level <= CompLevel_full_profile; level++) {
+      CompileTrainingData* ctd1 = _first_compiles[level-1];
+      if (ctd == nullptr) {
+        ctd = ctd1;
+      } else if ((ctd1 != nullptr) && ctd1->compile_id() < ctd->compile_id()) {
+        ctd = ctd1;
+      }
+    }
+    return ctd;
+  }
+
   CompileTrainingData* first_compile(int level) const {
     if (level > CompLevel_none) {
       return _first_compiles[level - 1];
