@@ -841,7 +841,7 @@ bool SCAFile::store_stub(StubCodeGenerator* cgen, vmIntrinsicID id, const char* 
   uint entry_size = archive->_write_position - entry_position;
   SCAEntry* entry = new(archive) SCAEntry(entry_position, entry_size, name_offset, name_size,
                                           code_offset, code_size, 0, 0,
-                                          SCAEntry::Stub, (uint32_t)id);
+                                          SCAEntry::Stub, (uint32_t)id, 0 /*flags*/);
   log_info(sca, stubs)("Wrote stub '%s' id:%d to shared code archive '%s'", name, (int)id, archive->_archive_path);
   return true;
 }
@@ -1705,7 +1705,7 @@ if (UseNewCode3) {
   uint entry_size = archive->_write_position - entry_position;
   SCAEntry* entry = new(archive) SCAEntry(entry_position, entry_size, name_offset, name_size,
                                           code_offset, code_size, reloc_offset, reloc_size,
-                                          SCAEntry::Blob, (uint32_t)999);
+                                          SCAEntry::Blob, (uint32_t)999, 0 /*flags*/);
   log_info(sca, stubs)("Wrote stub '%s' to shared code archive '%s'", name, archive->_archive_path);
   return true;
 }
@@ -2571,9 +2571,11 @@ if (UseNewCode) {
   }
   uint entry_size = archive->_write_position - entry_position;
 
+  uint nm_flags = (ciEnv::current()->is_precompiled() ? 1 : 0); // TODO: record info about other assumptions (e.g., init barriers)
+
   SCAEntry* entry = new(archive) SCAEntry(entry_position, entry_size, name_offset, name_size,
                                  code_offset, code_size, reloc_offset, reloc_size,
-                                 SCAEntry::Code, hash, (uint)comp_level, decomp);
+                                 SCAEntry::Code, hash, nm_flags, (uint)comp_level, decomp);
   {
     ResourceMark rm;
     const char* name   = method->name_and_sig_as_C_string();
@@ -2599,8 +2601,8 @@ void SCAFile::print_on(outputStream* st) {
       int index = search_entries[2*i + 1];
       SCAEntry* entry = &(load_entries[index]);
 
-      st->print_cr("%4u: %4u: K%u L%u offset=%u decompile=%u size=%u code_size=%u%s",
-                i, index, entry->kind(), entry->comp_level(), entry->offset(), entry->decompile(), entry->size(), entry->code_size(), entry->not_entrant() ? " not_entrant" : "");
+      st->print_cr("%4u: %4u: K%u L%u flags=%u offset=%u decompile=%u size=%u code_size=%u%s",
+                i, index, entry->kind(), entry->comp_level(), entry->flags(), entry->offset(), entry->decompile(), entry->size(), entry->code_size(), entry->not_entrant() ? " not_entrant" : "");
       st->print_raw("         ");
       SCAReader reader(archive, entry, nullptr);
       reader.print_on(st);
