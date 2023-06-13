@@ -1038,6 +1038,7 @@ void ciEnv::register_method(ciMethod* target,
                             bool has_wide_vectors,
                             bool has_monitors,
                             int immediate_oops_patched,
+                            bool install_code,
                             RTMState  rtm_state,
                             SCAEntry* sca_entry) {
   VM_ENTRY_MARK;
@@ -1100,9 +1101,11 @@ void ciEnv::register_method(ciMethod* target,
       // Encode the dependencies now, so we can check them right away.
       dependencies()->encode_content_bytes();
     }
-    // Check for {class loads, evolution, breakpoints, ...} during compilation
-    validate_compile_task_dependencies(target);
 
+    if (install_code) {
+      // Check for {class loads, evolution, breakpoints, ...} during compilation
+      validate_compile_task_dependencies(target);
+    }
 #if INCLUDE_RTM_OPT
     if (!failing() && (rtm_state != NoRTM) &&
         (method()->method_data() != nullptr) &&
@@ -1147,16 +1150,17 @@ void ciEnv::register_method(ciMethod* target,
         sca_entry->set_inlined_bytecodes(num_inlined_bytecodes());
       }
     }
-    nm =  nmethod::new_nmethod(method,
-                               compile_id(),
-                               entry_bci,
-                               offsets,
-                               orig_pc_offset,
-                               debug_info(), dependencies(), code_buffer,
-                               frame_words, oop_map_set,
-                               handler_table, inc_table,
-                               compiler, CompLevel(task()->comp_level()), sca_entry);
-
+    if (install_code) {
+      nm =  nmethod::new_nmethod(method,
+                                 compile_id(),
+                                 entry_bci,
+                                 offsets,
+                                 orig_pc_offset,
+                                 debug_info(), dependencies(), code_buffer,
+                                 frame_words, oop_map_set,
+                                 handler_table, inc_table,
+                                 compiler, CompLevel(task()->comp_level()), sca_entry);
+    }
     // Free codeBlobs
     code_buffer->free_blob();
 
@@ -1220,7 +1224,7 @@ void ciEnv::register_method(ciMethod* target,
     // Compilation succeeded, post what we know about it
     nm->post_compiled_method(task());
     task()->set_num_inlined_bytecodes(num_inlined_bytecodes());
-  } else {
+  } else if (install_code) {
     // The CodeCache is full.
     record_failure("code cache is full");
   }

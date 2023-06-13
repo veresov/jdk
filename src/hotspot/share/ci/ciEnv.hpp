@@ -384,6 +384,7 @@ public:
                        bool                      has_wide_vectors,
                        bool                      has_monitors,
                        int                       immediate_oops_patched,
+                       bool                      install_code,
                        RTMState                  rtm_state = NoRTM,
                        SCAEntry*                 entry = nullptr);
 

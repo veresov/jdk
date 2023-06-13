@@ -172,6 +172,11 @@ class CompileTask : public CHeapObj<mtCompiler> {
     }
   }
 
+  bool is_precompiled() {
+    return compile_reason() == CompileTask::Reason_Precompile ||
+           compile_reason() == CompileTask::Reason_Recorded;
+  }
+
   bool         has_waiter() const                { return _has_waiter; }
   void         clear_waiter()                    { _has_waiter = false; }
   JVMCICompileState* blocking_jvmci_compile_state() const { return _blocking_jvmci_compile_state; }

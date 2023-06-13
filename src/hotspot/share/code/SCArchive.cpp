@@ -2355,7 +2355,7 @@ if (UseNewCode3) {
                        has_unsafe_access,
                        has_wide_vectors,
                        has_monitors,
-                       0, NoRTM,
+                       0, true, NoRTM,
                        (SCAEntry *)_entry);
   return env->task()->is_success();
 }

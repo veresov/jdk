@@ -434,7 +434,8 @@ void Compilation::install_code(int frame_size) {
     has_unsafe_access(),
     SharedRuntime::is_wide_vector(max_vector_size()),
     has_monitors(),
-    _immediate_oops_patched
+    _immediate_oops_patched,
+    should_install_code()
   );
 }
 

@@ -27,6 +27,7 @@
 
 #include "ci/ciClassList.hpp"
 #include "utilities/globalDefinitions.hpp"
+#include "utilities/ostream.hpp"
 
 // ciConstant
 //
