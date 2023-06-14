@@ -628,15 +628,6 @@ bool MetaspaceShared::may_be_eagerly_linked(InstanceKlass* ik) {
   return true;
 }
 
-bool MetaspaceShared::link_class_for_cds(InstanceKlass* ik, TRAPS) {
-  // Link the class to cause the bytecodes to be rewritten and the
-  // cpcache to be created. Class verification is done according
-  // to -Xverify setting.
-  bool res = MetaspaceShared::try_link_class(THREAD, ik);
-  ClassPrelinker::dumptime_resolve_constants(ik, CHECK_(false));
-  return res;
-}
-
 void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
   ClassPrelinker::initialize();
 
@@ -670,7 +661,7 @@ void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
         if (klass->is_instance_klass()) {
           InstanceKlass* ik = InstanceKlass::cast(klass);
           if (may_be_eagerly_linked(ik)) {
-            has_linked |= link_class_for_cds(ik, CHECK);
+            has_linked |= try_link_class(THREAD, ik);
           }
         }
       }
@@ -681,6 +672,17 @@ void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
     }
     // Class linking includes verification which may load more classes.
     // Keep scanning until we have linked no more classes.
+  }
+
+  // Resolve constant pool entries -- we don't load any new classes during this stage
+  for (int i = 0; i < collect_cld.nof_cld(); i++) {
+    ClassLoaderData* cld = collect_cld.cld_at(i);
+    for (Klass* klass = cld->klasses(); klass != nullptr; klass = klass->next_link()) {
+      if (klass->is_instance_klass()) {
+        InstanceKlass* ik = InstanceKlass::cast(klass);
+        ClassPrelinker::dumptime_resolve_constants(ik, CHECK);
+      }
+    }
   }
 }
 

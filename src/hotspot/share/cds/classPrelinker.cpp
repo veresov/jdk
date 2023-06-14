@@ -265,60 +265,32 @@ void ClassPrelinker::dumptime_resolve_constants(InstanceKlass* ik, TRAPS) {
   }
 }
 
-Klass* ClassPrelinker::find_loaded_class(JavaThread* THREAD, oop class_loader, Symbol* name) {
-  HandleMark hm(THREAD);
-  Handle h_loader(THREAD, class_loader);
-  Klass* k = SystemDictionary::find_instance_or_array_klass(THREAD, name,
+// This works only for the boot/platform/app loaders
+Klass* ClassPrelinker::find_loaded_class(JavaThread* current, oop class_loader, Symbol* name) {
+  HandleMark hm(current);
+  Handle h_loader(current, class_loader);
+  Klass* k = SystemDictionary::find_instance_or_array_klass(current, name,
                                                             h_loader,
                                                             Handle());
   if (k != nullptr) {
     return k;
   }
   if (class_loader == SystemDictionary::java_system_loader()) {
-    return find_loaded_class(THREAD, SystemDictionary::java_platform_loader(), name);
+    return find_loaded_class(current, SystemDictionary::java_platform_loader(), name);
   } else if (class_loader == SystemDictionary::java_platform_loader()) {
-    return find_loaded_class(THREAD, nullptr, name);
+    return find_loaded_class(current, nullptr, name);
+  } else {
+    assert(class_loader == nullptr, "This function only works for boot/platform/app loaders");
   }
 
   return nullptr;
 }
 
-#if 0 // not used today
-Klass* ClassPrelinker::maybe_resolve_class(constantPoolHandle cp, int cp_index, TRAPS) {
-  assert(!is_in_archivebuilder_buffer(cp()), "sanity");
-  InstanceKlass* cp_holder = cp->pool_holder();
-  if (!cp_holder->is_shared_boot_class() &&
-      !cp_holder->is_shared_platform_class() &&
-      !cp_holder->is_shared_app_class()) {
-    // Don't trust custom loaders, as they may not be well-behaved
-    // when resolving classes.
-    return nullptr;
-  }
 
-  Symbol* name = cp->klass_name_at(cp_index);
-  Klass* resolved_klass = find_loaded_class(THREAD, cp_holder->class_loader(), name);
-  if (resolved_klass != nullptr) {
-    // We blindly resolve the CP entry at this point. Later,
-    // ConstantPool::maybe_archive_resolved_klass_at() will undo the ones that can't
-    // be archived (if PreloadSharedClasses is true, only references to excluded classes will be undone)
-    if (cp_holder->is_shared_boot_class()) { // FIXME -- allow for all 3 loaders
-      Klass* k = cp->klass_at(cp_index, THREAD);
-      if (HAS_PENDING_EXCEPTION) {
-        // Sometimes Javac stores InnerClasses attributes that refer to a package-private
-        // inner class from a different package. E.g., this is in java/util/GregorianCalendar
-        //
-        // InnerClasses:
-        // static #888= #886 of #62; // Date=class sun/util/calendar/Gregorian$Date of class sun/util/calendar/Gregorian
-        CLEAR_PENDING_EXCEPTION;
-        return nullptr;
-      }
-      assert(k == resolved_klass, "must be");
-    }
-  }
-
-  return resolved_klass;
+Klass* ClassPrelinker::find_loaded_class(JavaThread* current, ConstantPool* cp, int class_cp_index) {
+  Symbol* name = cp->klass_name_at(class_cp_index);
+  return find_loaded_class(current, cp->pool_holder()->class_loader(), name);
 }
-#endif
 
 #if INCLUDE_CDS_JAVA_HEAP
 void ClassPrelinker::resolve_string(constantPoolHandle cp, int cp_index, TRAPS) {
@@ -332,23 +304,33 @@ void ClassPrelinker::resolve_string(constantPoolHandle cp, int cp_index, TRAPS) 
 }
 #endif
 
-inline bool should_preresolve(int cp_index, GrowableArray<bool>* preresolve_list) {
-  return preresolve_list == nullptr || preresolve_list->at(cp_index) == true;
-}
-
 void ClassPrelinker::preresolve_class_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list) {
   if (!PreloadSharedClasses) {
+    return;
+  }
+  if (!SystemDictionaryShared::is_builtin_loader(ik->class_loader_data())) {
     return;
   }
 
   JavaThread* THREAD = current;
   constantPoolHandle cp(THREAD, ik->constants());
   for (int cp_index = 1; cp_index < cp->length(); cp_index++) {
-    if (cp->tag_at(cp_index).value() == JVM_CONSTANT_UnresolvedClass &&
-        should_preresolve(cp_index, preresolve_list)) {
-      cp->klass_at(cp_index, THREAD);
+    if (cp->tag_at(cp_index).value() == JVM_CONSTANT_UnresolvedClass) {
+      if (preresolve_list != nullptr && preresolve_list->at(cp_index) == false) {
+        // This class was not resolved during trial run. Don't attempt to resolve it. Otherwise
+        // the compiler may generate less efficient code.
+        continue;
+      }
+      if (find_loaded_class(current, cp(), cp_index) == nullptr) {
+        // Do not resolve any class that has not been loaded yet
+        continue;
+      }
+      Klass* resolved_klass = cp->klass_at(cp_index, THREAD);
       if (HAS_PENDING_EXCEPTION) {
         CLEAR_PENDING_EXCEPTION; // just ignore
+      } else {
+        log_trace(cds, resolve)("Resolved class  [%3d] %s -> %s", cp_index, ik->external_name(),
+                                resolved_klass->external_name());
       }
     }
   }
@@ -395,9 +377,15 @@ void ClassPrelinker::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecod
     return;
   }
   int cp_index = cp_cache_entry->constant_pool_index();
-  if (!should_preresolve(cp_index, preresolve_list)) {
+  if (preresolve_list != nullptr && preresolve_list->at(cp_index) == false) {
     // This field wasn't resolved during the trial run. Don't attempt to resolve it. Otherwise
     // the compiler may generate less efficient code.
+    return;
+  }
+
+  int klass_cp_index = cp->uncached_klass_ref_index_at(cp_index);
+  if (find_loaded_class(THREAD, cp(), klass_cp_index) == nullptr) {
+    // Do not resolve any field/methods from a class that has not been loaded yet.
     return;
   }
 
@@ -440,17 +428,25 @@ void ClassPrelinker::preresolve_indy_cp_entries(JavaThread* current, InstanceKla
   if (!ArchiveInvokeDynamic || cp->cache() == nullptr) {
     return;
   }
+  assert(preresolve_list != nullptr, "preresolve_indy_cp_entries() should not be called for "
+         "regenerated LambdaForm Invoker classes, which should not have indys anyway.");
+
 
   Array<ResolvedIndyEntry>* indy_entries = cp->cache()->resolved_indy_entries();
   for (int i = 0; i < indy_entries->length(); i++) {
     ResolvedIndyEntry* rie = indy_entries->adr_at(i);
-    if (should_preresolve(rie->constant_pool_index(), preresolve_list) && !rie->is_resolved()) {
+    if (preresolve_list->at(rie->constant_pool_index()) == true && !rie->is_resolved()) {
       InterpreterRuntime::cds_resolve_invokedynamic(ConstantPool::encode_invokedynamic_index(i), cp, THREAD);
       if (HAS_PENDING_EXCEPTION) {
         CLEAR_PENDING_EXCEPTION; // just ignore
       }
     }
   }
+}
+
+void ClassPrelinker::preresolve_invoker_class(JavaThread* current, InstanceKlass* ik) {
+  preresolve_class_cp_entries(current, ik, nullptr);
+  preresolve_field_and_method_cp_entries(current, ik, nullptr);
 }
 
 #ifdef ASSERT
