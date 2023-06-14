@@ -131,10 +131,12 @@ bool ClassPrelinker::can_archive_resolved_klass(InstanceKlass* cp_holder, Klass*
   assert(!is_in_archivebuilder_buffer(cp_holder), "sanity");
   assert(!is_in_archivebuilder_buffer(resolved_klass), "sanity");
 
+#if 0
   if (cp_holder->is_hidden()) {
     // TODO - what is needed for hidden classes?
     return false;
   }
+#endif
 
 #if 0
   if (DumpSharedSpaces && LambdaFormInvokers::may_be_regenerated_class(resolved_klass->name())) {
@@ -180,6 +182,8 @@ bool ClassPrelinker::can_archive_resolved_klass(InstanceKlass* cp_holder, Klass*
         return true;
       } else if (cp_holder->is_shared_boot_class()) {
         assert(loader == nullptr, "must be");
+        return true;
+      } else if (cp_holder->is_hidden() && cp_holder->class_loader() == nullptr) { // FIXME -- use better checks!
         return true;
       }
     }
@@ -243,25 +247,32 @@ void ClassPrelinker::dumptime_resolve_constants(InstanceKlass* ik, TRAPS) {
     return;
   }
 
-  // TODO: normally, we don't want to archive any CP entries that were not resolved
+  constantPoolHandle cp(THREAD, ik->constants());
+  for (int cp_index = 1; cp_index < cp->length(); cp_index++) { // Index 0 is unused
+    if (cp->tag_at(cp_index).value() == JVM_CONSTANT_String) {
+      resolve_string(cp, cp_index, CHECK); // may throw OOM when interning strings.
+    }
+  }
+
+  // Normally, we don't want to archive any CP entries that were not resolved
   // in the training run. Otherwise the AOT/JIT may inline too much code that has not
   // been executed.
   //
   // However, we want to aggressively resolve all klass/field/method constants for
-  // lambda form form invoker holder classes, lambda proxy classes (and lambda form classes
-  // in the future), so that the compiler can inline through them.
+  // LambdaForm Invoker Holder classes, Lambda Proxy classes, and LambdaForm classes,
+  // so that the compiler can inline through them.
+  bool eager_resolve = false;
 
-  constantPoolHandle cp(THREAD, ik->constants());
-  for (int cp_index = 1; cp_index < cp->length(); cp_index++) { // Index 0 is unused
-    switch (cp->tag_at(cp_index).value()) {
-    case JVM_CONSTANT_UnresolvedClass:
-      //maybe_resolve_class(cp, cp_index, CHECK); -- see TODO above
-      break;
+  if (LambdaFormInvokers::may_be_regenerated_class(ik->name())) {
+    eager_resolve = true;
+  }
+  if (ik->is_hidden() && ik->name()->starts_with("java/lang/invoke/LambdaForm$")) {
+    eager_resolve = true;
+  }
 
-    case JVM_CONSTANT_String:
-      resolve_string(cp, cp_index, CHECK); // may throw OOM when interning strings.
-      break;
-    }
+  if (eager_resolve) {
+    preresolve_class_cp_entries(THREAD, ik, nullptr);
+    preresolve_field_and_method_cp_entries(THREAD, ik, nullptr);
   }
 }
 
@@ -442,11 +453,6 @@ void ClassPrelinker::preresolve_indy_cp_entries(JavaThread* current, InstanceKla
       }
     }
   }
-}
-
-void ClassPrelinker::preresolve_invoker_class(JavaThread* current, InstanceKlass* ik) {
-  preresolve_class_cp_entries(current, ik, nullptr);
-  preresolve_field_and_method_cp_entries(current, ik, nullptr);
 }
 
 #ifdef ASSERT

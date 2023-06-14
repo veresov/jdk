@@ -24,7 +24,6 @@
 
 #include "precompiled.hpp"
 #include "cds/archiveBuilder.hpp"
-#include "cds/classPrelinker.hpp"
 #include "cds/lambdaFormInvokers.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "cds/regeneratedClasses.hpp"
@@ -204,8 +203,6 @@ void LambdaFormInvokers::regenerate_class(char* class_name, ClassFileStream& st,
   }
   log_info(cds, lambda)("Regenerated class %s, old: " INTPTR_FORMAT " new: " INTPTR_FORMAT,
                  class_name, p2i(klass), p2i(result));
-
-  ClassPrelinker::preresolve_invoker_class(THREAD, result);
 }
 
 void LambdaFormInvokers::dump_static_archive_invokers() {

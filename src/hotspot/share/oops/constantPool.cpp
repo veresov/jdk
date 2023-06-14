@@ -415,7 +415,9 @@ void ConstantPool::remove_unshareable_info() {
 }
 
 void ConstantPool::archive_entries() {
-  if (!_pool_holder->is_linked() && !_pool_holder->verified_at_dump_time()) {
+  if (pool_holder()->name()->starts_with("java/lang/invoke/LambdaForm$MH")) {
+    // TODO -- hidden class ...
+  } else if (!_pool_holder->is_linked() && !_pool_holder->verified_at_dump_time()) {
     return;
   }
   ResourceMark rm;
@@ -527,7 +529,11 @@ bool ConstantPool::maybe_archive_resolved_klass_at(int cp_index) {
 
 bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index, int cp_tag) {
   if (pool_holder()->is_hidden()) { // Not sure how to handle this yet ...
-    return false;
+    if (pool_holder()->name()->starts_with("java/lang/invoke/LambdaForm$")) {
+      // Hmmm, walking on thin ice here, but maybe we are OK :-)
+    } else {
+      return false;
+    }
   }
 
   ConstantPool* src_cp = ArchiveBuilder::current()->get_source_addr(this);
