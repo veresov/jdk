@@ -227,9 +227,9 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
       ik->is_hidden()) {
     return;
   }
-  if (LambdaFormInvokers::may_be_regenerated_class(ik->name())) {
-    return;
-  }
+  //if (LambdaFormInvokers::may_be_regenerated_class(ik->name())) {
+  //  return;
+  //}
   if (!has_id(ik)) {
     return;
   }
@@ -263,8 +263,12 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
     case JVM_CONSTANT_Methodref:
       if (cp->cache() != nullptr) {
         ConstantPoolCacheEntry* cpce = cp->cache()->entry_at(fmi_cpcache_index);
-        if (cpce->is_resolved(Bytecodes::_invokevirtual) || cpce->is_resolved(Bytecodes::_invokespecial)) {
+        if (cpce->is_resolved(Bytecodes::_invokevirtual) ||
+            cpce->is_resolved(Bytecodes::_invokespecial)) {
           list.append(cp_index);
+        }
+        if (cpce->is_resolved(Bytecodes::_invokehandle)) {
+          list.append(cp_index); /// Can invokehandle trigger <clinit>??
         }
       }
       fmi_cpcache_index++;

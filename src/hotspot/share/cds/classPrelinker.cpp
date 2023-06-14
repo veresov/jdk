@@ -371,6 +371,7 @@ void ClassPrelinker::preresolve_field_and_method_cp_entries(JavaThread* current,
       case Bytecodes::_putfield:
       case Bytecodes::_invokespecial:
       case Bytecodes::_invokevirtual:
+      case Bytecodes::_invokehandle:
         maybe_resolve_fmi_ref(ik, m, bc, bcs.get_index_u2_cpcache(), preresolve_list, THREAD);
         if (HAS_PENDING_EXCEPTION) {
           CLEAR_PENDING_EXCEPTION; // just ignore
@@ -414,6 +415,10 @@ void ClassPrelinker::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecod
   case Bytecodes::_invokespecial:
     // Not implemented yet.
     return;
+  case Bytecodes::_invokehandle:
+    InterpreterRuntime::cds_resolve_invokehandle(raw_index, cp, CHECK);
+    ref_kind = "method";
+    break;
   default:
     ShouldNotReachHere();
   }

@@ -101,6 +101,8 @@ class InterpreterRuntime: AllStatic {
                                  methodHandle& m,
                                  constantPoolHandle& pool,
                                  ConstantPoolCacheEntry* cp_cache_entry, TRAPS);
+  static void cds_resolve_invokehandle(int raw_index,
+                                       constantPoolHandle& pool, TRAPS);
   static void cds_resolve_invokedynamic(int raw_index,
                                         constantPoolHandle& pool, TRAPS);
  private:

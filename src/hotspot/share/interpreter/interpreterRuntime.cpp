@@ -974,6 +974,17 @@ void InterpreterRuntime::resolve_invokehandle(JavaThread* current) {
   cp_cache_entry->set_method_handle(pool, info);
 }
 
+void InterpreterRuntime::cds_resolve_invokehandle(int raw_index,
+                                                  constantPoolHandle& pool, TRAPS) {
+  const Bytecodes::Code bytecode = Bytecodes::_invokehandle;
+  CallInfo info;
+  LinkResolver::resolve_invoke(info, Handle(), pool,
+                               raw_index, bytecode, CHECK);
+  int cpc_index = ConstantPool::decode_cpcache_index(raw_index);
+  ConstantPoolCacheEntry* cp_cache_entry = pool->cache()->entry_at(cpc_index);
+  cp_cache_entry->set_method_handle(pool, info);
+}
+
 // First time execution:  Resolve symbols, create a permanent CallSite object.
 void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
   LastFrameAccessor last_frame(current);

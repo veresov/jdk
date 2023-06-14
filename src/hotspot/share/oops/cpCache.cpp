@@ -667,9 +667,9 @@ bool ConstantPoolCacheEntry::mark_and_relocate_method_entry(ConstantPool* src_cp
         assert(f1->is_method(), "must be");
         break;
       case Bytecodes::_invokehandle:
-        assert(0, "not implemented");
-        // assert(f1->is_method(), "");
-        return false;
+        assert(bytecode_2() == (Bytecodes::Code)0, "must be");
+         assert(f1->is_method(), "");
+        return true;
       default:
         ShouldNotReachHere();
         break;

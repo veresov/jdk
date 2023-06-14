@@ -556,7 +556,9 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
     }
     break;
   case JVM_CONSTANT_Methodref:
-    if (!cpce->is_resolved(Bytecodes::_invokevirtual) && !cpce->is_resolved(Bytecodes::_invokespecial)) {
+    if (!cpce->is_resolved(Bytecodes::_invokevirtual) &&
+        !cpce->is_resolved(Bytecodes::_invokespecial) &&
+        !cpce->is_resolved(Bytecodes::_invokehandle)) {
       return false;
     }
     if (resolved_klass->is_instance_klass()) {
