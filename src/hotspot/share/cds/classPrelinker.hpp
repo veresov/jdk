@@ -25,6 +25,7 @@
 #ifndef SHARE_CDS_CLASSPRELINKER_HPP
 #define SHARE_CDS_CLASSPRELINKER_HPP
 
+#include "interpreter/bytecodes.hpp"
 #include "oops/oopsHierarchy.hpp"
 #include "memory/allStatic.hpp"
 #include "memory/allocation.hpp"
@@ -99,9 +100,15 @@ class ClassPrelinker :  AllStatic {
   static void jvmti_agent_error(InstanceKlass* expected, InstanceKlass* actual, const char* type);
   static Klass* get_fmi_ref_resolved_archivable_klass(ConstantPool* cp, int cp_index);
 
+  static void maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecodes::Code bc, int raw_index,
+                                    GrowableArray<bool>* resolve_fmi_list, TRAPS);
 public:
   static void initialize();
   static void dispose();
+
+  static void preresolve_class_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list);
+  static void preresolve_field_and_method_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list);
+  static void preresolve_indy_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list);
 
   // Is this class resolved as part of vmClasses::resolve_all()? If so, these
   // classes are guatanteed to be loaded at runtime (and cannot be replaced by JVMTI)

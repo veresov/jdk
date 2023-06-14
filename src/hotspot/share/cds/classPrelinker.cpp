@@ -31,6 +31,10 @@
 #include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
 #include "gc/shared/gcVMOperations.hpp"
+#include "interpreter/bytecode.hpp"
+#include "interpreter/bytecodeStream.hpp"
+#include "interpreter/interpreterRuntime.hpp"
+#include "interpreter/linkResolver.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/constantPool.inline.hpp"
 #include "oops/instanceKlass.hpp"
@@ -327,6 +331,122 @@ void ClassPrelinker::resolve_string(constantPoolHandle cp, int cp_index, TRAPS) 
   ConstantPool::string_at_impl(cp, cp_index, cache_index, CHECK);
 }
 #endif
+
+inline bool should_preresolve(int cp_index, GrowableArray<bool>* preresolve_list) {
+  return preresolve_list == nullptr || preresolve_list->at(cp_index) == true;
+}
+
+void ClassPrelinker::preresolve_class_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list) {
+  if (!PreloadSharedClasses) {
+    return;
+  }
+
+  JavaThread* THREAD = current;
+  constantPoolHandle cp(THREAD, ik->constants());
+  for (int cp_index = 1; cp_index < cp->length(); cp_index++) {
+    if (cp->tag_at(cp_index).value() == JVM_CONSTANT_UnresolvedClass &&
+        should_preresolve(cp_index, preresolve_list)) {
+      cp->klass_at(cp_index, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        CLEAR_PENDING_EXCEPTION; // just ignore
+      }
+    }
+  }
+}
+
+void ClassPrelinker::preresolve_field_and_method_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list) {
+  JavaThread* THREAD = current;
+  constantPoolHandle cp(THREAD, ik->constants());
+  if (cp->cache() == nullptr) {
+    return;
+  }
+  for (int i = 0; i < ik->methods()->length(); i++) {
+    Method* m = ik->methods()->at(i);
+    BytecodeStream bcs(methodHandle(THREAD, m));
+    while (!bcs.is_last_bytecode()) {
+      bcs.next();
+      Bytecodes::Code bc = bcs.raw_code();
+      switch (bc) {
+      case Bytecodes::_getfield:
+      case Bytecodes::_putfield:
+      case Bytecodes::_invokespecial:
+      case Bytecodes::_invokevirtual:
+        maybe_resolve_fmi_ref(ik, m, bc, bcs.get_index_u2_cpcache(), preresolve_list, THREAD);
+        if (HAS_PENDING_EXCEPTION) {
+          CLEAR_PENDING_EXCEPTION; // just ignore
+        }
+        break;
+      default:
+        break;
+      }
+    }
+  }
+}
+
+void ClassPrelinker::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecodes::Code bc, int raw_index,
+                                           GrowableArray<bool>* preresolve_list, TRAPS) {
+  methodHandle mh(THREAD, m);
+  constantPoolHandle cp(THREAD, ik->constants());
+
+  int cpc_index = cp->decode_cpcache_index(raw_index);
+  ConstantPoolCacheEntry* cp_cache_entry = cp->cache()->entry_at(cpc_index);
+  if (cp_cache_entry->is_resolved(bc)) {
+    return;
+  }
+  int cp_index = cp_cache_entry->constant_pool_index();
+  if (!should_preresolve(cp_index, preresolve_list)) {
+    // This field wasn't resolved during the trial run. Don't attempt to resolve it. Otherwise
+    // the compiler may generate less efficient code.
+    return;
+  }
+
+  const char* ref_kind = "";
+  switch (bc) {
+  case Bytecodes::_getfield:
+  case Bytecodes::_putfield:
+    InterpreterRuntime::resolve_get_put(bc, raw_index, mh, cp, cp_cache_entry, CHECK);
+    ref_kind = "field ";
+    break;
+  case Bytecodes::_invokevirtual:
+    InterpreterRuntime::cds_resolve_invoke(bc, raw_index, mh, cp, cp_cache_entry, CHECK);
+    ref_kind = "method";
+    break;
+  case Bytecodes::_invokespecial:
+    // Not implemented yet.
+    return;
+  default:
+    ShouldNotReachHere();
+  }
+
+  if (log_is_enabled(Trace, cds, resolve)) {
+    ResourceMark rm(THREAD);
+    Klass* resolved_klass = cp->klass_ref_at(raw_index, bc, CHECK);
+    Symbol* name = cp->name_ref_at(raw_index, bc);
+    Symbol* signature = cp->signature_ref_at(raw_index, bc);
+    log_trace(cds, resolve)("Resolved %s [%3d] %s -> %s.%s:%s", ref_kind, cp_index, ik->external_name(),
+                            resolved_klass->external_name(),
+                            name->as_C_string(), signature->as_C_string());
+  }
+}
+
+void ClassPrelinker::preresolve_indy_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list) {
+  JavaThread* THREAD = current;
+  constantPoolHandle cp(THREAD, ik->constants());
+  if (!ArchiveInvokeDynamic || cp->cache() == nullptr) {
+    return;
+  }
+
+  Array<ResolvedIndyEntry>* indy_entries = cp->cache()->resolved_indy_entries();
+  for (int i = 0; i < indy_entries->length(); i++) {
+    ResolvedIndyEntry* rie = indy_entries->adr_at(i);
+    if (should_preresolve(rie->constant_pool_index(), preresolve_list) && !rie->is_resolved()) {
+      InterpreterRuntime::cds_resolve_invokedynamic(ConstantPool::encode_invokedynamic_index(i), cp, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        CLEAR_PENDING_EXCEPTION; // just ignore
+      }
+    }
+  }
+}
 
 #ifdef ASSERT
 bool ClassPrelinker::is_in_archivebuilder_buffer(address p) {

@@ -63,7 +63,7 @@ public class PrelinkedStringConcat {
 
         // Run with archive
         CDSOptions runOpts = (new CDSOptions())
-            .addPrefix("-cp", appJar, "-Xlog:cds=debug",
+            .addPrefix("-cp", appJar, "-Xlog:class+load", "-Xlog:cds=debug",
                        "-Xlog:methodhandles")
             .setArchiveName(archiveName)
             .setUseVersion(false)
@@ -71,6 +71,9 @@ public class PrelinkedStringConcat {
         output = CDSTestUtils.runWithArchive(runOpts);
         TestCommon.checkExecReturn(output, 0, true,
                                    "OUTPUT = a222");
+        output.shouldMatch("LambdaForm[$]((MH)|(DMH))/0x[0-9]+ source: shared objects file");
+        output.shouldNotMatch("LambdaForm[$]MH/0x[0-9]+ source: __JVM_LookupDefineClass__");
+        output.shouldNotMatch("LambdaForm[$]DMH/0x[0-9]+ source: __JVM_LookupDefineClass__");
     }
 }
 
