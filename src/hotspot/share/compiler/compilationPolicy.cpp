@@ -1138,9 +1138,9 @@ CompLevel CompilationPolicy::trained_transition_from_none(const methodHandle& me
     // we need to profile it.
     return CompLevel_full_profile;
   }
-  bool deopt = (static_cast<CompLevel>(method->highest_comp_level()) == CompLevel_full_optimization);
+  const bool deopt = (static_cast<CompLevel>(method->highest_comp_level()) == CompLevel_full_optimization);
   // If we deopted, then we reprofile
-  if (deopt) {
+  if (deopt && !is_method_profiled(method)) {
     return CompLevel_full_profile;
   }
 
