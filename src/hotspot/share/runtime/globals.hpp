@@ -547,7 +547,7 @@ const int ObjectAlignmentInBytes = 8;
           "Dump heap to file when java.lang.OutOfMemoryError is thrown "    \
           "from JVM")                                                       \
                                                                             \
-  product(ccstr, HeapDumpPath, nullptr, MANAGEABLE,                            \
+  product(ccstr, HeapDumpPath, nullptr, MANAGEABLE,                         \
           "When HeapDumpOnOutOfMemoryError is on, the path (filename or "   \
           "directory) of the dump file (defaults to java_pid<pid>.hprof "   \
           "in the working directory)")                                      \
@@ -601,7 +601,7 @@ const int ObjectAlignmentInBytes = 8;
   product(bool, PrintAssembly, false, DIAGNOSTIC,                           \
           "Print assembly code (using external disassembler.so)")           \
                                                                             \
-  product(ccstr, PrintAssemblyOptions, nullptr, DIAGNOSTIC,                    \
+  product(ccstr, PrintAssemblyOptions, nullptr, DIAGNOSTIC,                 \
           "Print options string passed to disassembler.so")                 \
                                                                             \
   notproduct(bool, PrintNMethodStatistics, false,                           \
@@ -629,7 +629,7 @@ const int ObjectAlignmentInBytes = 8;
           "Exercise compiled exception handlers")                           \
                                                                             \
   develop(bool, InterceptOSException, false,                                \
-          "Start debugger when an implicit OS (e.g. nullptr) "                 \
+          "Start debugger when an implicit OS (e.g. null pointer) "         \
           "exception happens")                                              \
                                                                             \
   product(bool, PrintCodeCache, false,                                      \
@@ -835,7 +835,7 @@ const int ObjectAlignmentInBytes = 8;
   develop(bool, StressRewriter, false,                                      \
           "Stress linktime bytecode rewriting")                             \
                                                                             \
-  product(ccstr, TraceJVMTI, nullptr,                                          \
+  product(ccstr, TraceJVMTI, nullptr,                                       \
           "Trace flags for JVMTI functions and events")                     \
                                                                             \
   product(bool, StressLdcRewrite, false, DIAGNOSTIC,                        \
@@ -886,10 +886,6 @@ const int ObjectAlignmentInBytes = 8;
                                                                             \
   develop(bool, FLSVerifyDictionary, false,                                 \
           "Do lots of (expensive) FLS dictionary verification")             \
-                                                                            \
-                                                                            \
-  notproduct(bool, CheckMemoryInitialization, false,                        \
-          "Check memory initialization")                                    \
                                                                             \
   product(uintx, ProcessDistributionStride, 4,                              \
           "Stride through processors when distributing processes")          \
@@ -1070,11 +1066,11 @@ const int ObjectAlignmentInBytes = 8;
   notproduct(bool, PrintSymbolTableSizeHistogram, false,                    \
           "print histogram of the symbol table")                            \
                                                                             \
-  product(ccstr, AbortVMOnException, nullptr, DIAGNOSTIC,                      \
+  product(ccstr, AbortVMOnException, nullptr, DIAGNOSTIC,                   \
           "Call fatal if this exception is thrown.  Example: "              \
           "java -XX:AbortVMOnException=java.lang.NullPointerException Foo") \
                                                                             \
-  product(ccstr, AbortVMOnExceptionMessage, nullptr, DIAGNOSTIC,               \
+  product(ccstr, AbortVMOnExceptionMessage, nullptr, DIAGNOSTIC,            \
           "Call fatal if the exception pointed by AbortVMOnException "      \
           "has this message")                                               \
                                                                             \
@@ -1281,7 +1277,7 @@ const int ObjectAlignmentInBytes = 8;
           "(0.0 means off)")                                                \
           range(0.0, (double)max_intx)                                      \
                                                                             \
-  product(intx, MaxJavaStackTraceDepth, 1024,                               \
+  product(int, MaxJavaStackTraceDepth, 1024,                                \
           "The maximum number of lines in the stack trace for Java "        \
           "exceptions (0 means all)")                                       \
           range(0, max_jint/2)                                              \
@@ -1389,7 +1385,7 @@ const int ObjectAlignmentInBytes = 8;
   product(double, InlineFrequencyRatio, 0.25, DIAGNOSTIC,                   \
           "Ratio of call site execution to caller method invocation")       \
                                                                             \
-  product(double, MinInlineFrequencyRatio, 0.0085, DIAGNOSTIC,               \
+  product(double, MinInlineFrequencyRatio, 0.0085, DIAGNOSTIC,              \
           "Minimum ratio of call site execution to caller method"           \
           "invocation to be considered for inlining")                       \
                                                                             \
@@ -1756,7 +1752,7 @@ const int ObjectAlignmentInBytes = 8;
   product(bool, PerfDataSaveToFile, false,                                  \
           "Save PerfData memory to hsperfdata_<pid> file on exit")          \
                                                                             \
-  product(ccstr, PerfDataSaveFile, nullptr,                                    \
+  product(ccstr, PerfDataSaveFile, nullptr,                                 \
           "Save PerfData memory to the specified absolute pathname. "       \
           "The string %p in the file name (if present) "                    \
           "will be replaced by pid")                                        \
@@ -1943,7 +1939,7 @@ const int ObjectAlignmentInBytes = 8;
           range(0, max_intx)                                                \
           constraint(InitArrayShortSizeConstraintFunc, AfterErgo)           \
                                                                             \
-  product(ccstr, AllocateHeapAt, nullptr,                                      \
+  product(ccstr, AllocateHeapAt, nullptr,                                   \
           "Path to the directory where a temporary file will be created "   \
           "to use as the backing store for Java Heap.")                     \
                                                                             \
@@ -1978,10 +1974,10 @@ const int ObjectAlignmentInBytes = 8;
   JFR_ONLY(product(bool, FlightRecorder, false,                             \
           "(Deprecated) Enable Flight Recorder"))                           \
                                                                             \
-  JFR_ONLY(product(ccstr, FlightRecorderOptions, nullptr,                      \
+  JFR_ONLY(product(ccstr, FlightRecorderOptions, nullptr,                   \
           "Flight Recorder options"))                                       \
                                                                             \
-  JFR_ONLY(product(ccstr, StartFlightRecording, nullptr,                       \
+  JFR_ONLY(product(ccstr, StartFlightRecording, nullptr,                    \
           "Start flight recording with options"))                           \
                                                                             \
   product(bool, UseFastUnorderedTimeStamps, false, EXPERIMENTAL,            \

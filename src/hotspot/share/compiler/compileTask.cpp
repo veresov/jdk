@@ -231,10 +231,6 @@ void CompileTask::print_line_on_error(outputStream* st, char* buf, int buflen) {
 // CompileTask::print_tty
 void CompileTask::print_tty() {
   ttyLocker ttyl;  // keep the following output all in one block
-  // print compiler name if requested
-  if (CIPrintCompilerName) {
-    tty->print("%s:", compiler()->name());
-  }
   print(tty);
 }
 

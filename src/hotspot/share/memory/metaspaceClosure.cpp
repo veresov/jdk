@@ -25,20 +25,17 @@
 #include "precompiled.hpp"
 #include "memory/metaspaceClosure.hpp"
 
-// Update the reference to point to new_loc.
-void MetaspaceClosure::Ref::update(address new_loc) const {
-  log_trace(cds)("Ref: [" PTR_FORMAT "] -> " PTR_FORMAT " => " PTR_FORMAT,
-                 p2i(mpp()), p2i(obj()), p2i(new_loc));
-  intptr_t tag = (intptr_t(*addr()) & 0x3); // FIXME: keep the tag just in case
-  *addr() = address(intptr_t(new_loc) | tag);
-}
-
 void MetaspaceClosure::push_impl(MetaspaceClosure::Ref* ref) {
+  if (_enclosing_ref != nullptr) {
+    assert(_nest_level > 0, "sanity");
+    ref->set_enclosing_obj(_enclosing_ref->obj());
+  } else {
+    assert(_nest_level == 0, "sanity");
+  }
   if (_nest_level < MAX_NEST_LEVEL) {
     do_push(ref);
     delete ref;
   } else {
-    do_pending_ref(ref);
     ref->set_next(_pending_refs);
     _pending_refs = ref;
   }
