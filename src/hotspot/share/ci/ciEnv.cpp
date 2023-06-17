@@ -175,6 +175,8 @@ ciEnv::ciEnv(CompileTask* task)
   _jvmti_can_post_on_exceptions = false;
   _jvmti_can_pop_frame = false;
 
+  _sca_clinit_barriers_entry = nullptr;
+
   _dyno_klasses = nullptr;
   _dyno_locs = nullptr;
   _dyno_name[0] = '\0';
@@ -295,6 +297,8 @@ ciEnv::ciEnv(Arena* arena) : _ciEnv_arena(mtCompiler) {
   _jvmti_can_access_local_variables = false;
   _jvmti_can_post_on_exceptions = false;
   _jvmti_can_pop_frame = false;
+
+  _sca_clinit_barriers_entry = nullptr;
 
   _dyno_klasses = nullptr;
   _dyno_locs = nullptr;
@@ -1153,11 +1157,15 @@ void ciEnv::register_method(ciMethod* target,
                              has_monitors);
       if (sca_entry != nullptr) {
         sca_entry->set_inlined_bytecodes(num_inlined_bytecodes());
-      }
-      if (has_clinit_barriers) {
-        // Build second version of code without class initialization barriers
-        code_buffer->free_blob();
-        return;
+        if (has_clinit_barriers) {
+          set_sca_clinit_barriers_entry(sca_entry); // Record it
+          // Build second version of code without class initialization barriers
+          code_buffer->free_blob();
+          return;
+        } else if (!for_preload) {
+          SCAEntry* previous_entry = sca_clinit_barriers_entry();
+          sca_entry->set_next(previous_entry); // Link it for case of deoptimization
+        }
       }
     }
     nm =  nmethod::new_nmethod(method,

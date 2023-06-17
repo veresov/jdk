@@ -137,7 +137,7 @@ void C2Compiler::compile_method(ciEnv* env, ciMethod* target, int entry_bci, boo
   bool do_iterative_escape_analysis = DoEscapeAnalysis;
   bool eliminate_boxing = EliminateAutoBox;
   bool do_locks_coarsening = EliminateLocks;
-  bool for_preload = SCArchive::gen_preload_code(target);
+  bool for_preload = SCArchive::gen_preload_code(target, entry_bci);
 
   while (!env->failing()) {
     // Attempt to compile while subsuming loads into machine instructions.

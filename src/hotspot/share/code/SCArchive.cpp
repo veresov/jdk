@@ -152,9 +152,9 @@ bool SCArchive::is_SC_load_tread_on() {
   return UseCodeLoadThread && LoadSharedCode;
 }
 
-bool SCArchive::gen_preload_code(ciMethod* m) {
+bool SCArchive::gen_preload_code(ciMethod* m, int entry_bci) {
   VM_ENTRY_MARK;
-  return _archive != nullptr && _archive->gen_preload_code() &&
+  return (entry_bci == InvocationEntryBci) && _archive != nullptr && _archive->gen_preload_code() &&
          MetaspaceShared::is_in_shared_metaspace((address)(m->get_Method()));
 }
 
@@ -649,6 +649,22 @@ void SCAFile::invalidate(SCAEntry* entry) {
   assert(found, "entry should exist");
 #endif
   entry->set_not_entrant();
+  {
+    ResourceMark rm;
+    Method* method = entry->method();
+    const char* name = method->name_and_sig_as_C_string();
+    uint level   = entry->comp_level();
+    uint comp_id = entry->comp_id();
+    uint decomp  = entry->decompile();
+    bool clinit_brs = entry->has_clinit_barriers();
+    log_info(sca, nmethod)("Invalidated entry for '%s' (comp_id %d, comp_level %d, decomp: %d, hash: " UINT32_FORMAT_X_0 "%s)",
+                           name, comp_id, level, decomp, entry->id(), (clinit_brs ? ", has clinit barriers" : ""));  
+  }
+  if (entry->next() != nullptr) {
+    entry = entry->next();
+    assert(entry->has_clinit_barriers(), "expecting only such entries here");
+    invalidate(entry);
+  }
 }
 
 extern "C" {
@@ -704,7 +720,7 @@ bool SCAFile::finish_write() {
     // Process them in reverse order to cache first code first.
     for (int i = store_count - 1; i >= 0; i--) {
       if (entries_address[i].not_entrant()) {
-        log_info(sca, exit)("Not entrant new entry i: %d, comp_level: %d, decomp: %d, hash: " UINT32_FORMAT_X_0, i, entries_address[i].comp_level(), entries_address[i].decompile(), entries_address[i].id());
+        log_info(sca, exit)("Not entrant new entry comp_id: %d, comp_level: %d, decomp: %d, hash: " UINT32_FORMAT_X_0 "%s", entries_address[i].comp_id(), entries_address[i].comp_level(), entries_address[i].decompile(), entries_address[i].id(), (entries_address[i].has_clinit_barriers() ? ", has clinit barriers" : ""));
         not_entrant_nb++;
         entries_address[i].set_entrant(); // Reset
       } else if (entries_address[i].for_preload() && entries_address[i].method() != nullptr) {
@@ -712,6 +728,7 @@ bool SCAFile::finish_write() {
         preload_entries[preload_entries_cnt++] = entries_count;
       }
       {
+        entries_address[i].set_next(nullptr); // clear pointers before storing data
         uint size = align_up(entries_address[i].size(), DATA_ALIGNMENT);
         if (size > max_size) {
           max_size = size;
@@ -827,9 +844,9 @@ bool SCAFile::finish_write() {
     } else {
       log_info(sca, exit)("Opened for write shared code archive '%s'", _archive_path);
     }
-    uint n = (uint)os::write(fd, start, size);
-    if (n != size) {
-      log_warning(sca, exit)("Failed to write %d bytes to shared code archive file '%s'", size, _archive_path);
+    bool success = os::write(fd, start, (size_t)size);
+    if (!success) {
+      log_warning(sca, exit)("Failed to write %d bytes to shared code archive file '%s': (%s)", size, _archive_path, os::strerror(errno));
       FREE_C_HEAP_ARRAY(char, buffer);
       return false;
     }
@@ -2292,9 +2309,10 @@ bool SCAFile::load_nmethod(ciEnv* env, ciMethod* target, int entry_bci, Abstract
     methodHandle method(THREAD, target->get_Method());
     const char* target_name = method->name_and_sig_as_C_string();
     uint hash = java_lang_String::hash_code((const jbyte*)target_name, strlen(target_name));
-    log_info(sca, nmethod)("%d (L%d): %s nmethod '%s' (comp level: %d, decomp: %d, hash: " UINT32_FORMAT_X_0 ")",
+    bool clinit_brs = entry->has_clinit_barriers();
+    log_info(sca, nmethod)("%d (L%d): %s nmethod '%s' (decomp: %d, hash: " UINT32_FORMAT_X_0 "%s)",
                            task->compile_id(), task->comp_level(), (preload ? "Preloading" : "Reading"),
-                           target_name, (uint)comp_level, decomp, hash);
+                           target_name, decomp, hash, (clinit_brs ? ", has clinit barriers" : ""));
   }
   ReadingMark rdmk;
   SCAReader reader(archive, entry, task);
@@ -2536,8 +2554,9 @@ if (UseNewCode3) {
   {
     ResourceMark rm;
     const char* name   = method->name_and_sig_as_C_string();
-    log_info(sca, nmethod)("%d (L%d): Writing nmethod '%s' (comp level: %d, decomp: %d) to shared code archive '%s'",
-                           task->compile_id(), task->comp_level(), name, comp_level, decomp, archive->_archive_path);
+    log_info(sca, nmethod)("%d (L%d): Writing nmethod '%s' (comp level: %d, decomp: %d%s) to shared code archive '%s'",
+                           task->compile_id(), task->comp_level(), name, comp_level, decomp,
+                           (has_clinit_barriers ? ", has clinit barriers" : ""), archive->_archive_path);
 
 if (UseNewCode) {
   Klass* klass = method->method_holder();
@@ -2695,8 +2714,8 @@ if (UseNewCode) {
   {
     ResourceMark rm;
     const char* name   = method->name_and_sig_as_C_string();
-    log_info(sca, nmethod)("%d (L%d): Wrote nmethod '%s' to shared code archive '%s'",
-                           task->compile_id(), task->comp_level(), name, archive->_archive_path);
+    log_info(sca, nmethod)("%d (L%d): Wrote nmethod '%s'%s to shared code archive '%s'",
+                           task->compile_id(), task->comp_level(), name, (archive->_for_preload ? " (for preload)" : ""), archive->_archive_path);
   }
   if (VerifySharedCode) {
     return nullptr;

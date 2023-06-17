@@ -1542,6 +1542,10 @@ bool nmethod::preloaded() const {
   return (_sca_entry != nullptr) && (_sca_entry->preloaded());
 }
 
+bool nmethod::has_clinit_barriers() const {
+  return (_sca_entry != nullptr) && (_sca_entry->has_clinit_barriers());
+}
+
 void nmethod::post_compiled_method(CompileTask* task) {
   task->mark_success();
   task->set_nm_content_size(content_size());

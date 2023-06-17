@@ -188,6 +188,8 @@ public:
   void set_inlined_bytecodes(int bytes) { _num_inlined_bytecodes = bytes; }
 
   uint comp_level()   const { return _comp_level; }
+  uint comp_id()      const { return _comp_id; }
+
   uint decompile()    const { return _decompile; }
   bool has_clinit_barriers() const { return _has_clinit_barriers; }
   bool for_preload()  const { return _for_preload; }
@@ -447,7 +449,7 @@ public:
   static bool is_SC_load_tread_on();
   static bool is_on_for_read()  { return _archive != nullptr && _archive->for_read(); }
   static bool is_on_for_write() { return _archive != nullptr && _archive->for_write(); }
-  static bool gen_preload_code(ciMethod* m);
+  static bool gen_preload_code(ciMethod* m, int entry_bci);
   static bool allow_const_field(ciConstant& value);
   static void invalidate(SCAEntry* entry);
   static bool is_loaded(SCAEntry* entry);

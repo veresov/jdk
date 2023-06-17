@@ -1611,7 +1611,7 @@ bool CompileBroker::compilation_is_complete(const methodHandle& method,
       return true;
     } else {
       CompiledMethod* result = method->code();
-      if (result == nullptr) return false;
+      if (result == nullptr || result->has_clinit_barriers()) return false;
       return comp_level == result->comp_level();
     }
   }

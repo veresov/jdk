@@ -936,6 +936,10 @@ bool Method::needs_clinit_barrier() const {
   return is_static() && !method_holder()->is_initialized();
 }
 
+bool Method::code_has_clinit_barriers() const {
+  return (_code != nullptr) && _code->has_clinit_barriers();
+}
+
 objArrayHandle Method::resolved_checked_exceptions_impl(Method* method, TRAPS) {
   int length = method->checked_exceptions_length();
   if (length == 0) {  // common case
@@ -1999,8 +2003,9 @@ int Method::backedge_count() const {
 
 int Method::highest_comp_level() const {
   const MethodCounters* mcs = method_counters();
+  int level = (_code != nullptr) ? _code->comp_level() : CompLevel_none;
   if (mcs != nullptr) {
-    return mcs->highest_comp_level();
+    return MAX2(mcs->highest_comp_level(), level);
   } else {
     return CompLevel_none;
   }

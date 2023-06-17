@@ -470,6 +470,13 @@ public:
   // RedefineClasses support
   void metadata_do(MetadataClosure* f) { _factory->metadata_do(f); }
 
+private:
+  SCAEntry* _sca_clinit_barriers_entry;
+
+public:
+  void  set_sca_clinit_barriers_entry(SCAEntry* entry) { _sca_clinit_barriers_entry = entry; }
+  SCAEntry* sca_clinit_barriers_entry()          const { return _sca_clinit_barriers_entry; }
+
   // Replay support
 private:
   static int klass_compare(const InstanceKlass* const &ik1, const InstanceKlass* const &ik2) {

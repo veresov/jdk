@@ -608,6 +608,7 @@ public:
 
   SCAEntry* sca_entry() const { return _sca_entry; }
   bool preloaded() const;
+  bool has_clinit_barriers() const;
 
   // Post successful compilation
   void post_compiled_method(CompileTask* task);
