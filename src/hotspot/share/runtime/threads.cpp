@@ -34,6 +34,7 @@
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmClasses.hpp"
 #include "classfile/vmSymbols.hpp"
+#include "code/SCArchive.hpp"
 #include "compiler/compileBroker.hpp"
 #include "compiler/compileTask.hpp"
 #include "compiler/compilerThread.hpp"
@@ -772,6 +773,11 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
     JVMCI::initialize_compiler(CHECK_JNI_ERR);
     CompileBroker::compilation_init_phase2();
   }
+#endif
+
+#if defined(COMPILER2)
+  // Pre-load cached compiled methods
+  SCArchive::preload_code(THREAD);
 #endif
 
   // Always call even when there are not JVMTI environments yet, since environments

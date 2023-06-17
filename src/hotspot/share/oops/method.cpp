@@ -1284,6 +1284,10 @@ void Method::link_method(const methodHandle& h_method, TRAPS) {
     _from_compiled_entry = nullptr;
     _i2i_entry = nullptr;
   }
+  if (_preload_code != nullptr) {
+    MutexLocker ml(CompiledMethod_lock, Mutex::_no_safepoint_check_flag);
+    set_code(h_method, _preload_code);
+  }
 }
 
 address Method::make_adapters(const methodHandle& mh, TRAPS) {

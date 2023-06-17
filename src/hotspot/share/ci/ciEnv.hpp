@@ -380,6 +380,8 @@ public:
                        ExceptionHandlerTable*    handler_table,
                        ImplicitExceptionTable*   inc_table,
                        AbstractCompiler*         compiler,
+                       bool                      has_clinit_barriers,
+                       bool                      for_preload,
                        bool                      has_unsafe_access,
                        bool                      has_wide_vectors,
                        bool                      has_monitors,

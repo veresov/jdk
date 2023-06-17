@@ -247,6 +247,7 @@ bool Compiler::is_intrinsic_supported(const methodHandle& method) {
 void Compiler::compile_method(ciEnv* env, ciMethod* method, int entry_bci, bool install_code, DirectiveSet* directive) {
   CompileTask* task = env->task();
   if (install_code && task->is_sca()) {
+    assert(!task->preload(), "Pre-loading cached code is not implemeted for C1 code");
     bool success = SCAFile::load_nmethod(env, method, entry_bci, this, CompLevel(task->comp_level()));
     if (success) {
       assert(task->is_success(), "sanity");

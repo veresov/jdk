@@ -1036,6 +1036,8 @@ void ciEnv::register_method(ciMethod* target,
                             ExceptionHandlerTable* handler_table,
                             ImplicitExceptionTable* inc_table,
                             AbstractCompiler* compiler,
+                            bool has_clinit_barriers,
+                            bool for_preload,
                             bool has_unsafe_access,
                             bool has_wide_vectors,
                             bool has_monitors,
@@ -1046,9 +1048,10 @@ void ciEnv::register_method(ciMethod* target,
   nmethod* nm = nullptr;
   {
     methodHandle method(THREAD, target->get_Method());
+    bool preload = task()->preload(); // Code is preloaded before Java method execution
 
     // We require method counters to store some method state (max compilation levels) required by the compilation policy.
-    if (method->get_method_counters(THREAD) == nullptr) {
+    if (!preload && method->get_method_counters(THREAD) == nullptr) {
       record_failure("can't create method counters");
       // All buffers in the CodeBuffer are allocated in the CodeCache.
       // If the code buffer is created on each compile attempt
@@ -1088,7 +1091,7 @@ void ciEnv::register_method(ciMethod* target,
       record_failure("DTrace flags change invalidated dependencies");
     }
 
-    if (!failing() && target->needs_clinit_barrier() &&
+    if (!preload && !failing() && target->needs_clinit_barrier() &&
         target->holder()->is_in_error_state()) {
       record_failure("method holder is in error state");
     }
@@ -1103,8 +1106,9 @@ void ciEnv::register_method(ciMethod* target,
       dependencies()->encode_content_bytes();
     }
     // Check for {class loads, evolution, breakpoints, ...} during compilation
-    validate_compile_task_dependencies(target);
-
+    if (!preload) {
+      validate_compile_task_dependencies(target);
+    }
 #if INCLUDE_RTM_OPT
     if (!failing() && (rtm_state != NoRTM) &&
         (method()->method_data() != nullptr) &&
@@ -1142,11 +1146,18 @@ void ciEnv::register_method(ciMethod* target,
                              handler_table, inc_table,
                              compiler,
                              CompLevel(task()->comp_level()),
+                             has_clinit_barriers,
+                             for_preload,
                              has_unsafe_access,
                              has_wide_vectors,
                              has_monitors);
       if (sca_entry != nullptr) {
         sca_entry->set_inlined_bytecodes(num_inlined_bytecodes());
+      }
+      if (has_clinit_barriers) {
+        // Build second version of code without class initialization barriers
+        code_buffer->free_blob();
+        return;
       }
     }
     nm =  nmethod::new_nmethod(method,
@@ -1157,7 +1168,8 @@ void ciEnv::register_method(ciMethod* target,
                                debug_info(), dependencies(), code_buffer,
                                frame_words, oop_map_set,
                                handler_table, inc_table,
-                               compiler, CompLevel(task()->comp_level()), sca_entry);
+                               compiler, CompLevel(task()->comp_level()),
+                               sca_entry);
 
     // Free codeBlobs
     code_buffer->free_blob();
@@ -1197,7 +1209,11 @@ void ciEnv::register_method(ciMethod* target,
         // Allow the code to be executed
         MutexLocker ml(CompiledMethod_lock, Mutex::_no_safepoint_check_flag);
         if (nm->make_in_use()) {
-          method->set_code(method, nm);
+          if (preload) {
+            method->set_preload_code(nm);
+          } else {
+            method->set_code(method, nm);
+          }
         }
       } else {
         LogTarget(Info, nmethod, install) lt;
