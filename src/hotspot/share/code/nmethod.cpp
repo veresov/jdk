@@ -558,14 +558,6 @@ nmethod* nmethod::new_nmethod(const methodHandle& method,
 #endif
 )
 {
-#ifdef ASSERT
-if (UseNewCode3) {
-  tty->print_cr("== new_nmethod 1");
-  FlagSetting fs(PrintRelocations, true);
-  code_buffer->print();
-  code_buffer->decode();
-}
-#endif
   assert(debug_info->oop_recorder() == code_buffer->oop_recorder(), "shared OR");
   code_buffer->finalize_oop_references(method);
   // create nmethod
@@ -1548,6 +1540,14 @@ void nmethod::flush_dependencies() {
   }
 }
 
+bool nmethod::preloaded() const {
+  return (_sca_entry != nullptr) && (_sca_entry->preloaded());
+}
+
+bool nmethod::has_clinit_barriers() const {
+  return (_sca_entry != nullptr) && (_sca_entry->has_clinit_barriers());
+}
+
 void nmethod::post_compiled_method(CompileTask* task) {
   task->mark_success();
   task->set_nm_content_size(content_size());
@@ -2214,6 +2214,9 @@ void nmethod::check_all_dependencies(DepChange& changes) {
   NMethodIterator iter(NMethodIterator::only_not_unloading);
   while(iter.next()) {
     nmethod* nm = iter.method();
+    if (nm->preloaded()) {
+      continue; // Skip checka for pre-loaded code
+    }
     // Only notify for live nmethods
     if (!nm->is_marked_for_deoptimization()) {
       for (Dependencies::DepStream deps(nm); deps.next(); ) {
@@ -2246,6 +2249,9 @@ bool nmethod::check_dependency_on(DepChange& changes) {
   // 1) a new class dependee has been added
   // 2) dependee and all its super classes have been marked
   bool found_check = false;  // set true if we are upset
+  if (preloaded()) {
+    return false; // Skip checka for pre-loaded code
+  }
   for (Dependencies::DepStream deps(this); deps.next(); ) {
     // Evaluate only relevant dependencies.
     if (deps.spot_check_dependency_at(changes) != nullptr) {

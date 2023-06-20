@@ -35,6 +35,7 @@
 #include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
 #include "classfile/vmSymbols.hpp"
+#include "code/SCArchive.hpp"
 #include "compiler/compileBroker.hpp"
 #include "compiler/compileTask.hpp"
 #include "compiler/compilerThread.hpp"
@@ -570,14 +571,31 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
     xtty->elem("vm_main_thread thread='" UINTX_FORMAT "'",
                (uintx) main_thread->osthread()->thread_id());
 
+  // Add main_thread to threads list to finish barrier setup with
+  // on_thread_attach.  Should be before starting to build Java objects in
+  // init_globals2, which invokes barriers.
+  {
+    MutexLocker mu(Threads_lock);
+    Threads::add(main_thread);
+  }
+
+  status = init_globals2();
+  if (status != JNI_OK) {
+    Threads::remove(main_thread, false);
+    // It is possible that we managed to fully initialize Universe but have then
+    // failed by throwing an exception. In that case our caller JNI_CreateJavaVM
+    // will want to report it, so we can't delete the main thread.
+    if (!main_thread->has_pending_exception()) {
+      main_thread->smr_delete();
+    }
+    *canTryAgain = false; // don't let caller call JNI_CreateJavaVM again
+    return status;
+  }
+
   JFR_ONLY(Jfr::on_create_vm_1();)
 
   // Should be done after the heap is fully created
   main_thread->cache_global_variables();
-
-  { MutexLocker mu(Threads_lock);
-    Threads::add(main_thread);
-  }
 
   // Any JVMTI raw monitors entered in onload will transition into
   // real raw monitor. VM is setup enough here for raw monitor enter.
@@ -756,6 +774,11 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
     JVMCI::initialize_compiler(CHECK_JNI_ERR);
     CompileBroker::compilation_init_phase2();
   }
+#endif
+
+#if defined(COMPILER2)
+  // Pre-load cached compiled methods
+  SCArchive::preload_code(THREAD);
 #endif
 
   // Always call even when there are not JVMTI environments yet, since environments

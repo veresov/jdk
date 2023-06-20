@@ -65,6 +65,7 @@
 #include "oops/objArrayKlass.hpp"
 #include "oops/objArrayOop.inline.hpp"
 #include "oops/oop.inline.hpp"
+#include "oops/resolvedIndyEntry.hpp"
 #include "oops/symbolHandle.hpp"
 #include "oops/trainingData.hpp"
 #include "prims/jvmtiExport.hpp"
@@ -173,6 +174,8 @@ ciEnv::ciEnv(CompileTask* task)
   _jvmti_can_access_local_variables = false;
   _jvmti_can_post_on_exceptions = false;
   _jvmti_can_pop_frame = false;
+
+  _sca_clinit_barriers_entry = nullptr;
 
   _dyno_klasses = nullptr;
   _dyno_locs = nullptr;
@@ -294,6 +297,8 @@ ciEnv::ciEnv(Arena* arena) : _ciEnv_arena(mtCompiler) {
   _jvmti_can_access_local_variables = false;
   _jvmti_can_post_on_exceptions = false;
   _jvmti_can_pop_frame = false;
+
+  _sca_clinit_barriers_entry = nullptr;
 
   _dyno_klasses = nullptr;
   _dyno_locs = nullptr;
@@ -1034,6 +1039,8 @@ void ciEnv::register_method(ciMethod* target,
                             ExceptionHandlerTable* handler_table,
                             ImplicitExceptionTable* inc_table,
                             AbstractCompiler* compiler,
+                            bool has_clinit_barriers,
+                            bool for_preload,
                             bool has_unsafe_access,
                             bool has_wide_vectors,
                             bool has_monitors,
@@ -1045,9 +1052,10 @@ void ciEnv::register_method(ciMethod* target,
   nmethod* nm = nullptr;
   {
     methodHandle method(THREAD, target->get_Method());
+    bool preload = task()->preload(); // Code is preloaded before Java method execution
 
     // We require method counters to store some method state (max compilation levels) required by the compilation policy.
-    if (method->get_method_counters(THREAD) == nullptr) {
+    if (!preload && method->get_method_counters(THREAD) == nullptr) {
       record_failure("can't create method counters");
       // All buffers in the CodeBuffer are allocated in the CodeCache.
       // If the code buffer is created on each compile attempt
@@ -1087,7 +1095,7 @@ void ciEnv::register_method(ciMethod* target,
       record_failure("DTrace flags change invalidated dependencies");
     }
 
-    if (!failing() && target->needs_clinit_barrier() &&
+    if (!preload && !failing() && target->needs_clinit_barrier() &&
         target->holder()->is_in_error_state()) {
       record_failure("method holder is in error state");
     }
@@ -1101,8 +1109,8 @@ void ciEnv::register_method(ciMethod* target,
       // Encode the dependencies now, so we can check them right away.
       dependencies()->encode_content_bytes();
     }
-
-    if (install_code) {
+    // Check for {class loads, evolution, breakpoints, ...} during compilation
+    if (install_code && !preload) {
       // Check for {class loads, evolution, breakpoints, ...} during compilation
       validate_compile_task_dependencies(target);
     }
@@ -1143,11 +1151,22 @@ void ciEnv::register_method(ciMethod* target,
                              handler_table, inc_table,
                              compiler,
                              CompLevel(task()->comp_level()),
+                             has_clinit_barriers,
+                             for_preload,
                              has_unsafe_access,
                              has_wide_vectors,
                              has_monitors);
       if (sca_entry != nullptr) {
         sca_entry->set_inlined_bytecodes(num_inlined_bytecodes());
+        if (has_clinit_barriers) {
+          set_sca_clinit_barriers_entry(sca_entry); // Record it
+          // Build second version of code without class initialization barriers
+          code_buffer->free_blob();
+          return;
+        } else if (!for_preload) {
+          SCAEntry* previous_entry = sca_clinit_barriers_entry();
+          sca_entry->set_next(previous_entry); // Link it for case of deoptimization
+        }
       }
     }
     if (install_code) {
@@ -1199,7 +1218,11 @@ void ciEnv::register_method(ciMethod* target,
         // Allow the code to be executed
         MutexLocker ml(CompiledMethod_lock, Mutex::_no_safepoint_check_flag);
         if (nm->make_in_use()) {
-          method->set_code(method, nm);
+          if (preload) {
+            method->set_preload_code(nm);
+          } else {
+            method->set_code(method, nm);
+          }
         }
       } else {
         LogTarget(Info, nmethod, install) lt;
@@ -1360,13 +1383,7 @@ void ciEnv::record_best_dyno_loc(const InstanceKlass* ik) {
     return;
   }
   const char *loc0;
-  if (dyno_loc(ik, loc0)) {
-    // TODO: found multiple references, see if we can improve
-    if (Verbose) {
-      tty->print_cr("existing call site @ %s for %s",
-                     loc0, ik->external_name());
-    }
-  } else {
+  if (!dyno_loc(ik, loc0)) {
     set_dyno_loc(ik);
   }
 }
@@ -1706,7 +1723,7 @@ void ciEnv::dump_replay_data_helper(outputStream* out) {
   NoSafepointVerifier no_safepoint;
   ResourceMark rm;
 
-  out->print_cr("version %d", REPLAY_VERSION);
+  dump_replay_data_version(out);
 #if INCLUDE_JVMTI
   out->print_cr("JvmtiExport can_access_local_variables %d",     _jvmti_can_access_local_variables);
   out->print_cr("JvmtiExport can_hotswap_or_post_breakpoint %d", _jvmti_can_hotswap_or_post_breakpoint);
@@ -1774,6 +1791,7 @@ void ciEnv::dump_inline_data(int compile_id) {
         fileStream replay_data_stream(inline_data_file, /*need_close=*/true);
         GUARDED_VM_ENTRY(
           MutexLocker ml(Compile_lock);
+          dump_replay_data_version(&replay_data_stream);
           dump_compile_data(&replay_data_stream);
         )
         replay_data_stream.flush();
@@ -1792,4 +1810,8 @@ bool ciEnv::is_precompiled() {
            task()->compile_reason() == CompileTask::Reason_Recorded;
   }
   return false;
+}
+
+void ciEnv::dump_replay_data_version(outputStream* out) {
+  out->print_cr("version %d", REPLAY_VERSION);
 }

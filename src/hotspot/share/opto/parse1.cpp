@@ -1154,6 +1154,12 @@ SafePointNode* Parse::create_entry_map() {
       const int nargs = declared_method->arg_size();
       kit.inc_sp(nargs);
       kit.clinit_barrier_precompiled(method()->holder(), nullptr);
+    } else if (C->do_clinit_barriers() && C->needs_clinit_barrier(method()->holder(), _caller->method())) {
+      ciMethod* declared_method = kit.method()->get_method_at_bci(kit.bci());
+      const int nargs = declared_method->arg_size();
+      kit.inc_sp(nargs);
+      Node* holder = makecon(TypeKlassPtr::make(method()->holder(), Type::trust_interfaces));
+      kit.guard_klass_is_initialized(holder);
       kit.dec_sp(nargs);
     }
     _caller = kit.transfer_exceptions_into_jvms();
@@ -2157,6 +2163,9 @@ void Parse::call_register_finalizer() {
 
 // Add check to deoptimize once holder klass is fully initialized.
 void Parse::clinit_deopt() {
+  if (method()->holder()->is_initialized()) {
+    return; // in case do_clinit_barriers() is true
+  }
   assert(C->has_method(), "only for normal compilations");
   assert(depth() == 1, "only for main compiled method");
   assert(is_normal_parse(), "no barrier needed on osr entry");

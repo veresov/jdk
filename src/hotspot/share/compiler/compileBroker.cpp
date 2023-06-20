@@ -199,7 +199,7 @@ jlong CompileBroker::_peak_compilation_time        = 0;
 
 CompilerStatistics CompileBroker::_stats_per_level[CompLevel_full_optimization];
 CompilerStatistics CompileBroker::_sca_stats;
-CompilerStatistics CompileBroker::_sca_stats_per_level[CompLevel_full_optimization];
+CompilerStatistics CompileBroker::_sca_stats_per_level[CompLevel_full_optimization + 1];
 
 CompileQueue* CompileBroker::_c3_compile_queue     = nullptr;
 CompileQueue* CompileBroker::_c2_compile_queue     = nullptr;
@@ -407,7 +407,7 @@ CompileTask* CompileQueue::get(CompilerThread* thread) {
   methodHandle save_hot_method;
 
   MonitorLocker locker(MethodCompileQueue_lock);
-  // If _first is nullptr we have no more compile jobs. There are two reasons for
+  // If _first is null we have no more compile jobs. There are two reasons for
   // having no compile jobs: First, we compiled everything we wanted. Second,
   // we ran out of code cache so compilation has been disabled. In the latter
   // case we perform code cache sweeps to free memory such that we can re-enable
@@ -793,6 +793,7 @@ void CompileBroker::compilation_init_phase1(JavaThread* THREAD) {
 // Completes compiler initialization. Compilation requests submitted
 // prior to this will be silently ignored.
 void CompileBroker::compilation_init_phase2() {
+  log_info(sca, init)("CompileBroker is initialized");
   _initialized = true;
 }
 
@@ -1236,7 +1237,8 @@ void CompileBroker::compile_method_base(const methodHandle& method,
   guarantee(!method->is_abstract(), "cannot compile abstract methods");
   assert(method->method_holder()->is_instance_klass(),
          "sanity check");
-  assert(!method->method_holder()->is_not_initialized() ||
+  assert(!method->method_holder()->is_not_initialized()   || 
+         compile_reason == CompileTask::Reason_Preload    ||
          compile_reason == CompileTask::Reason_Precompile ||
          compile_reason == CompileTask::Reason_Recorded, "method holder must be initialized");
   assert(!method->is_method_handle_intrinsic(), "do not enqueue these guys");
@@ -1291,8 +1293,9 @@ void CompileBroker::compile_method_base(const methodHandle& method,
 
   // Tiered policy requires MethodCounters to exist before adding a method to
   // the queue. Create if we don't have them yet.
-  method->get_method_counters(thread);
-
+  if (compile_reason != CompileTask::Reason_Preload) {
+    method->get_method_counters(thread);
+  }
   // Outputs from the following MutexLocker block:
   CompileTask* task = nullptr;
   CompileQueue* queue;
@@ -1457,7 +1460,8 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
   assert(method->method_holder()->is_instance_klass(), "not an instance method");
   assert(osr_bci == InvocationEntryBci || (0 <= osr_bci && osr_bci < method->code_size()), "bci out of range");
   assert(!method->is_abstract() && (osr_bci == InvocationEntryBci || !method->is_native()), "cannot compile abstract/native methods");
-  assert(!method->method_holder()->is_not_initialized() ||
+  assert(!method->method_holder()->is_not_initialized()   ||
+         compile_reason == CompileTask::Reason_Preload    ||
          compile_reason == CompileTask::Reason_Precompile ||
          compile_reason == CompileTask::Reason_Recorded, "method holder must be initialized");
   // return quickly if possible
@@ -1496,7 +1500,7 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
 
   assert(!HAS_PENDING_EXCEPTION, "No exception should be present");
   // some prerequisites that are compiler specific
-  if (comp->is_c2() || comp->is_jvmci()) {
+  if (compile_reason != CompileTask::Reason_Preload && (comp->is_c2() || comp->is_jvmci())) {
     method->constants()->resolve_string_constants(CHECK_AND_CLEAR_NONASYNC_NULL);
     // Resolve all classes seen in the signature of the method
     // we are compiling.
@@ -1614,7 +1618,7 @@ bool CompileBroker::compilation_is_complete(const methodHandle& method,
       return true;
     } else {
       CompiledMethod* result = method->code();
-      if (result == nullptr) return false;
+      if (result == nullptr || result->has_clinit_barriers()) return false;
       return comp_level == result->comp_level();
     }
   }
@@ -2672,7 +2676,8 @@ void CompileBroker::collect_statistics(CompilerThread* thread, elapsedTimer time
         _sca_stats._standard.update(time, bytes_compiled);
         _sca_stats._nmethods_size += task->nm_total_size();
         _sca_stats._nmethods_code_size += task->nm_insts_size();
-        CompilerStatistics* stats = &_sca_stats_per_level[comp_level-1];
+        int level = task->preload() ? CompLevel_full_optimization : (comp_level - 1);
+        CompilerStatistics* stats = &_sca_stats_per_level[level];
         stats->_standard.update(time, bytes_compiled);
         stats->_nmethods_size += task->nm_total_size();
         stats->_nmethods_code_size += task->nm_insts_size();
@@ -2800,7 +2805,7 @@ void CompileBroker::print_times(bool per_compiler, bool aggregate) {
       os::snprintf_checked(tier_name, sizeof(tier_name), "Tier%d", tier);
       print_times(tier_name, stats);
     }
-    for (int tier = CompLevel_simple; tier <= CompilationPolicy::highest_compile_level(); tier++) {
+    for (int tier = CompLevel_simple; tier <= CompilationPolicy::highest_compile_level() + 1; tier++) {
       CompilerStatistics* stats = &_sca_stats_per_level[tier-1];
       if (stats->_standard._bytes > 0) {
         os::snprintf_checked(tier_name, sizeof(tier_name), "SC T%d", tier);

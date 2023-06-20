@@ -154,7 +154,12 @@ void CompileTask::initialize(int compile_id,
   _sca_entry = nullptr;
   if (osr_bci == InvocationEntryBci && !has_unsatisfied_deps && SCArchive::is_on_for_read()) {
     // Check for cached code.
-    _sca_entry = SCArchive::find_code_entry(method, comp_level);
+    if (compile_reason == CompileTask::Reason_Preload) {
+      _sca_entry = method->sca_entry();
+      assert(_sca_entry != nullptr && _sca_entry->for_preload(), "sanity");
+    } else {
+      _sca_entry = SCArchive::find_code_entry(method, comp_level);
+    }
   }
   _next = nullptr;
 }
@@ -169,6 +174,9 @@ AbstractCompiler* CompileTask::compiler() {
 
 // Replace weak handles by strong handles to avoid unloading during compilation.
 CompileTask* CompileTask::select_for_compilation() {
+  if (_compile_reason == Reason_Preload) {
+    return this;
+  }
   if (is_unloaded()) {
     // Guard against concurrent class unloading
     return nullptr;
@@ -197,6 +205,7 @@ void CompileTask::mark_on_stack() {
 }
 
 bool CompileTask::is_unloaded() const {
+  if (preload()) return false;
   return _method_holder != nullptr && JNIHandles::is_weak_global_handle(_method_holder) && JNIHandles::is_weak_global_cleared(_method_holder);
 }
 
@@ -231,17 +240,14 @@ void CompileTask::print_line_on_error(outputStream* st, char* buf, int buflen) {
 // CompileTask::print_tty
 void CompileTask::print_tty() {
   ttyLocker ttyl;  // keep the following output all in one block
-  // print compiler name if requested
-  if (CIPrintCompilerName) {
-    tty->print("%s:", compiler()->name());
-  }
   print(tty);
 }
 
 // ------------------------------------------------------------------
 // CompileTask::print_impl
 void CompileTask::print_impl(outputStream* st, Method* method, int compile_id, int comp_level,
-                             bool is_osr_method, int osr_bci, bool is_blocking, bool is_sca, bool from_recorded_data,
+                             bool is_osr_method, int osr_bci, bool is_blocking,
+                             bool is_sca, bool from_recorded_data, bool is_preload,
                              const char* compiler_name, const char* msg, bool short_form, bool cr,
                              jlong time_queued, jlong time_started) {
   if (!short_form) {
@@ -280,9 +286,10 @@ void CompileTask::print_impl(outputStream* st, Method* method, int compile_id, i
   const char blocking_char  = is_blocking                     ? 'b' : ' ';
   const char native_char    = is_native                       ? 'n' : ' ';
   const char sca_char       = is_sca                          ? 'A' : ' ';
+  const char preload_char   = is_preload                      ? 'P' : ' ';
 
   // print method attributes
-  st->print("%c%c%c%c%c%c%c ", compile_type, sync_char, exception_char, blocking_char, native_char, recorded_type, sca_char);
+  st->print("%c%c%c%c%c%c%c%c ", compile_type, sync_char, exception_char, blocking_char, native_char, recorded_type, sca_char, preload_char);
 
   if (TieredCompilation) {
     if (comp_level != -1)  st->print("%d ", comp_level);
@@ -332,7 +339,7 @@ void CompileTask::print(outputStream* st, const char* msg, bool short_form, bool
   bool is_osr_method = osr_bci() != InvocationEntryBci;
   bool from_recorded_data = (_compile_reason == Reason_Recorded);
   print_impl(st, is_unloaded() ? nullptr : method(), compile_id(), comp_level(), is_osr_method, osr_bci(), is_blocking(),
-             is_sca(), from_recorded_data,
+             is_sca(), from_recorded_data, preload(),
              compiler()->name(), msg, short_form, cr, _time_queued, _time_started);
 }
 
@@ -498,7 +505,7 @@ void CompileTask::print_ul(const nmethod* nm, const char* msg) {
                nm->comp_level(), nm->is_osr_method(),
                nm->is_osr_method() ? nm->osr_entry_bci() : -1,
                /*is_blocking*/ false, nm->sca_entry() != nullptr,
-               nm->from_recorded_data(), nm->compiler_name(),
+               nm->from_recorded_data(), nm->preloaded(), nm->compiler_name(),
                msg, /* short form */ true, /* cr */ true);
   }
 }

@@ -37,13 +37,15 @@ class Dependencies;
 class ExceptionTable;
 class ExceptionHandlerTable;
 class ImplicitExceptionTable;
+class JavaThread;
 class methodHandle;
+class Method;
 class OopMapSet;
 class OopRecorder;
 class outputStream;
+class RelocIterator;
 class SCAFile;
 class StubCodeGenerator;
-class RelocIterator;
 
 enum class vmIntrinsicID : int;
 enum CompLevel : signed char;
@@ -58,6 +60,8 @@ private:
   uint _strings_offset;    // offset to recorded C strings
   uint _entries_count;     // number of recorded entries in archive
   uint _entries_offset;    // offset of SCAEntry array describing entries
+  uint _preload_entries_count; // entries for pre-loading code
+  uint _preload_entries_offset;
   enum Flags {
     None = 0,
     MetadataPointers = 1
@@ -66,13 +70,17 @@ private:
   uint _dummy; // to align
 
 public:
-  void init(uint version, uint archive_size, uint strings_count, uint strings_offset, uint entries_count, uint entries_offset) {
+  void init(uint version, uint archive_size, uint strings_count, uint strings_offset,
+            uint entries_count, uint entries_offset,
+            uint preload_entries_count, uint preload_entries_offset) {
     _version        = version;
     _archive_size   = archive_size;
     _strings_count  = strings_count;
     _strings_offset = strings_offset;
     _entries_count  = entries_count;
     _entries_offset = entries_offset;
+    _preload_entries_count  = preload_entries_count;
+    _preload_entries_offset = preload_entries_offset;
     _flags          = 0;
   }
 
@@ -82,6 +90,8 @@ public:
   uint strings_offset() const { return _strings_offset; }
   uint entries_count()  const { return _entries_count; }
   uint entries_offset() const { return _entries_offset; }
+  uint preload_entries_count()  const { return _preload_entries_count; }
+  uint preload_entries_offset() const { return _preload_entries_offset; }
   bool has_meta_ptrs()  const { return (_flags & MetadataPointers) != 0; }
   void set_meta_ptrs()        { _flags |= MetadataPointers; }
 };
@@ -97,6 +107,8 @@ public:
   };
 
 private:
+  SCAEntry* _next;
+  Method*   _method;
   Kind   _kind;        //
   uint   _id;          // vmIntrinsic::ID for stub or name's hash for nmethod
 
@@ -112,14 +124,23 @@ private:
   uint   _flags;       // custom entry flags
 
   uint   _comp_level;  // compilation level
+  uint   _comp_id;     // compilation id
   uint   _decompile;   // Decompile count for this nmethod
+  bool   _has_clinit_barriers; // Generated code has class init checks
+  bool   _for_preload; // Code can be used for preload
+  bool   _preloaded;   // Code was pre-loaded
   bool   _not_entrant; // Deoptimized
 
 public:
   SCAEntry(uint offset, uint size, uint name_offset, uint name_size,
            uint code_offset, uint code_size,
            uint reloc_offset, uint reloc_size,
-           Kind kind, uint id, uint flags, uint comp_level = 0, uint decomp = 0) {
+           Kind kind, uint id, uint flags, 
+           uint comp_level = 0, uint comp_id = 0, uint decomp = 0,
+           bool has_clinit_barriers = false,
+           bool for_preload = false) {
+    _next         = nullptr;
+    _method       = nullptr;
     _kind         = kind;
     _id           = id;
 
@@ -135,12 +156,22 @@ public:
     _flags        = flags;
 
     _comp_level   = comp_level;
+    _comp_id      = comp_id;
     _decompile    = decomp;
+    _has_clinit_barriers = has_clinit_barriers;
+    _for_preload  = for_preload;
+    _preloaded    = false;
     _not_entrant  = false;
   }
   void* operator new(size_t x, SCAFile* sca);
   // Delete is a NOP
   void operator delete( void *ptr ) {}
+
+  SCAEntry* next()    const { return _next; }
+  void set_next(SCAEntry* next) { _next = next; }
+
+  Method*   method()  const { return _method; }
+  void set_method(Method* method) { _method = method; }
 
   Kind kind()         const { return _kind; }
   uint id()           const { return _id; }
@@ -160,10 +191,18 @@ public:
   uint flags()        const { return _flags; }
 
   uint comp_level()   const { return _comp_level; }
+  uint comp_id()      const { return _comp_id; }
+
   uint decompile()    const { return _decompile; }
+  bool has_clinit_barriers() const { return _has_clinit_barriers; }
+  bool for_preload()  const { return _for_preload; }
+  bool preloaded()    const { return _preloaded; }
+  void set_preloaded()      { _preloaded = true; }
+
   bool not_entrant()  const { return _not_entrant; }
   void set_not_entrant()    { _not_entrant = true; }
   void set_entrant()        { _not_entrant = false; }
+
   void print(outputStream* st) const;
 };
 
@@ -234,6 +273,7 @@ private:
   uint compile_id() const { return _compile_id; }
   uint comp_level() const { return _comp_level; }
 
+  bool _preload;             // Preloading code before method execution 
   bool _lookup_failed;       // Failed to lookup for info (skip only this code load)
   void set_lookup_failed()     { _lookup_failed = true; }
   void clear_lookup_failed()   { _lookup_failed = false; }
@@ -277,6 +317,8 @@ private:
   bool _for_read;              // Open for read
   bool _for_write;             // Open for write
   bool _use_meta_ptrs;         // Store metadata pointers
+  bool _for_preload;           // Code for preload
+  bool _gen_preload_code;      // Generate pre-loading code
   bool _closing;               // Closing archive
   bool _failed;                // Failed read/write to/from archive (archive is broken?)
 
@@ -313,6 +355,7 @@ public:
   const char* archive_buffer() const { return _load_buffer; }
   const char* archive_path()   const { return _archive_path; }
   bool failed() const { return _failed; }
+  void set_failed()   { _failed = true; }
 
   uint load_size() const { return _load_size; }
   uint write_position() const { return _write_position; }
@@ -327,10 +370,9 @@ public:
 
   bool for_read() const;
   bool for_write() const;
-  bool closing() const { return _closing; }
-  bool use_meta_ptrs() const { return _use_meta_ptrs; }
-
-  void set_failed()   { _failed = true; }
+  bool closing()          const { return _closing; }
+  bool use_meta_ptrs()    const { return _use_meta_ptrs; }
+  bool gen_preload_code() const { return _gen_preload_code; }
 
   void add_C_string(const char* str);
 
@@ -339,6 +381,8 @@ public:
     _store_entries -= 1;
     return _store_entries;
   }
+  void preload_code(JavaThread* thread);
+
   SCAEntry* find_entry(SCAEntry::Kind kind, uint id, uint comp_level = 0, uint decomp = 0);
   void invalidate(SCAEntry* entry);
 
@@ -384,6 +428,8 @@ public:
                      ImplicitExceptionTable* nul_chk_table,
                      AbstractCompiler* compiler,
                      CompLevel comp_level,
+                     bool has_clinit_barriers,
+                     bool for_preload,
                      bool has_unsafe_access,
                      bool has_wide_vectors,
                      bool has_monitors);
@@ -406,10 +452,12 @@ public:
   static bool is_SC_load_tread_on();
   static bool is_on_for_read()  { return _archive != nullptr && _archive->for_read(); }
   static bool is_on_for_write() { return _archive != nullptr && _archive->for_write(); }
+  static bool gen_preload_code(ciMethod* m, int entry_bci);
   static bool allow_const_field(ciConstant& value);
   static void invalidate(SCAEntry* entry);
   static bool is_loaded(SCAEntry* entry);
   static SCAEntry* find_code_entry(const methodHandle& method, uint comp_level);
+  static void preload_code(JavaThread* thread);
 
   static void add_C_string(const char* str);
   static void print_timers();

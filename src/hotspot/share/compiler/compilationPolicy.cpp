@@ -94,17 +94,20 @@ void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
     if (mtd == nullptr) {
       return;              // there is no training data recorded for m
     }
+    bool recompile = m->code_has_clinit_barriers();
     CompLevel cur_level = static_cast<CompLevel>(m->highest_comp_level());
     CompLevel next_level = trained_transition(m, cur_level, THREAD);
-
-    if (next_level != cur_level && can_be_compiled(m, next_level) && !CompileBroker::compilation_is_in_queue(m)) {
-      if (PrintTieredEvents) {
-        print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, next_level);
-      }
+    if ((next_level != cur_level || recompile) && can_be_compiled(m, next_level) && !CompileBroker::compilation_is_in_queue(m)) {
       bool has_unsatisfied_deps = false;
       CompileTrainingData* ctd = mtd->last_toplevel_compile(next_level);
       if (ctd != nullptr) {
         has_unsatisfied_deps = (ctd->init_deps_left() > 0);
+      }
+      if (has_unsatisfied_deps && recompile) {
+        return;
+      }
+      if (PrintTieredEvents) {
+        print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, next_level);
       }
       CompileBroker::compile_method(m, InvocationEntryBci, next_level, methodHandle(), 0, has_unsatisfied_deps, CompileTask::Reason_MustBeCompiled, THREAD);
       if (HAS_PENDING_EXCEPTION) {
@@ -161,7 +164,7 @@ static inline CompLevel adjust_level_for_compilability_query(CompLevel comp_leve
 // Returns true if m is allowed to be compiled
 bool CompilationPolicy::can_be_compiled(const methodHandle& m, int comp_level) {
   // allow any levels for WhiteBox
-  assert(WhiteBoxAPI || comp_level == CompLevel_any || is_compile(comp_level), "illegal compilation level");
+  assert(WhiteBoxAPI || comp_level == CompLevel_any || is_compile(comp_level), "illegal compilation level %d", comp_level);
 
   if (m->is_abstract()) return false;
   if (DontCompileHugeMethods && m->code_size() > HugeMethodLimit) return false;
@@ -1111,36 +1114,46 @@ CompLevel CompilationPolicy::trained_transition_from_none(const methodHandle& me
     return CompLevel_none;
   }
 
+  CompLevel initial_level = initial_compile_level(method);
+  // Stay in Interpreter if C1 is not available.
+  CompLevel full_profile_level    = CompLevel_none;
+  CompLevel limited_profile_level = CompLevel_none;
+  CompLevel simple_level          = CompLevel_none;
+
+  if (initial_level <= CompLevel_full_profile) {
+    full_profile_level    = CompLevel_full_profile;
+    limited_profile_level = CompLevel_limited_profile;
+    simple_level          = CompLevel_simple;
+  }
   bool training_has_profile = (mtd->final_profile() != nullptr);
   if (mtd->saw_level(CompLevel_full_optimization) && !training_has_profile) {
-    return CompLevel_full_profile;
+    return full_profile_level;
   }
 
   CompLevel highest_training_level = static_cast<CompLevel>(mtd->highest_top_level());
   switch (highest_training_level) {
     case CompLevel_limited_profile:
     case CompLevel_full_profile:
-      return CompLevel_limited_profile;
+      return limited_profile_level;
     case CompLevel_simple:
-      return CompLevel_simple;
+      return simple_level;
     case CompLevel_none:
       return CompLevel_none;
     default:
       break;
   }
 
-
   // Now handle the case of level 4.
   assert(highest_training_level == CompLevel_full_optimization, "Unexpected compilation level: %d", highest_training_level);
   if (!training_has_profile) {
     // The method was a part of a level 4 compile, but don't have a stored profile,
     // we need to profile it.
-    return CompLevel_full_profile;
+    return full_profile_level;
   }
-  bool deopt = (static_cast<CompLevel>(method->highest_comp_level()) == CompLevel_full_optimization);
+  const bool deopt = (static_cast<CompLevel>(method->highest_comp_level()) == CompLevel_full_optimization);
   // If we deopted, then we reprofile
-  if (deopt) {
-    return CompLevel_full_profile;
+  if (deopt && !is_method_profiled(method)) {
+    return full_profile_level;
   }
 
   CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
@@ -1154,7 +1167,7 @@ CompLevel CompilationPolicy::trained_transition_from_none(const methodHandle& me
   }
 
   // Otherwise go to level 2
-  return CompLevel_limited_profile;
+  return limited_profile_level;
 }
 
 

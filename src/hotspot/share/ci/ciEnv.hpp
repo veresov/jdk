@@ -380,6 +380,8 @@ public:
                        ExceptionHandlerTable*    handler_table,
                        ImplicitExceptionTable*   inc_table,
                        AbstractCompiler*         compiler,
+                       bool                      has_clinit_barriers,
+                       bool                      for_preload,
                        bool                      has_unsafe_access,
                        bool                      has_wide_vectors,
                        bool                      has_monitors,
@@ -469,6 +471,13 @@ public:
   // RedefineClasses support
   void metadata_do(MetadataClosure* f) { _factory->metadata_do(f); }
 
+private:
+  SCAEntry* _sca_clinit_barriers_entry;
+
+public:
+  void  set_sca_clinit_barriers_entry(SCAEntry* entry) { _sca_clinit_barriers_entry = entry; }
+  SCAEntry* sca_clinit_barriers_entry()          const { return _sca_clinit_barriers_entry; }
+
   // Replay support
 private:
   static int klass_compare(const InstanceKlass* const &ik1, const InstanceKlass* const &ik2) {
@@ -499,6 +508,7 @@ public:
   void dump_replay_data_unsafe(outputStream* out);
   void dump_replay_data_helper(outputStream* out);
   void dump_compile_data(outputStream* out);
+  void dump_replay_data_version(outputStream* out);
 
   const char *dyno_name(const InstanceKlass* ik) const;
   const char *replay_name(const InstanceKlass* ik) const;

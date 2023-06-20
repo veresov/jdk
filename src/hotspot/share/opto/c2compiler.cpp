@@ -53,8 +53,13 @@ const char* C2Compiler::retry_no_locks_coarsening() {
 const char* C2Compiler::retry_no_iterative_escape_analysis() {
   return "retry without iterative escape analysis";
 }
+// Corresponding code was removed by 8222446.
 const char* C2Compiler::retry_class_loading_during_parsing() {
   return "retry class loading during parsing";
+}
+
+const char* C2Compiler::retry_no_clinit_barriers() {
+  return "retry without class initialization barriers";
 }
 
 void compiler_stubs_init(bool in_compiler_thread);
@@ -117,7 +122,9 @@ void C2Compiler::compile_method(ciEnv* env, ciMethod* target, int entry_bci, boo
       assert(task->is_success(), "sanity");
       return;
     }
-    SCArchive::invalidate(task->sca_entry()); // mark sca_entry as not entrant
+    if (!task->preload()) { // Do not mark entry if pre-loading failed - it can pass normal load
+      SCArchive::invalidate(task->sca_entry()); // mark sca_entry as not entrant
+    }
     if (SCArchive::is_SC_load_tread_on()) {
       env->record_failure("Failed to load cached code");
       // Bail out if failed to load cached code in SC thread
@@ -130,10 +137,12 @@ void C2Compiler::compile_method(ciEnv* env, ciMethod* target, int entry_bci, boo
   bool do_iterative_escape_analysis = DoEscapeAnalysis;
   bool eliminate_boxing = EliminateAutoBox;
   bool do_locks_coarsening = EliminateLocks;
+  bool for_preload = SCArchive::gen_preload_code(target, entry_bci);
 
   while (!env->failing()) {
     // Attempt to compile while subsuming loads into machine instructions.
-    Options options(subsume_loads, do_escape_analysis, do_iterative_escape_analysis, eliminate_boxing, do_locks_coarsening, install_code);
+    Options options(subsume_loads, do_escape_analysis, do_iterative_escape_analysis, eliminate_boxing,
+                    do_locks_coarsening, for_preload, install_code);
     Compile C(env, target, entry_bci, options, directive);
 
     // Check result and retry if appropriate.
@@ -164,6 +173,11 @@ void C2Compiler::compile_method(ciEnv* env, ciMethod* target, int entry_bci, boo
         assert(do_locks_coarsening, "must make progress");
         do_locks_coarsening = false;
         env->report_failure(C.failure_reason());
+        continue;  // retry
+      }
+      if (C.failure_reason_is(retry_no_clinit_barriers())) {
+        assert(for_preload, "must make progress");
+        for_preload = false;
         continue;  // retry
       }
       if (C.has_boxed_value()) {

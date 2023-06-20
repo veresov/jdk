@@ -336,7 +336,7 @@ int Method::bci_from(address bcp) const {
   assert(is_native() && bcp == code_base() || contains(bcp) || VMError::is_error_reported(),
          "bcp doesn't belong to this method. bcp: " PTR_FORMAT, p2i(bcp));
 
-  return bcp - code_base();
+  return int(bcp - code_base());
 }
 
 
@@ -356,7 +356,7 @@ int Method::validate_bci_from_bcp(address bcp) const {
     // the method may be native
     bci = 0;
   } else if (contains(bcp)) {
-    bci = bcp - code_base();
+    bci = int(bcp - code_base());
   }
   // Assert that if we have dodged any asserts, bci is negative.
   assert(bci == -1 || bci == bci_from(bcp_from(bci)), "sane bci if >=0");
@@ -702,19 +702,6 @@ int Method::extra_stack_words() {
   return extra_stack_entries() * Interpreter::stackElementSize;
 }
 
-// Derive size of parameters, return type, and fingerprint,
-// all in one pass, which is run at load time.
-// We need the first two, and might as well grab the third.
-void Method::compute_from_signature(Symbol* sig) {
-  // At this point, since we are scanning the signature,
-  // we might as well compute the whole fingerprint.
-  Fingerprinter fp(sig, is_static());
-  set_size_of_parameters(fp.size_of_parameters());
-  set_num_stack_arg_slots(fp.num_stack_arg_slots());
-  constMethod()->set_result_type(fp.return_type());
-  constMethod()->set_fingerprint(fp.fingerprint());
-}
-
 bool Method::is_vanilla_constructor() const {
   // Returns true if this method is a vanilla constructor, i.e. an "<init>" "()V" method
   // which only calls the superclass vanilla constructor and possibly does stores of
@@ -963,6 +950,10 @@ bool Method::is_object_initializer() const {
 
 bool Method::needs_clinit_barrier() const {
   return is_static() && !method_holder()->is_initialized();
+}
+
+bool Method::code_has_clinit_barriers() const {
+  return (_code != nullptr) && _code->has_clinit_barriers();
 }
 
 objArrayHandle Method::resolved_checked_exceptions_impl(Method* method, TRAPS) {
@@ -1313,6 +1304,10 @@ void Method::link_method(const methodHandle& h_method, TRAPS) {
     _from_compiled_entry = nullptr;
     _i2i_entry = nullptr;
   }
+  if (_preload_code != nullptr) {
+    MutexLocker ml(CompiledMethod_lock, Mutex::_no_safepoint_check_flag);
+    set_code(h_method, _preload_code);
+  }
 }
 
 address Method::make_adapters(const methodHandle& mh, TRAPS) {
@@ -1543,7 +1538,7 @@ methodHandle Method::make_method_handle_intrinsic(vmIntrinsics::ID iid,
   m->set_signature_index(_imcp_invoke_signature);
   assert(MethodHandles::is_signature_polymorphic_name(m->name()), "");
   assert(m->signature() == signature, "");
-  m->compute_from_signature(signature);
+  m->constMethod()->compute_from_signature(signature, must_be_static);
   m->init_intrinsic_id(klass_id_for_intrinsics(m->method_holder()));
   assert(m->is_method_handle_intrinsic(), "");
 #ifdef ASSERT
@@ -1827,7 +1822,7 @@ void Method::sort_methods(Array<Method*>* methods, bool set_idnums, method_compa
     }
     // Reset method ordering
     if (set_idnums) {
-      for (int i = 0; i < length; i++) {
+      for (u2 i = 0; i < length; i++) {
         Method* m = methods->at(i);
         m->set_method_idnum(i);
         m->set_orig_method_idnum(i);
@@ -2024,8 +2019,9 @@ int Method::backedge_count() const {
 
 int Method::highest_comp_level() const {
   const MethodCounters* mcs = method_counters();
+  int level = (_code != nullptr) ? _code->comp_level() : CompLevel_none;
   if (mcs != nullptr) {
-    return mcs->highest_comp_level();
+    return MAX2(mcs->highest_comp_level(), level);
   } else {
     return CompLevel_none;
   }

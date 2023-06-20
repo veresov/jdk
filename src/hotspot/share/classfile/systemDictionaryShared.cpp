@@ -1623,6 +1623,10 @@ public:
     ResourceMark rm;
     _st->print_cr("%4d: %s %s", _index++, record->_klass->external_name(),
         SystemDictionaryShared::class_loader_name_for_shared(record->_klass));
+    if (record->_klass->array_klasses() != nullptr) {
+      record->_klass->array_klasses()->cds_print_value_on(_st);
+      _st->cr();
+    }
   }
   int index() const { return _index; }
 };
