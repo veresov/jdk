@@ -1984,7 +1984,7 @@ public:
     if (td->is_MethodTrainingData()) {
       MethodTrainingData* mtd = td->as_MethodTrainingData();
       if (mtd->has_holder()) {
-        CompileTrainingData* ctd = mtd->first_compile(CompLevel_full_optimization);
+        CompileTrainingData* ctd = mtd->first_compile(/*CompLevel_full_optimization*/);
         if (ctd != nullptr && ctd->compile_id() > 0) {
           _methods.push((Method*)mtd->holder());
         }
@@ -2306,19 +2306,24 @@ void SystemDictionaryShared::preload_archived_classes(TRAPS) {
             (!preinit && mh->method_holder()->is_linked())) {
           assert(!HAS_PENDING_EXCEPTION, "");
 
-          bool precompile = (cid > 0) || ForcePrecompilation;
+          CompLevel comp_level = MIN2(CompLevel_full_optimization, (CompLevel)PrecompileLevel);
+          if (cid == 0) {
+            cid = compile_id(mh);
+            comp_level = MIN2(CompLevel_limited_profile, (CompLevel)PrecompileLevel);
+          }
 
+          bool precompile = (cid > 0) || ForcePrecompilation;
           if (precompile) {
             log_trace(cds,dynamic)("Precompile %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
             ++count;
-            CompileBroker::compile_method(mh, InvocationEntryBci, PrecompileLevel /*CompLevel_full_optimization*/, methodHandle(), 0, false, CompileTask::Reason_Recorded, THREAD);
+            CompileBroker::compile_method(mh, InvocationEntryBci, comp_level, methodHandle(), 0, false, CompileTask::Reason_Recorded, THREAD);
             if (mh->code() == nullptr) {
               log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
             }
           } else if (DirectivesStack::getMatchingDirective(mh, nullptr)->PrecompileRecordedOption) {
             log_trace(cds,dynamic)("Precompile (forced) %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
             ++count;
-            CompileBroker::compile_method(mh, InvocationEntryBci, PrecompileLevel /*CompLevel_full_optimization*/, methodHandle(), 0, false, CompileTask::Reason_Recorded, THREAD);
+            CompileBroker::compile_method(mh, InvocationEntryBci, PrecompileLevel, methodHandle(), 0, false, CompileTask::Reason_Recorded, THREAD);
             if (mh->code() == nullptr) {
               log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
             }

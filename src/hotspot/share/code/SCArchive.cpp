@@ -2573,9 +2573,15 @@ if (UseNewCode) {
 
   uint nm_flags = (ciEnv::current()->is_precompiled() ? 1 : 0); // TODO: record info about other assumptions (e.g., init barriers)
 
+  uint level = (uint)comp_level;
+//  if (comp_level == CompLevel_full_optimization) {
+//    level += nm_flags;
+//  } else {
+//    guarantee(nm_flags == 0, "");
+//  }
   SCAEntry* entry = new(archive) SCAEntry(entry_position, entry_size, name_offset, name_size,
                                  code_offset, code_size, reloc_offset, reloc_size,
-                                 SCAEntry::Code, hash, nm_flags, (uint)comp_level, decomp);
+                                 SCAEntry::Code, hash, nm_flags, level, decomp);
   {
     ResourceMark rm;
     const char* name   = method->name_and_sig_as_C_string();
