@@ -60,12 +60,12 @@ public class PrelinkedStringConcat {
     static final String appJar = ClassFileInstaller.getJarPath("app.jar");
     static final String mainClass_ConcatA = ConcatA.class.getName();
     static final String mainClass_ConcatB = ConcatB.class.getName();
-    static Pattern testOnlyPattern = null;
-    static Pattern testSkipPattern = null;
+    static Pattern testOnlyPattern = null; // matches testNumber
+    static Pattern testSkipPattern = null; // matches testNumber
     static OutputAnalyzer output = null;
 
     // Force some tests to be disabled during development.
-    static String forceSkip = ".*with loop.*"; // these two tests fail now -- pattern must match the complete testNumber or testNote!
+    static String forceSkip = ".*with loop.*"; // matches testNote
     static Pattern forceSkipPattern = null;
     static int testNumber = 0;
 
@@ -148,7 +148,6 @@ public class PrelinkedStringConcat {
         }
     }
 
-    // s is either testNumber or testNote
     static boolean shouldTest(String s) {
         if (testOnlyPattern != null) {
             Matcher matcher = testOnlyPattern.matcher(s);
@@ -158,12 +157,6 @@ public class PrelinkedStringConcat {
         }
         if (testSkipPattern != null) {
             Matcher matcher = testSkipPattern.matcher(s);
-            if (matcher.find()) {
-                return false;
-            }
-        }
-        if (forceSkipPattern != null) {
-            Matcher matcher = forceSkipPattern.matcher(s);
             if (matcher.find()) {
                 return false;
             }
@@ -184,8 +177,20 @@ public class PrelinkedStringConcat {
     static void test(String testNote, String mainClass, String trainingArg, String productionArg, boolean testAOT) throws Exception {
         output = null;
         testNumber ++;
-        if (!shouldTest("" + testNumber) || !shouldTest(testNote)) {
-            System.out.println("         Test : #" + testNumber + ", " + testNote + " ****** SKIPPED");
+        String skipBy = null;
+
+        if (forceSkipPattern != null) {
+            Matcher matcher = forceSkipPattern.matcher(testNote);
+            if (matcher.find()) {
+                skipBy = " ***** (hard coded) Skipped by test note";
+            }
+        }
+        if (skipBy == null && !shouldTest("" + testNumber)) {
+            skipBy = " ***** Skipped by test number";
+        }
+
+        if (skipBy != null) {
+            System.out.println("         Test : #" + testNumber + ", " + testNote + skipBy);
             return;
         }
 
