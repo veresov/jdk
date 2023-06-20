@@ -112,6 +112,8 @@ public:
   static void preresolve_indy_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list);
   static void preresolve_invoker_class(JavaThread* current, InstanceKlass* ik);
 
+  static bool should_preresolve_invokedynamic(InstanceKlass* ik);
+
   // Is this class resolved as part of vmClasses::resolve_all()? If so, these
   // classes are guatanteed to be loaded at runtime (and cannot be replaced by JVMTI)
   // when CDS is enabled. Therefore, we can safely keep a direct reference to these

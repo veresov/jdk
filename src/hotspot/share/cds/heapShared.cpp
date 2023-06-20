@@ -911,6 +911,7 @@ void HeapShared::init_prelinked_invokedynamic(InstanceKlass* ik, TRAPS) {
       (ik->name()->starts_with("Concat"))) {
     resolve_or_init("java/lang/invoke/Invokers$Holder", true, CHECK);
     resolve_or_init("java/lang/invoke/MethodHandle", true, CHECK);
+    resolve_or_init("java/lang/invoke/MethodHandleNatives", true, CHECK);
     resolve_or_init("java/lang/invoke/DirectMethodHandle$Holder", true, CHECK);
     resolve_or_init("java/lang/invoke/DelegatingMethodHandle$Holder", true, CHECK);
     resolve_or_init("java/lang/invoke/LambdaForm$Holder", true, CHECK);
@@ -1087,7 +1088,7 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
   bool _record_klasses_only;
   KlassSubGraphInfo* _subgraph_info;
   oop _referencing_obj;
-
+  bool _filtering;
   // The following are for maintaining a stack for determining
   // CachedOopInfo::_referrer
   static WalkOopAndArchiveClosure* _current;
@@ -1103,6 +1104,7 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
     _referencing_obj(orig) {
     _last = _current;
     _current = this;
+    _filtering = _referencing_obj->klass()->is_subclass_of(vmClasses::LambdaForm_klass());
   }
   ~WalkOopAndArchiveClosure() {
     _current = _last;
@@ -1116,6 +1118,15 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
     if (!CompressedOops::is_null(obj)) {
       size_t field_delta = pointer_delta(p, _referencing_obj, sizeof(char));
 
+      // FIXME: this is hard coded to filter out LambdaForm.transformCache
+      // FIXME: handle other cases as well.
+      // FIXME: for LambdaForm.transformCache, change from SoftReference to direct reference.
+      if (_filtering && obj->klass()->is_subclass_of(vmClasses::Reference_klass())) {
+        tty->print_cr("Filtering out LambdaForm.transformCache");
+        obj->print_on(tty);
+        RawAccess<>::oop_store(p, nullptr);
+        return;
+      }
       if (!_record_klasses_only && log_is_enabled(Debug, cds, heap)) {
         ResourceMark rm;
         log_debug(cds, heap)("(%d) %s[" SIZE_FORMAT "] ==> " PTR_FORMAT " size " SIZE_FORMAT " %s", _level,
@@ -1833,6 +1844,18 @@ ResourceBitMap HeapShared::calculate_oopmap(MemRegion region) {
 }
 
 #endif // !PRODUCT
+
+int HeapShared::get_archived_oop_index(oop obj) {
+  assert(obj != nullptr, "sanity");
+  // FIXME - think about how this would work with AOT during -Xshare:dump
+  assert(UseSharedSpaces, "currently only works when AOT runs with at least the static archive mapped");
+  return 0;
+}
+
+oop HeapShared::get_archived_oop(int index) {
+  return nullptr;
+}
+
 
 void HeapShared::count_allocation(size_t size) {
   _total_obj_count ++;

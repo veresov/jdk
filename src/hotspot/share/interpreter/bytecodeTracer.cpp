@@ -307,8 +307,8 @@ bool BytecodePrinter::check_invokedynamic_index(int i, int& cp_index, outputStre
     cp_index = i; // TODO: This is wrong on little-endian. See JDK-8309811.
   } else {
     assert(ConstantPool::is_invokedynamic_index(i), "not secondary index?");
-    i = ConstantPool::decode_invokedynamic_index(i);
-    ResolvedIndyEntry* indy_entry = constants->resolved_indy_entry_at(i);
+    int indy_index = ConstantPool::decode_invokedynamic_index(i);
+    ResolvedIndyEntry* indy_entry = constants->resolved_indy_entry_at(indy_index);
     cp_index = indy_entry->constant_pool_index();
   }
   return true;

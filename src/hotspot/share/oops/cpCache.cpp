@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "cds/archiveBuilder.hpp"
+#include "cds/classPrelinker.hpp"
 #include "cds/heapShared.hpp"
 #include "classfile/resolutionErrors.hpp"
 #include "classfile/systemDictionary.hpp"
@@ -661,14 +662,20 @@ bool ConstantPoolCacheEntry::mark_and_relocate_method_entry(ConstantPool* src_cp
         //ArchiveBuilder::current()->mark_and_relocate_to_buffered_addr(&_f2); // f2 is interface method
         return false;
       case Bytecodes::_invokestatic:
-        assert(0, "not implemented");
-        return false;
+        // For safety, we support invokestatic only for invoking methods in MethodHandle.
+        // FIXME -- further restrict it to linkToStatic(), etc?
+        assert(bytecode_2() == (Bytecodes::Code)0, "must be");
+        assert(f1->is_method(), "");
+        assert(f1_as_method()->method_holder()->name()->equals("java/lang/invoke/MethodHandle") ||
+               f1_as_method()->method_holder()->name()->equals("java/lang/invoke/MethodHandleNatives"), "sanity");
+        return true;
       case Bytecodes::_invokespecial:
         assert(f1->is_method(), "must be");
+        // Also need to work on bytecode_2() below.
         break;
       case Bytecodes::_invokehandle:
         assert(bytecode_2() == (Bytecodes::Code)0, "must be");
-         assert(f1->is_method(), "");
+        assert(f1->is_method(), "");
         return true;
       default:
         ShouldNotReachHere();
@@ -806,8 +813,7 @@ void ConstantPoolCache::remove_unshareable_info(const GrowableArray<bool>* keep_
     for (int i = 0; i < _resolved_indy_entries->length(); i++) {
       ResolvedIndyEntry *rei = resolved_indy_entry_at(i);
       bool save = false;
-      if (ArchiveInvokeDynamic && constant_pool()->pool_holder()->name()->equals("ConcatA") &&
-          rei->is_resolved()) {
+      if (rei->is_resolved() && ClassPrelinker::should_preresolve_invokedynamic(constant_pool()->pool_holder())) {
         // FIXME: use common function to check whether to save -- also for
         // ConstantPool::prepare_resolved_references_for_archiving()
         save = true;

@@ -26,6 +26,7 @@
 #include "cds/archiveBuilder.hpp"
 #include "cds/classPrelinker.hpp"
 #include "cds/lambdaFormInvokers.inline.hpp"
+#include "cds/regeneratedClasses.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/systemDictionaryShared.hpp"
@@ -365,6 +366,7 @@ void ClassPrelinker::preresolve_field_and_method_cp_entries(JavaThread* current,
       case Bytecodes::_invokespecial:
       case Bytecodes::_invokevirtual:
       case Bytecodes::_invokehandle:
+      case Bytecodes::_invokestatic:
         maybe_resolve_fmi_ref(ik, m, bc, bcs.get_index_u2_cpcache(), preresolve_list, THREAD);
         if (HAS_PENDING_EXCEPTION) {
           CLEAR_PENDING_EXCEPTION; // just ignore
@@ -399,8 +401,16 @@ void ClassPrelinker::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecod
     // Do not resolve any field/methods from a class that has not been loaded yet.
     return;
   }
+  Klass* resolved_klass = cp->klass_ref_at(raw_index, bc, CHECK);
 
   const char* ref_kind = "";
+  const char* is_static = "";
+  const char* is_regen = "";
+
+  if (RegeneratedClasses::is_a_regenerated_object((address)ik)) {
+    is_regen = " (regenerated)";
+  }
+
   switch (bc) {
   case Bytecodes::_getfield:
   case Bytecodes::_putfield:
@@ -412,11 +422,22 @@ void ClassPrelinker::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecod
     ref_kind = "method";
     break;
   case Bytecodes::_invokespecial:
-    // Not implemented yet.
+    // TODO Not implemented yet.
     return;
   case Bytecodes::_invokehandle:
     InterpreterRuntime::cds_resolve_invokehandle(raw_index, cp, CHECK);
     ref_kind = "method";
+    break;
+  case Bytecodes::_invokestatic:
+    if (!resolved_klass->name()->equals("java/lang/invoke/MethodHandle") &&
+        !resolved_klass->name()->equals("java/lang/invoke/MethodHandleNatives")
+/* ||
+        !LambdaFormInvokers::may_be_regenerated_class(ik->name())*/) {
+      return;
+    }
+    InterpreterRuntime::cds_resolve_invoke(bc, raw_index, mh, cp, cp_cache_entry, CHECK);
+    ref_kind = "method";
+    is_static = " *** static";
     break;
   default:
     ShouldNotReachHere();
@@ -424,12 +445,12 @@ void ClassPrelinker::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecod
 
   if (log_is_enabled(Trace, cds, resolve)) {
     ResourceMark rm(THREAD);
-    Klass* resolved_klass = cp->klass_ref_at(raw_index, bc, CHECK);
     Symbol* name = cp->name_ref_at(raw_index, bc);
     Symbol* signature = cp->signature_ref_at(raw_index, bc);
-    log_trace(cds, resolve)("Resolved %s [%3d] %s -> %s.%s:%s", ref_kind, cp_index, ik->external_name(),
+    log_trace(cds, resolve)("Resolved %s [%3d] %s%s -> %s.%s:%s%s", ref_kind, cp_index,
+                            ik->external_name(), is_regen,
                             resolved_klass->external_name(),
-                            name->as_C_string(), signature->as_C_string());
+                            name->as_C_string(), signature->as_C_string(), is_static);
   }
 }
 
@@ -453,6 +474,48 @@ void ClassPrelinker::preresolve_indy_cp_entries(JavaThread* current, InstanceKla
       }
     }
   }
+}
+
+static GrowableArrayCHeap<char*, mtClassShared>* _invokedynamic_filter = nullptr;
+
+bool ClassPrelinker::should_preresolve_invokedynamic(InstanceKlass* ik) {
+  if (!ArchiveInvokeDynamic) {
+    return false;
+  }
+
+  if (ArchiveInvokeDynamicFilter != nullptr && _invokedynamic_filter == nullptr) {
+    _invokedynamic_filter = new GrowableArrayCHeap<char*, mtClassShared>();
+    const char delimiter[] = " ,\n";
+    size_t length = strlen(ArchiveInvokeDynamicFilter);
+    char* options_list = NEW_C_HEAP_ARRAY(char, length + 1, mtClassShared);
+    strncpy(options_list, ArchiveInvokeDynamicFilter, length + 1);
+    char* save_ptr;
+    char* token = strtok_r(options_list, delimiter, &save_ptr);
+    while (token != nullptr) {
+      log_warning(cds)("ArchiveInvokeDynamicFilter = \"%s\"", token);
+      _invokedynamic_filter->append(os::strdup(token));
+      token = strtok_r(nullptr, delimiter, &save_ptr);
+    }
+    FREE_C_HEAP_ARRAY(char, options_list);
+    ArchiveInvokeDynamicFilter = nullptr;
+  }
+
+  if (ik->name()->equals("ConcatA")) {
+    return true;
+  }
+
+  if (_invokedynamic_filter != nullptr) {
+    for (int i = 0; i < _invokedynamic_filter->length(); i++) {
+      char* pattern = _invokedynamic_filter->at(i);
+      // FIXME - Symbol::is_star_match is too liberal. "A*" matches with "XAY".
+      if (ik->name()->equals(pattern)) {
+        return true;
+      }
+    }
+  }
+
+
+  return false;
 }
 
 #ifdef ASSERT

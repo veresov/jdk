@@ -27,6 +27,7 @@
 #include "cds/archiveHeapLoader.hpp"
 #include "cds/archiveBuilder.hpp"
 #include "cds/classPrelinker.hpp"
+#include "cds/lambdaFormInvokers.inline.hpp"
 #include "cds/heapShared.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/classLoaderData.hpp"
@@ -293,13 +294,15 @@ objArrayOop ConstantPool::prepare_resolved_references_for_archiving() {
     ResourceMark rm;
     int rr_len = rr->length();
     GrowableArray<bool> keep_resolved_refs(rr_len, rr_len, false);
-    if (cache() != nullptr && ArchiveInvokeDynamic && pool_holder()->name()->equals("ConcatA")) {
+    if (cache() != nullptr && ClassPrelinker::should_preresolve_invokedynamic(pool_holder())) {
       Array<ResolvedIndyEntry>* indy_entries = cache()->resolved_indy_entries();
-      for (int i = 0; i < indy_entries->length(); i++) {
-        if (indy_entries->at(i).is_resolved()) {
-          // FIXME -- check if the BSM is supported
-          int rr_index = indy_entries->at(i).resolved_references_index();
-          keep_resolved_refs.at_put(rr_index, true);
+      if (indy_entries != nullptr) {
+        for (int i = 0; i < indy_entries->length(); i++) {
+          if (indy_entries->at(i).is_resolved()) {
+            // FIXME -- check if the BSM is supported
+            int rr_index = indy_entries->at(i).resolved_references_index();
+            keep_resolved_refs.at_put(rr_index, true);
+          }
         }
       }
     }
@@ -554,6 +557,7 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
     return false;
   }
   ConstantPoolCacheEntry* cpce = cache()->entry_at(cpc_index);
+  const char* is_static = "";
   switch (cp_tag) {
   case JVM_CONSTANT_Fieldref:
     if (!cpce->is_resolved(Bytecodes::_getfield)) {
@@ -562,9 +566,31 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
     }
     break;
   case JVM_CONSTANT_Methodref:
-    if (!cpce->is_resolved(Bytecodes::_invokevirtual) &&
-        !cpce->is_resolved(Bytecodes::_invokespecial) &&
-        !cpce->is_resolved(Bytecodes::_invokehandle)) {
+    if (cpce->is_resolved(Bytecodes::_invokehandle)) {
+      if (!ArchiveInvokeDynamic) {
+        // FIXME We don't dump the MethodType tables. This somehow breaks stuff.
+        return false;
+      }
+
+    } else if (cpce->is_resolved(Bytecodes::_invokestatic)) {
+      // TODO: allow invokestatic on current class and supertypes??
+      if (!ArchiveInvokeDynamic) {
+        // FIXME We don't dump the MethodType tables. This somehow breaks stuff.
+        return false;
+      }
+
+      InstanceKlass* src_cp_holder = src_cp->pool_holder();
+      if (!resolved_klass->name()->equals("java/lang/invoke/MethodHandle") &&
+          !resolved_klass->name()->equals("java/lang/invoke/MethodHandleNatives") /* ||
+          !LambdaFormInvokers::may_be_regenerated_class(src_cp_holder->name()) */) {
+        // FIXME - allow LambdaForm classes as well??
+        // FIXME - tighten this check??
+        return false;
+      }
+      // Allow static method refs to MethodHandle from the LambdaForm Invoker Holder classes
+      is_static = " *** static";
+    } else if (!cpce->is_resolved(Bytecodes::_invokevirtual) &&
+               !cpce->is_resolved(Bytecodes::_invokespecial)) {
       return false;
     }
     if (resolved_klass->is_instance_klass()) {
@@ -585,9 +611,9 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
     Symbol* name = uncached_name_ref_at(cp_index);
     Symbol* signature = uncached_signature_ref_at(cp_index);
     const char* type = (cp_tag == JVM_CONSTANT_Fieldref) ? "field " : "method";
-    log_debug(cds, resolve)("archived %s CP entry [%3d]: %s => %s.%s:%s", type, cp_index,
+    log_debug(cds, resolve)("archived %s CP entry [%3d]: %s => %s.%s:%s%s", type, cp_index,
                             pool_holder()->external_name(), resolved_klass->external_name(),
-                            name->as_C_string(), signature->as_C_string());
+                            name->as_C_string(), signature->as_C_string(), is_static);
   }
 
   // work-o-in-progress, mark_and_relocate could return false if it doesn't know how to

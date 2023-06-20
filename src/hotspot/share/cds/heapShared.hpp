@@ -424,6 +424,12 @@ private:
   }
   static bool is_a_test_class_in_unnamed_module(Klass* ik) NOT_CDS_JAVA_HEAP_RETURN_(false);
   static void init_prelinked_invokedynamic(InstanceKlass* ik, TRAPS);
+
+  // Interface for AOT
+  static int get_archived_oop_index(oop obj); // AOT-compile time only: get a stable index for an archived object.
+                                              // Returns 0 if obj is not archived.
+  static oop get_archived_oop(int index);     // Runtime only: get back the same object for an index returned by
+                                              // get_archived_oop_index().
 };
 
 #if INCLUDE_CDS_JAVA_HEAP

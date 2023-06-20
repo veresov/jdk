@@ -945,10 +945,14 @@ void InterpreterRuntime::cds_resolve_invoke(Bytecodes::Code bytecode, int raw_in
                                             methodHandle& m,
                                             constantPoolHandle& pool,
                                             ConstantPoolCacheEntry* cp_cache_entry, TRAPS) {
-  assert(bytecode == Bytecodes::_invokevirtual, "only this is supported now");
-  LinkInfo link_info(pool, raw_index, Bytecodes::_invokevirtual, CHECK);
+  LinkInfo link_info(pool, raw_index, bytecode, CHECK);
   CallInfo call_info;
-  LinkResolver::cds_resolve_virtual_call(call_info, link_info, CHECK);
+  if (bytecode == Bytecodes::_invokevirtual) {
+    LinkResolver::cds_resolve_virtual_call(call_info, link_info, CHECK);
+  } else {
+    assert(bytecode == Bytecodes::_invokestatic, "other bytecodes aren't supported yet");
+    LinkResolver::resolve_invoke(call_info, Handle(), pool, raw_index, bytecode, CHECK);
+  }
 
   methodHandle resolved_method(THREAD, call_info.resolved_method());
   update_invoke_cp_cache_entry(call_info, bytecode, resolved_method, pool, cp_cache_entry);

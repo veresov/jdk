@@ -268,7 +268,10 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
           list.append(cp_index);
         }
         if (cpce->is_resolved(Bytecodes::_invokehandle)) {
-          list.append(cp_index); /// Can invokehandle trigger <clinit>??
+          list.append(cp_index); /// TODO Can invokehandle trigger <clinit>??
+        }
+        if (cpce->is_resolved(Bytecodes::_invokestatic)) {
+          list.append(cp_index); /// TODO Can invokehandle trigger <clinit>??
         }
       }
       fmi_cpcache_index++;
@@ -279,11 +282,13 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
     }
   }
 
-  if (cp->cache() != nullptr && (ik->name()->equals("ConcatA") /*|| ik->name()->starts_with("Concat")*/)) {
+  if (cp->cache() != nullptr /*&& (ik->name()->equals("ConcatA") /*|| ik->name()->starts_with("Concat"))*/) {
     Array<ResolvedIndyEntry>* indy_entries = cp->cache()->resolved_indy_entries();
-    for (int i = 0; i < indy_entries->length(); i++) {
-      if (indy_entries->at(i).is_resolved()) {
-        list.append(indy_entries->at(i).constant_pool_index());
+    if (indy_entries != nullptr) {
+      for (int i = 0; i < indy_entries->length(); i++) {
+        if (indy_entries->at(i).is_resolved()) {
+          list.append(indy_entries->at(i).constant_pool_index());
+        }
       }
     }
   }
