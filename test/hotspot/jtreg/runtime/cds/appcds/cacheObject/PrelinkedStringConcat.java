@@ -48,6 +48,7 @@
 //
 // Also, some tests may be forced to be skipped. To run them, edit the variable forceSkip below.
 
+import java.io.FileWriter;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -60,12 +61,13 @@ public class PrelinkedStringConcat {
     static final String appJar = ClassFileInstaller.getJarPath("app.jar");
     static final String mainClass_ConcatA = ConcatA.class.getName();
     static final String mainClass_ConcatB = ConcatB.class.getName();
+    static final String mainClass_javac = "com.sun.tools.javac.Main";
     static Pattern testOnlyPattern = null; // matches testNumber
     static Pattern testSkipPattern = null; // matches testNumber
     static OutputAnalyzer output = null;
 
     // Force some tests to be disabled during development.
-    static String forceSkip = ".*with loop.*"; // matches testNote
+    static String forceSkip = ".*javac.*"; // matches testNote -- the javac test isn't working yet ...
     static Pattern forceSkipPattern = null;
     static int testNumber = 0;
 
@@ -105,9 +107,28 @@ public class PrelinkedStringConcat {
         test("WithAOT (with loop) for \"LIT\" + (String)b", mainClass_ConcatA, "loopa", "loopa",  /*testAOT = */true);
         checkExec("LITL");
         shouldUseDynamicArchive();
+
+        // ------------------------------------------------------------
+        testJavaC();
     }
 
-    static void checkExec(String expectedOutput) throws Exception  {
+    // FIXME -- this case is not working yet. It throws exception while initializing the core libs.
+    // Change forceSkip = null to run this case.
+    static void testJavaC() throws Exception {
+        String sourceFile = "Test.java";
+        try (FileWriter fw = new FileWriter(sourceFile)) {
+            fw.write("public class Test {\n");
+            for (int i = 0; i < 3000; i++) {
+                fw.write("    private static final int arr_" + i + "[] = {1, 2, 3};\n");
+                fw.write("    private static int method_" + i + "() { return arr_" + i + "[1];}\n");
+            }
+            fw.write("}\n");
+        }
+        test("NoAOT - use javac with archived MethodTypes and LambdaForms", mainClass_javac, sourceFile);
+        checkExec(null, /*lambdaFormsMustBeArchived*/true);
+    }
+
+    static void checkExec(String expectedOutput) throws Exception {
         checkExec(expectedOutput, /* lambdaFormsMustBeArchived*/ true);
     }
 
@@ -115,7 +136,9 @@ public class PrelinkedStringConcat {
         if (output == null) { // test may be skipped
             return;
         }
-        TestCommon.checkExecReturn(output, 0, true, "OUTPUT = " + expectedOutput);
+        if (expectedOutput != null) {
+            TestCommon.checkExecReturn(output, 0, true, "OUTPUT = " + expectedOutput);
+        }
         if (lambdaFormsMustBeArchived) {
             output.shouldMatch("LambdaForm[$]((MH)|(DMH))/0x[0-9]+ source: shared objects file");
             output.shouldNotMatch("LambdaForm[$]MH/0x[0-9]+ source: __JVM_LookupDefineClass__");
@@ -216,7 +239,7 @@ public class PrelinkedStringConcat {
                        "-cp", appJar,
                        "-Xlog:cds,cds+class=debug")
             .setArchiveName(archiveName);
-        OutputAnalyzer output = CDSTestUtils.createArchiveAndCheck(opts);
+        output = CDSTestUtils.createArchiveAndCheck(opts);
         TestCommon.checkExecReturn(output, 0, true);
 
         if (!testAOT) {
@@ -229,6 +252,7 @@ public class PrelinkedStringConcat {
                 .addSuffix(mainClass)
                 .addSuffix(productionArg);
             output = CDSTestUtils.runWithArchive(runOpts);
+            TestCommon.checkExecReturn(output, 0, true);
         } else {
             // TODO -- for the time being, AOT is only available with dynamic archive.
             String dynamicArchiveName = s + "-dyn.jsa";
@@ -243,7 +267,18 @@ public class PrelinkedStringConcat {
                 .addSuffix("-XX:+StoreSharedCode")
                 .addSuffix("-XX:SharedCodeArchive=" + sharedCodeArchive)
                 .addSuffix("-XX:ReservedSharedCodeSize=100M")
-                .addSuffix("-Xlog:sca*=trace")
+                .addSuffix("-Xlog:sca*=trace");
+            if (mainClass.equals(mainClass_ConcatA)) {
+                // Hard-code the printing of loopA for now
+                dynDumpOpts
+                    .addSuffix("-XX:CompileCommand=print,*::loopA")
+                    .addSuffix("-XX:+PrintAssembly");
+                if (false) {
+                    dynDumpOpts.addSuffix("-XX:-TieredCompilation");
+                }
+            }
+            // The main class name and arguments
+            dynDumpOpts
                 .addSuffix(mainClass)
                 .addSuffix(productionArg)
                 .addSuffix("load-extra-class");
@@ -262,6 +297,7 @@ public class PrelinkedStringConcat {
                 .addSuffix(mainClass)
                 .addSuffix(productionArg);
             output = CDSTestUtils.runWithArchive(runOpts);
+            TestCommon.checkExecReturn(output, 0, true);
         }
     }
 }

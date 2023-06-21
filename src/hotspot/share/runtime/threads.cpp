@@ -350,9 +350,6 @@ void Threads::initialize_java_lang_classes(JavaThread* main_thread, TRAPS) {
   TraceTime timer("Initialize java.lang classes", TRACETIME_LOG(Info, startuptime));
 
   initialize_class(vmSymbols::java_lang_String(), CHECK);
-  if (UseSharedSpaces) {
-    SystemDictionaryShared::init_archived_lambda_form_classes(CHECK);
-  }
 
   // Inject CompactStrings value after the static initializers for String ran.
   java_lang_String::set_compact_strings(CompactStrings);
@@ -424,6 +421,10 @@ void Threads::initialize_jsr292_core_classes(TRAPS) {
   initialize_class(vmSymbols::java_lang_invoke_ResolvedMethodName(), CHECK);
   initialize_class(vmSymbols::java_lang_invoke_MemberName(), CHECK);
   initialize_class(vmSymbols::java_lang_invoke_MethodHandleNatives(), CHECK);
+
+  if (UseSharedSpaces) {
+    SystemDictionaryShared::init_archived_lambda_form_classes(CHECK);
+  }
 }
 
 jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {

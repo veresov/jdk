@@ -1689,6 +1689,7 @@ void SystemDictionaryShared::init_archived_lambda_form_classes(TRAPS) {
     ik->add_to_hierarchy(THREAD);
 
     assert(ik->is_loaded(), "Must be in at least loaded state");
-    ik->link_class(CHECK); // TODO also set it to initialized ?? What about classData? That should bee saved in the archived heap.
+    ik->link_class(CHECK);
+    ik->initialize(CHECK); // FIXME What about classData -- classData should bee saved in the archived heap ??
   }
 }
