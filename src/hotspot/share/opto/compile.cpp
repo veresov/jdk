@@ -1073,7 +1073,9 @@ void Compile::Init(bool aliasing) {
   if (VM_Version::supports_fast_class_init_checks() && has_method() && !is_osr_compilation() &&
       (method()->needs_clinit_barrier() || (do_clinit_barriers() && method()->is_static()))) {
     set_clinit_barrier_on_entry(true);
-    set_has_clinit_barriers(true); // Entry clinit barrier is in prolog code.
+    if (do_clinit_barriers()) {
+      set_has_clinit_barriers(true); // Entry clinit barrier is in prolog code.
+    }
   }
   if (debug_info()->recording_non_safepoints()) {
     set_node_note_array(new(comp_arena()) GrowableArray<Node_Notes*>
