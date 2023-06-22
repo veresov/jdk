@@ -650,9 +650,13 @@ void SCAFile::invalidate(SCAEntry* entry) {
 #endif
   entry->set_not_entrant();
   {
-    ResourceMark rm;
-    Method* method = entry->method();
-    const char* name = method->name_and_sig_as_C_string();
+    uint name_offset = entry->offset() + entry->name_offset();
+    const char* name;
+    if (SCArchive::is_loaded(entry)) {
+      name = _load_buffer + name_offset;
+    } else {
+      name = _store_buffer + name_offset;
+    }
     uint level   = entry->comp_level();
     uint comp_id = entry->comp_id();
     uint decomp  = entry->decompile();
@@ -760,7 +764,7 @@ bool SCAFile::finish_write() {
           log_info(sca, exit)("Not entrant load entry id: %d, decomp: %d, hash: " UINT32_FORMAT_X_0, i, _load_entries[i].decompile(), _load_entries[i].id());
           not_entrant_nb++;
           _load_entries[i].set_entrant(); // Reset
-        } else if (entries_address[i].for_preload() && entries_address[i].method() != nullptr) {
+        } else if (_load_entries[i].for_preload() && _load_entries[i].method() != nullptr) {
           // record entrant first version code for pre-loading
           preload_entries[preload_entries_cnt++] = entries_count;
         }
@@ -2463,7 +2467,7 @@ if (UseNewCode3) {
                        oop_maps, &handler_table,
                        &nul_chk_table, compiler,
                        _entry->has_clinit_barriers(),
-                       !_entry->for_preload(),
+                       false,
                        has_unsafe_access,
                        has_wide_vectors,
                        has_monitors,
