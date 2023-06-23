@@ -1759,11 +1759,6 @@ void TrainingDataPrinter::do_value(const RunTimeMethodDataInfo* record) {
 }
 
 void TrainingDataPrinter::do_value(TrainingData* td) {
-  assert(td == TrainingData::lookup_archived_training_data(td->key()), "");
-
-  TrainingData::Key key(td->key()->name1(), td->key()->name2(), td->key()->holder());
-  assert(td == TrainingData::lookup_archived_training_data(&key), "");
-
   const char* type = (td->is_KlassTrainingData()   ? "K" :
                       td->is_MethodTrainingData()  ? "M" :
                       td->is_CompileTrainingData() ? "C" : "?");
@@ -1787,6 +1782,10 @@ void TrainingDataPrinter::do_value(TrainingData* td) {
   } else if (td->is_CompileTrainingData()) {
     // ?
   }
+
+  TrainingData::Key key(td->key()->name1(), td->key()->name2(), td->key()->holder());
+  assert(td == TrainingData::archived_training_data_dictionary()->lookup(td->key(), TrainingData::Key::cds_hash(td->key()), -1), "");
+  assert(td == TrainingData::archived_training_data_dictionary()->lookup(&key, TrainingData::Key::cds_hash(&key), -1), "");
 }
 
 
