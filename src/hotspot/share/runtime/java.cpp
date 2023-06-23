@@ -472,8 +472,6 @@ void before_exit(JavaThread* thread, bool halt) {
   assert(!thread->has_pending_exception(), "must be");
 #endif
 
-  SCArchive::close(); // Write final data and close archive
-
   // Actual shutdown logic begins here.
 
 #if INCLUDE_JVMCI
@@ -481,6 +479,8 @@ void before_exit(JavaThread* thread, bool halt) {
     JVMCI::shutdown(thread);
   }
 #endif
+
+  SCArchive::close(); // Write final data and close archive
 
   // Hang forever on exit if we're reporting an error.
   if (ShowMessageBoxOnError && VMError::is_error_reported()) {

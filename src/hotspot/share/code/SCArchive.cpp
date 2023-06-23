@@ -154,7 +154,7 @@ bool SCArchive::is_SC_load_tread_on() {
 
 bool SCArchive::gen_preload_code(ciMethod* m, int entry_bci) {
   VM_ENTRY_MARK;
-  return (entry_bci == InvocationEntryBci) && _archive != nullptr && _archive->gen_preload_code() &&
+  return (entry_bci == InvocationEntryBci) && is_on() && _archive->gen_preload_code() &&
          MetaspaceShared::is_in_shared_metaspace((address)(m->get_Method()));
 }
 

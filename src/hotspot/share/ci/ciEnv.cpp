@@ -1209,9 +1209,9 @@ void ciEnv::register_method(ciMethod* target,
         if (lt.is_enabled()) {
           ResourceMark rm;
           char *method_name = method->name_and_sig_as_C_string();
-          lt.print("Installing method (L%d) %s id=%d sca=%s%u",
+          lt.print("Installing method (L%d) %s id=%d sca=%s%s %u",
                     task()->comp_level(), method_name, compile_id(),
-                    task()->is_sca() ? "A" : "",
+                    task()->is_sca() ? "A" : "", preload ? "P" : "",
                     (sca_entry != nullptr ? sca_entry->offset() : 0));
         }
         // Allow the code to be executed
