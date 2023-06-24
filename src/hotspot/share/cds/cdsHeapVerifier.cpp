@@ -142,6 +142,14 @@ CDSHeapVerifier::CDSHeapVerifier() : _archived_objs(0), _problems(0)
   ADD_EXCL("sun/invoke/util/Wrapper",                    "FLOAT_ZERO",     // ? there is a cache??
                                                          "DOUBLE_ZERO");   // ? there is a cache??
 
+  ADD_EXCL("java/lang/invoke/BoundMethodHandle$Specializer",   "BMH_TRANSFORMS",
+                                                               "SPECIES_DATA_ACCESSOR");
+  ADD_EXCL("java/lang/invoke/BoundMethodHandle",               "SPECIALIZER");
+  ADD_EXCL("java/lang/invoke/DelegatingMethodHandle",          "NF_getTarget");
+  ADD_EXCL("java/lang/invoke/MethodHandleImpl$ArrayAccessor",  "OBJECT_ARRAY_GETTER",
+                                                               "OBJECT_ARRAY_SETTER");
+  ADD_EXCL("java/lang/invoke/SimpleMethodHandle",              "BMH_SPECIES");
+
 # undef ADD_EXCL
 
   ClassLoaderDataGraph::classes_do(this);

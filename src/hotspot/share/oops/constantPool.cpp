@@ -567,7 +567,7 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
     break;
   case JVM_CONSTANT_Methodref:
     if (cpce->is_resolved(Bytecodes::_invokehandle)) {
-      if (!ArchiveInvokeDynamic) {
+      if (!ArchiveInvokeDynamic || true/*FIXME this doesn't work yet*/) {
         // FIXME We don't dump the MethodType tables. This somehow breaks stuff.
         return false;
       }

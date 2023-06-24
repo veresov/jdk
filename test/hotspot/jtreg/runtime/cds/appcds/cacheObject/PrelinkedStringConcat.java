@@ -67,7 +67,7 @@ public class PrelinkedStringConcat {
     static OutputAnalyzer output = null;
 
     // Force some tests to be disabled during development.
-    static String forceSkip = ".*javac.*"; // matches testNote -- the javac test isn't working yet ...
+    static String forceSkip = null; //".*javac.*"; // matches testNote -- the javac test isn't working yet ...
     static Pattern forceSkipPattern = null;
     static int testNumber = 0;
 
@@ -125,7 +125,7 @@ public class PrelinkedStringConcat {
             fw.write("}\n");
         }
         test("NoAOT - use javac with archived MethodTypes and LambdaForms", mainClass_javac, sourceFile);
-        checkExec(null, /*lambdaFormsMustBeArchived*/true);
+        checkExec(null, /*lambdaFormsMustBeArchived*/false); // Some lambda forms are generated because we don't cache invokedynamic for lambda proxies yet
     }
 
     static void checkExec(String expectedOutput) throws Exception {

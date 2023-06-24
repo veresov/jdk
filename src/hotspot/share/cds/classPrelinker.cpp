@@ -365,7 +365,7 @@ void ClassPrelinker::preresolve_field_and_method_cp_entries(JavaThread* current,
       case Bytecodes::_putfield:
       case Bytecodes::_invokespecial:
       case Bytecodes::_invokevirtual:
-      case Bytecodes::_invokehandle:
+      //case Bytecodes::_invokehandle:
       case Bytecodes::_invokestatic:
         maybe_resolve_fmi_ref(ik, m, bc, bcs.get_index_u2_cpcache(), preresolve_list, THREAD);
         if (HAS_PENDING_EXCEPTION) {

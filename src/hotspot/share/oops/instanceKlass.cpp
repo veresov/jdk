@@ -1608,6 +1608,9 @@ void InstanceKlass::call_class_initializer(TRAPS) {
     if (initialized) {
       return;
     }
+  } else if (is_shared() && is_hidden() && name()->starts_with("java/lang/invoke/LambdaForm$")) {
+    oop mirror = java_mirror();
+    return;
   }
 #endif
 

@@ -421,6 +421,58 @@ void HeapShared::remove_scratch_objects(Klass* k) {
   _scratch_java_mirror_table->remove_oop(k);
 }
 
+void HeapShared::copy_preinitialized_mirror(Klass* orig_k, oop orig_mirror, oop m) {
+  if (!orig_k->is_instance_klass()) {
+    return;
+  }
+  InstanceKlass* ik = InstanceKlass::cast(orig_k);
+  if (!ik->is_hidden()) {
+    return;
+  }
+  if (!ik->name()->starts_with("java/lang/invoke/LambdaForm$")) { // FIXME
+    return;
+  }
+
+  for (JavaFieldStream fs(ik); !fs.done(); fs.next()) {
+    if (fs.access_flags().is_static()) {
+      fieldDescriptor& fd = fs.field_descriptor();
+      int offset = fd.offset();
+      switch (fd.field_type()) {
+      case T_OBJECT:
+      case T_ARRAY:
+        m->obj_field_put(offset, orig_mirror->obj_field(offset));
+        break;
+      case T_BOOLEAN:
+        m->bool_field_put(offset, orig_mirror->bool_field(offset));
+        break;
+      case T_BYTE:
+        m->byte_field_put(offset, orig_mirror->byte_field(offset));
+        break;
+      case T_SHORT:
+        m->short_field_put(offset, orig_mirror->short_field(offset));
+        break;
+      case T_CHAR:
+        m->char_field_put(offset, orig_mirror->char_field(offset));
+        break;
+      case T_INT:
+        m->int_field_put(offset, orig_mirror->int_field(offset));
+        break;
+      case T_LONG:
+        m->long_field_put(offset, orig_mirror->long_field(offset));
+        break;
+      case T_FLOAT:
+        m->float_field_put(offset, orig_mirror->float_field(offset));
+        break;
+      case T_DOUBLE:
+        m->double_field_put(offset, orig_mirror->double_field(offset));
+        break;
+      default:
+        ShouldNotReachHere();
+      }
+    }
+  }
+}
+
 void HeapShared::archive_java_mirrors() {
   for (int i = T_BOOLEAN; i < T_VOID+1; i++) {
     BasicType bt = (BasicType)i;
@@ -446,6 +498,7 @@ void HeapShared::archive_java_mirrors() {
     oop orig_mirror = orig_k->java_mirror();
     oop m = scratch_java_mirror(orig_k);
     if (m != nullptr) {
+      copy_preinitialized_mirror(orig_k, orig_mirror, m);
       Klass* buffered_k = ArchiveBuilder::get_buffered_klass(orig_k);
       bool success = archive_reachable_objects_from(1, _default_subgraph_info, orig_mirror);
       guarantee(success, "scratch mirrors must point to only archivable objects");
@@ -1089,6 +1142,7 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
   KlassSubGraphInfo* _subgraph_info;
   oop _referencing_obj;
   bool _filtering;
+  address _filtering_addr = nullptr;
   // The following are for maintaining a stack for determining
   // CachedOopInfo::_referrer
   static WalkOopAndArchiveClosure* _current;
@@ -1105,6 +1159,15 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
     _last = _current;
     _current = this;
     _filtering = _referencing_obj->klass()->is_subclass_of(vmClasses::LambdaForm_klass());
+    if (_filtering) {
+      TempNewSymbol name = SymbolTable::new_symbol("transformCache");
+      Symbol* sig = vmSymbols::object_signature();
+      fieldDescriptor fd;
+      Klass* k = InstanceKlass::cast(_referencing_obj->klass())->find_field(name, sig, &fd);
+      assert(k != nullptr, "sanity");
+      assert(fd.offset() > 0, "sanity");
+      _filtering_addr = cast_from_oop<address>(_referencing_obj) + fd.offset();
+    }
   }
   ~WalkOopAndArchiveClosure() {
     _current = _last;
@@ -1121,9 +1184,9 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
       // FIXME: this is hard coded to filter out LambdaForm.transformCache
       // FIXME: handle other cases as well.
       // FIXME: for LambdaForm.transformCache, change from SoftReference to direct reference.
-      if (_filtering && obj->klass()->is_subclass_of(vmClasses::Reference_klass())) {
-        tty->print_cr("Filtering out LambdaForm.transformCache");
-        obj->print_on(tty);
+      if (_filtering && ((address)p) == _filtering_addr) {
+        //tty->print_cr("Filtering out LambdaForm.transformCache");
+        //obj->print_on(tty);
         RawAccess<>::oop_store(p, nullptr);
         return;
       }
@@ -1449,7 +1512,8 @@ void HeapShared::check_default_subgraph_classes() {
               "default subgraph can have only these objects");
 #endif
 
-    if (!subgraph_k->name()->equals("java/lang/Class") &&
+    if (subgraph_k->is_instance_klass() &&
+        !subgraph_k->name()->equals("java/lang/Class") &&
         !subgraph_k->name()->equals("java/lang/String") &&
         !subgraph_k->name()->equals("[Ljava/lang/Object;") &&
         !subgraph_k->name()->equals("[C") &&
