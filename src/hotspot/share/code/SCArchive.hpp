@@ -270,7 +270,7 @@ private:
   uint compile_id() const { return _compile_id; }
   uint comp_level() const { return _comp_level; }
 
-  bool _preload;             // Preloading code before method execution 
+  bool _preload;             // Preloading code before method execution
   bool _lookup_failed;       // Failed to lookup for info (skip only this code load)
   void set_lookup_failed()     { _lookup_failed = true; }
   void clear_lookup_failed()   { _lookup_failed = false; }

@@ -159,7 +159,7 @@ bool SCArchive::gen_preload_code(ciMethod* m, int entry_bci) {
 }
 
 void SCArchive::close() {
-  if (_archive != nullptr) {
+  if (is_on()) {
     delete _archive; // Free memory
     _archive = nullptr;
   }
@@ -167,13 +167,13 @@ void SCArchive::close() {
 
 void SCArchive::invalidate(SCAEntry* entry) {
   // This could be concurent execution
-  if (entry != nullptr && _archive != nullptr) { // Request could come after archive is closed.
+  if (entry != nullptr && is_on()) { // Request could come after archive is closed.
     _archive->invalidate(entry);
   }
 }
 
 bool SCArchive::is_loaded(SCAEntry* entry) {
-  if (_archive != nullptr && _archive->archive_buffer() != nullptr) {
+  if (is_on() && _archive->archive_buffer() != nullptr) {
     return (uint)((char*)entry - _archive->archive_buffer()) < _archive->load_size();
   }
   return false;
@@ -193,7 +193,7 @@ SCAEntry* SCArchive::find_code_entry(const methodHandle& method, uint comp_level
     return nullptr; // Level 1, 2, 4 only
   }
   TraceTime t1("SC total find code time", &_t_totalFind, CITime, false);
-  if (_archive != nullptr && _archive->archive_buffer() != nullptr) {
+  if (is_on() && _archive->archive_buffer() != nullptr) {
     MethodData* md = method->method_data();
     uint decomp = (md == nullptr) ? 0 : md->decompile_count();
 
@@ -219,7 +219,7 @@ SCAEntry* SCArchive::find_code_entry(const methodHandle& method, uint comp_level
 }
 
 void SCArchive::add_C_string(const char* str) {
-  if (_archive != nullptr && _archive->for_write()) {
+  if (is_on_for_write()) {
     _archive->add_C_string(str);
   }
 }
@@ -340,7 +340,7 @@ SCAFile::SCAFile(const char* archive_path, int fd, uint load_size) {
     load_strings();
   }
   if (_for_write) {
-    _gen_preload_code = _use_meta_ptrs && StorePreloadCode; 
+    _gen_preload_code = _use_meta_ptrs && StorePreloadCode;
 
     _C_store_buffer = NEW_C_HEAP_ARRAY(char, ReservedSharedCodeSize + DATA_ALIGNMENT, mtCode);
     _store_buffer = align_up(_C_store_buffer, DATA_ALIGNMENT);
@@ -428,16 +428,15 @@ bool SCAFile::for_read()  const { return _for_read  && !_failed; }
 bool SCAFile::for_write() const { return _for_write && !_failed; }
 
 SCAFile* SCAFile::open_for_read() {
-  SCAFile* archive = SCArchive::archive();
-  if (archive != nullptr && archive->for_read() && !archive->closing()) {
-    return archive;
+  if (SCArchive::is_on_for_read()) {
+    return SCArchive::archive();
   }
   return nullptr;
 }
 
 SCAFile* SCAFile::open_for_write() {
-  SCAFile* archive = SCArchive::archive();
-  if (archive != nullptr && archive->for_write() && !archive->closing()) {
+  if (SCArchive::is_on_for_write()) {
+    SCAFile* archive = SCArchive::archive();
     archive->clear_lookup_failed(); // Reset bit
     return archive;
   }
@@ -541,9 +540,17 @@ void SCAFile::preload_code(JavaThread* thread) {
     for (uint i = 0; i < preload_entries_count; i++) {
       uint index = entries_index[i];
       SCAEntry* entry = &(_load_entries[index]);
+      if (entry->not_entrant()) {
+        continue;
+      }
       Method* m = entry->method();
       assert(((m != nullptr) && MetaspaceShared::is_in_shared_metaspace((address)m)), "sanity");
       methodHandle mh(thread, m);
+      if (mh->sca_entry() != nullptr) {
+        // Second C2 compilation of the same method could happen for
+        // different reasons without marking first entry as not entrant.
+        continue; // Keep old entry to avoid issues
+      }
       mh->set_sca_entry(entry);
       CompileBroker::compile_method(mh, InvocationEntryBci, CompLevel_full_optimization, methodHandle(), 0, false, CompileTask::Reason_Preload, thread);
     }
@@ -662,7 +669,7 @@ void SCAFile::invalidate(SCAEntry* entry) {
     uint decomp  = entry->decompile();
     bool clinit_brs = entry->has_clinit_barriers();
     log_info(sca, nmethod)("Invalidated entry for '%s' (comp_id %d, comp_level %d, decomp: %d, hash: " UINT32_FORMAT_X_0 "%s)",
-                           name, comp_id, level, decomp, entry->id(), (clinit_brs ? ", has clinit barriers" : ""));  
+                           name, comp_id, level, decomp, entry->id(), (clinit_brs ? ", has clinit barriers" : ""));
   }
   if (entry->next() != nullptr) {
     entry = entry->next();
