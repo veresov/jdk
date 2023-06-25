@@ -98,18 +98,18 @@ void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
     CompLevel cur_level = static_cast<CompLevel>(m->highest_comp_level());
     CompLevel next_level = trained_transition(m, cur_level, THREAD);
     if ((next_level != cur_level || recompile) && can_be_compiled(m, next_level) && !CompileBroker::compilation_is_in_queue(m)) {
-      bool has_unsatisfied_deps = false;
+      bool requires_online_compilation = false;
       CompileTrainingData* ctd = mtd->last_toplevel_compile(next_level);
       if (ctd != nullptr) {
-        has_unsatisfied_deps = (ctd->init_deps_left() > 0);
+        requires_online_compilation = (ctd->init_deps_left() > 0);
       }
-      if (has_unsatisfied_deps && recompile) {
+      if (requires_online_compilation && recompile) {
         return;
       }
       if (PrintTieredEvents) {
         print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, next_level);
       }
-      CompileBroker::compile_method(m, InvocationEntryBci, next_level, methodHandle(), 0, has_unsatisfied_deps, CompileTask::Reason_MustBeCompiled, THREAD);
+      CompileBroker::compile_method(m, InvocationEntryBci, next_level, methodHandle(), 0, requires_online_compilation, CompileTask::Reason_MustBeCompiled, THREAD);
       if (HAS_PENDING_EXCEPTION) {
         CLEAR_PENDING_EXCEPTION;
       }
@@ -917,17 +917,17 @@ void CompilationPolicy::compile(const methodHandle& mh, int bci, CompLevel level
     }
     int hot_count = (bci == InvocationEntryBci) ? mh->invocation_count() : mh->backedge_count();
     update_rate(nanos_to_millis(os::javaTimeNanos()), mh);
-    bool has_unsatisfied_deps = false;
+    bool requires_online_compilation = false;
     if (TrainingData::have_data()) {
       MethodTrainingData* mtd = MethodTrainingData::find(mh);
       if (mtd != nullptr) {
         CompileTrainingData* ctd = mtd->last_toplevel_compile(level);
         if (ctd != nullptr) {
-          has_unsatisfied_deps = (ctd->init_deps_left() > 0);
+          requires_online_compilation = (ctd->init_deps_left() > 0);
         }
       }
     }
-    CompileBroker::compile_method(mh, bci, level, mh, hot_count, has_unsatisfied_deps, CompileTask::Reason_Tiered, THREAD);
+    CompileBroker::compile_method(mh, bci, level, mh, hot_count, requires_online_compilation, CompileTask::Reason_Tiered, THREAD);
   }
 }
 

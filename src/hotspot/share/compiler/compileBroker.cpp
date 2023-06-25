@@ -1047,7 +1047,7 @@ void CompileBroker::init_compiler_threads() {
     // Create a name for our thread.
     os::snprintf_checked(name_buffer, sizeof(name_buffer), "C2 CompilerThread%d", i);
     Handle thread_oop = create_thread_oop(name_buffer, CHECK);
-    jobject thread_handle = JNIHandles::make_global(thread_oop); 
+    jobject thread_handle = JNIHandles::make_global(thread_oop);
     _compiler3_objects[i] = thread_handle;
     _compiler3_logs[i] = nullptr;
 
@@ -1231,7 +1231,7 @@ void CompileBroker::compile_method_base(const methodHandle& method,
                                         const methodHandle& hot_method,
                                         int hot_count,
                                         CompileTask::CompileReason compile_reason,
-                                        bool has_unsatisfied_deps,
+                                        bool requires_online_compilation,
                                         bool blocking,
                                         Thread* thread) {
   guarantee(!method->is_abstract(), "cannot compile abstract methods");
@@ -1410,7 +1410,7 @@ void CompileBroker::compile_method_base(const methodHandle& method,
                                compile_id, method,
                                osr_bci, comp_level,
                                hot_method, hot_count, compile_reason,
-                               has_unsatisfied_deps, blocking);
+                               requires_online_compilation, blocking);
   }
 
   if (blocking) {
@@ -1421,7 +1421,7 @@ void CompileBroker::compile_method_base(const methodHandle& method,
 nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
                                        int comp_level,
                                        const methodHandle& hot_method, int hot_count,
-                                       bool has_unsatisfied_deps,
+                                       bool requires_online_compilation,
                                        CompileTask::CompileReason compile_reason,
                                        TRAPS) {
   // Do nothing if compilebroker is not initialized or compiles are submitted on level none
@@ -1441,7 +1441,7 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
 
   DirectiveSet* directive = DirectivesStack::getMatchingDirective(method, comp);
   // CompileBroker::compile_method can trap and can have pending async exception.
-  nmethod* nm = CompileBroker::compile_method(method, osr_bci, comp_level, hot_method, hot_count, has_unsatisfied_deps, compile_reason, directive, THREAD);
+  nmethod* nm = CompileBroker::compile_method(method, osr_bci, comp_level, hot_method, hot_count, requires_online_compilation, compile_reason, directive, THREAD);
   DirectivesStack::release(directive);
   return nm;
 }
@@ -1449,7 +1449,7 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
 nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
                                          int comp_level,
                                          const methodHandle& hot_method, int hot_count,
-                                         bool has_unsatisfied_deps,
+                                         bool requires_online_compilation,
                                          CompileTask::CompileReason compile_reason,
                                          DirectiveSet* directive,
                                          TRAPS) {
@@ -1574,7 +1574,7 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
       return nullptr;
     }
     bool is_blocking = !directive->BackgroundCompilationOption || ReplayCompiles;
-    compile_method_base(method, osr_bci, comp_level, hot_method, hot_count, compile_reason, has_unsatisfied_deps, is_blocking, THREAD);
+    compile_method_base(method, osr_bci, comp_level, hot_method, hot_count, compile_reason, requires_online_compilation, is_blocking, THREAD);
   }
 
   // return requested nmethod
@@ -1729,12 +1729,12 @@ CompileTask* CompileBroker::create_compile_task(CompileQueue*       queue,
                                                 const methodHandle& hot_method,
                                                 int                 hot_count,
                                                 CompileTask::CompileReason compile_reason,
-                                                bool                has_unsatisfied_deps,
+                                                bool                requires_online_compilation,
                                                 bool                blocking) {
   CompileTask* new_task = CompileTask::allocate();
   new_task->initialize(compile_id, method, osr_bci, comp_level,
                        hot_method, hot_count, compile_reason,
-                       has_unsatisfied_deps, blocking);
+                       requires_online_compilation, blocking);
   if (new_task->is_sca() && (_sc_count > 0)) {
     // Put it on SC queue
     queue = is_c1_compile(comp_level) ? _sc1_compile_queue : _sc2_compile_queue;
