@@ -3043,6 +3043,10 @@ jint Arguments::finalize_vm_init_args(bool patch_mod_javabase) {
     // run to another which resulting in non-determinstic CDS archives.
     // Disable UseStringDeduplication while dumping CDS archive.
     UseStringDeduplication = false;
+
+    if (!add_property("java.lang.invoke.MethodHandle.NO_SOFT_CACHE=true")) {
+      return JNI_ENOMEM;
+    }
   }
 
   // RecordDynamicDumpInfo is not compatible with ArchiveClassesAtExit

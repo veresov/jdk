@@ -68,7 +68,7 @@ class Invokers {
                     continue;
                 }
             }
-            invokers[i] = null;
+            //invokers[i] = null;
         }
     }
 

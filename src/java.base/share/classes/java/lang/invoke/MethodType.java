@@ -1631,6 +1631,9 @@ s.writeObject(this.parameterArray());
         ArrayList<MethodType> archived = new ArrayList<>();
 
         boolean canArchive(Class<?> c) {
+            return true; // FIXME -- only archive types that are preloaded by ClassPrelinker.
+
+/*
             if (c == String.class || c == Object.class || c.isPrimitive()
                 || c == DelegatingMethodHandle.class
                 || c == DirectMethodHandle.class
@@ -1647,7 +1650,7 @@ s.writeObject(this.parameterArray());
                 return true;
             } else {
                 return false;
-            }
+            } */
         }
 
         boolean canArchive(Class<?>[] ptypes) {
@@ -1669,15 +1672,16 @@ s.writeObject(this.parameterArray());
             if (cleanedTypes.contains(t)) {
                 return t;
             }
-
+/*
             if (t.wrapAlt != null) { // What is this??
                 if (DEBUG2) {
                     System.out.print("DROP 1: ");
+                    System.out.println(t);
                     droppedTypes.add(t);
                 }
                 return null;
             }
-
+*/
             //if (t.invokers != null) { // Hmmmm ...
             //    droppedTypes.add(t);
             //    return null;
@@ -1691,7 +1695,7 @@ s.writeObject(this.parameterArray());
                 droppedTypes.add(t);
                 return null;
             }
-
+/*
             if (t != t.form.erasedType && clean(t.form.erasedType) == null) {
                 if (DEBUG2) {
                     System.out.print("DROP 3: ");
@@ -1707,13 +1711,14 @@ s.writeObject(this.parameterArray());
                 }
                 droppedTypes.add(t);
                 return null;
-            }
+            }*/
 
+/*
             t.form.cleanMethodTypeForm();
             if (t.invokers != null) {
                 t.invokers.cleanInvokers();
             }
-
+*/
             archived.add(t);
             cleanedTypes.add(t);
             return t;
@@ -1728,7 +1733,7 @@ s.writeObject(this.parameterArray());
             MethodType t = archiver.clean(objectOnlyTypes[i]);
             if (t != null) {
                 if (DEBUG2) {
-                    System.out.print("archived 1: " + t + ", " + t.hashCode());
+                    System.out.println("archived 1: " + t + ", " + t.hashCode());
                 }
                 objectOnlyTypesCopy[i] = t;
             }

@@ -237,6 +237,7 @@ public class PrelinkedStringConcat {
                        "-XX:ArchiveInvokeDynamicFilter=ConcatA",
                        "-XX:ArchiveInvokeDynamicFilter=ConcatB",
                        "-cp", appJar,
+                       "-Xlog:cds+heap",
                        "-Xlog:cds,cds+class=debug")
             .setArchiveName(archiveName);
         output = CDSTestUtils.createArchiveAndCheck(opts);

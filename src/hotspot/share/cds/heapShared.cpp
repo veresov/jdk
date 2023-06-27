@@ -1054,6 +1054,58 @@ HeapShared::resolve_or_init_classes_for_subgraph_of(Klass* k, bool do_init, TRAP
       log_info(cds, heap)("%s subgraph %s ", do_init ? "init" : "resolve", k->external_name());
     }
 
+    if (do_init && k->name() == vmSymbols::java_lang_invoke_MethodType()) {
+      // FIXME - hack.
+      //
+      // (The real fix would be to archive the MethodType class in its already initialized state. That
+      //  way we don't need to re-execute the <clinit> methods)
+      //
+      // We need to do this to break a cycle in the way the archived subgraphs are restored. Without this block, we
+      // have the following sequence
+      //
+      // MethodType.<clinit>()
+      //  -> CDS.initializeFromArchive(MethodType.class);
+      //   -> (this "if" block)
+      //   -> resolve_or_init("MethodType", ...); // this does nothing because MethodType.<clinit> is already executing
+      //   -> resolve_or_init("DirectMethodHandle", ...); // this class is in record->subgraph_object_klasses();
+      //      -> DirectMethodHandle.<clinit>()
+      //          -> MethodType.methodType()
+      //             -> MethodType.genericMethodType()
+      //               -> aaload MethodType.objectOnlyTypes[n]; <<<< here
+      //
+      // We need to restore MethodType.objectOnlyTypes here, or else the above aaload will
+      // get an NPE.
+      Array<int>* entry_field_records = record->entry_field_records();
+      assert(entry_field_records != nullptr, "must be");
+      int efr_len = entry_field_records->length();
+      assert(efr_len == 2, "must be");
+      int root_index = entry_field_records->at(1);
+      oop obj = get_root(root_index, /*clear=*/false);
+      if (obj != nullptr) {
+        objArrayOop archivedObjects = objArrayOop(obj);
+        InstanceKlass* ik = InstanceKlass::cast(k);
+        oop m = ik->java_mirror();
+
+        {
+          fieldDescriptor fd;
+          TempNewSymbol name = SymbolTable::new_symbol("archivedMethodTypes");
+          TempNewSymbol sig  = SymbolTable::new_symbol("Ljava/util/HashMap;");
+          Klass* result = ik->find_field(name, sig, true, &fd);
+          assert(result != nullptr, "must be");
+          m->obj_field_put(fd.offset(), archivedObjects->obj_at(0));
+        }
+
+        {
+          fieldDescriptor fd;
+          TempNewSymbol name = SymbolTable::new_symbol("objectOnlyTypes");
+          TempNewSymbol sig  = SymbolTable::new_symbol("[Ljava/lang/invoke/MethodType;");
+          Klass* result = ik->find_field(name, sig, true, &fd);
+          assert(result != nullptr, "must be");
+          m->obj_field_put(fd.offset(), archivedObjects->obj_at(1));
+        }
+      }
+    }
+
     resolve_or_init(k, do_init, CHECK_NULL);
 
     // Load/link/initialize the klasses of the objects in the subgraph.
@@ -1076,7 +1128,10 @@ HeapShared::resolve_or_init_classes_for_subgraph_of(Klass* k, bool do_init, TRAP
 void HeapShared::resolve_or_init(const char* klass_name, bool do_init, TRAPS) {
   TempNewSymbol klass_name_sym =  SymbolTable::new_symbol(klass_name);
   InstanceKlass* k = SystemDictionaryShared::find_builtin_class(klass_name_sym);
-  assert(k != NULL && k->is_shared_boot_class(), "sanity");
+  if (k == nullptr) {
+    return;
+  }
+  assert(k->is_shared_boot_class(), "sanity");
   resolve_or_init(k, false, CHECK);
   if (do_init) {
     resolve_or_init(k, true, CHECK);
@@ -1196,10 +1251,10 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
       // FIXME: handle other cases as well.
       // FIXME: for LambdaForm.transformCache, change from SoftReference to direct reference.
       if (_filtering && ((address)p) == _filtering_addr) {
-        //tty->print_cr("Filtering out LambdaForm.transformCache");
+        //tty->print_cr("Found LambdaForm.transformCache");
         //obj->print_on(tty);
-        RawAccess<>::oop_store(p, nullptr);
-        return;
+        //RawAccess<>::oop_store(p, nullptr);
+        //return;
       }
       if (!_record_klasses_only && log_is_enabled(Debug, cds, heap)) {
         ResourceMark rm;

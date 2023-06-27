@@ -30,6 +30,7 @@ import sun.invoke.util.Wrapper;
 import java.lang.ref.SoftReference;
 
 import static java.lang.invoke.MethodHandleStatics.newIllegalArgumentException;
+import static java.lang.invoke.MethodHandleStatics.NO_SOFT_CACHE;
 
 /**
  * Shared information for a group of method types, which differ
@@ -51,7 +52,7 @@ final class MethodTypeForm {
     final MethodType basicType;         // the canonical erasure, with primitives simplified
 
     // Cached adapter information:
-    final SoftReference<MethodHandle>[] methodHandles;
+    private final Object[] methodHandles;
 
     // Indexes into methodHandles:
     static final int
@@ -61,7 +62,7 @@ final class MethodTypeForm {
             MH_LIMIT          =  3;
 
     // Cached lambda form information, for basic types only:
-    final SoftReference<LambdaForm>[] lambdaForms;
+    private final Object[] lambdaForms;
 
     // Indexes into lambdaForms:
     static final int
@@ -100,7 +101,7 @@ final class MethodTypeForm {
                 //if (methodHandles[i] != null) {
                 //    System.out.println(i + "=: " + methodHandles[i].get());
                 //}
-                methodHandles[i] = null;
+                //methodHandles[i] = null;
             }
         }
         if (lambdaForms != null) {
@@ -108,7 +109,7 @@ final class MethodTypeForm {
                 //if (lambdaForms[i] != null) {
                 //    System.out.println(i + "=: " + lambdaForms[i].get());
                 //}
-                lambdaForms[i] = null;
+                //lambdaForms[i] = null;
             }
         }
     }
@@ -129,39 +130,59 @@ final class MethodTypeForm {
         return basicType;
     }
 
+    @SuppressWarnings({"rawtypes", "unchecked"})
     public MethodHandle cachedMethodHandle(int which) {
-        SoftReference<MethodHandle> entry = methodHandles[which];
-        return (entry != null) ? entry.get() : null;
+        Object entry = methodHandles[which];
+        if (entry == null) {
+            return null;
+        } else if (entry instanceof MethodHandle) {
+            //System.out.println("NO_SOFT MH: load");
+            return (MethodHandle) entry;
+        } else {
+            return ((SoftReference<MethodHandle>)entry).get();
+        }
     }
 
     public synchronized MethodHandle setCachedMethodHandle(int which, MethodHandle mh) {
         // Simulate a CAS, to avoid racy duplication of results.
-        SoftReference<MethodHandle> entry = methodHandles[which];
-        if (entry != null) {
-            MethodHandle prev = entry.get();
-            if (prev != null) {
-                return prev;
-            }
+        MethodHandle prev = cachedMethodHandle(which);
+        if (prev != null) {
+            return prev;
         }
-        methodHandles[which] = new SoftReference<>(mh);
+        if (NO_SOFT_CACHE) {
+            //System.out.println("NO_SOFT MH: store");
+            methodHandles[which] = mh;
+        } else {
+            methodHandles[which] = new SoftReference<>(mh);
+        }
         return mh;
     }
 
+    @SuppressWarnings({"rawtypes", "unchecked"})
     public LambdaForm cachedLambdaForm(int which) {
-        SoftReference<LambdaForm> entry = lambdaForms[which];
-        return (entry != null) ? entry.get() : null;
+        Object entry = lambdaForms[which];
+        if (entry == null) {
+            return null;
+        } else if (entry instanceof LambdaForm) {
+            //System.out.println("NO_SOFT LF: load");
+            return (LambdaForm) entry;
+        } else {
+            return ((SoftReference<LambdaForm>)entry).get();
+        }
     }
 
     public synchronized LambdaForm setCachedLambdaForm(int which, LambdaForm form) {
         // Simulate a CAS, to avoid racy duplication of results.
-        SoftReference<LambdaForm> entry = lambdaForms[which];
-        if (entry != null) {
-            LambdaForm prev = entry.get();
-            if (prev != null) {
-                return prev;
-            }
+        LambdaForm prev = cachedLambdaForm(which);
+        if (prev != null) {
+            return prev;
         }
-        lambdaForms[which] = new SoftReference<>(form);
+        if (NO_SOFT_CACHE) {
+            //System.out.println("NO_SOFT LF: store");
+            lambdaForms[which] = form;
+        } else {
+            lambdaForms[which] = new SoftReference<>(form);
+        }
         return form;
     }
 
@@ -211,8 +232,8 @@ final class MethodTypeForm {
 
             this.primitiveCount = primitiveCount;
             this.parameterSlotCount = (short)pslotCount;
-            this.lambdaForms   = new SoftReference[LF_LIMIT];
-            this.methodHandles = new SoftReference[MH_LIMIT];
+            this.lambdaForms   = new Object[LF_LIMIT];
+            this.methodHandles = new Object[MH_LIMIT];
         } else {
             this.basicType = MethodType.methodType(basicReturnType, basicPtypes, true);
             // fill in rest of data from the basic type:
