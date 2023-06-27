@@ -145,6 +145,10 @@ class MethodType
     @java.io.Serial
     private static final long serialVersionUID = 292L;  // {rtype, {ptype...}}
 
+    private static final boolean DUMP_SET = !"false".equals(sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.dumpset"));
+    private static final boolean DEBUG2   = (sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.debug2") != null);
+    private static final boolean USE_ARCHIVE   = !"false".equals(sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.use.archive"));
+
     // The rtype and ptypes fields define the structural identity of the method type:
     private final @Stable Class<?>   rtype;
     private final @Stable Class<?>[] ptypes;
@@ -248,6 +252,13 @@ class MethodType
         if (archivedObjects != null) {
             archivedMethodTypes = (HashMap<MethodType,MethodType>)archivedObjects[0];
             objectOnlyTypes = (MethodType[])archivedObjects[1];
+
+            if (DEBUG2) {
+                System.out.print("archivedMethodTypes = ");
+                System.out.println(archivedMethodTypes);
+                System.out.print("archivedMethodTypes = ");
+                System.out.println(objectOnlyTypes);
+            }
         } else {
             objectOnlyTypes = new MethodType[20];
         }
@@ -409,15 +420,34 @@ class MethodType
      * @throws IllegalArgumentException if any element of {@code ptypes} is {@code void.class}
      * @return the unique method type of the desired structure
      */
+
+    private static boolean first = true;
     private static MethodType makeImpl(Class<?> rtype, Class<?>[] ptypes, boolean trusted) {
         if (ptypes.length == 0) {
             ptypes = NO_PTYPES; trusted = true;
         }
         MethodType primordialMT = new MethodType(rtype, ptypes);
         if (USE_ARCHIVE && archivedMethodTypes != null) {
+            if (first && DEBUG2) {
+                first = false;
+                System.out.print("Checking: ");
+                System.out.print(primordialMT);
+                System.out.print(", ");
+                System.out.print(primordialMT.hashCode());
+                System.out.println();
+
+                System.out.print("MethodType hashCode: ");
+                System.out.println(MethodType.class.hashCode());
+
+                System.out.print("MethodType module hashCode: ");
+                System.out.println(MethodType.class.getModule().hashCode());
+            }
             MethodType mt = archivedMethodTypes.get(primordialMT);
             if (mt != null) {
-                if (DEBUG2) {System.out.println("GOT");}
+                if (DEBUG2) {
+                    System.out.print("GOT ARCHIVED: ");
+                    System.out.println(mt);
+                }
                 return mt;
             }
         }
@@ -438,6 +468,11 @@ class MethodType
             mt = new MethodType(rtype, ptypes);
         }
         mt.form = MethodTypeForm.findForm(mt);
+
+        if (DEBUG2) {
+            System.out.print("CREATED: ");
+            System.out.println(mt);
+        }
         return internTable.add(mt);
     }
 
@@ -1636,7 +1671,10 @@ s.writeObject(this.parameterArray());
             }
 
             if (t.wrapAlt != null) { // What is this??
-                droppedTypes.add(t);
+                if (DEBUG2) {
+                    System.out.print("DROP 1: ");
+                    droppedTypes.add(t);
+                }
                 return null;
             }
 
@@ -1646,18 +1684,27 @@ s.writeObject(this.parameterArray());
             //}
 
             if (!canArchive(t.rtype) || !canArchive(t.ptypes)) {
-                //System.out.println(t);
+                if (DEBUG2) {
+                    System.out.print("DROP 2: ");
+                    System.out.println(t);
+                }
                 droppedTypes.add(t);
                 return null;
             }
 
             if (t != t.form.erasedType && clean(t.form.erasedType) == null) {
-                //System.out.println(t);
+                if (DEBUG2) {
+                    System.out.print("DROP 3: ");
+                    System.out.println(t);
+                }
                 droppedTypes.add(t);
                 return null;
             }
             if (t != t.form.basicType && clean(t.form.basicType) == null) {
-                //System.out.println(t);
+                if (DEBUG2) {
+                    System.out.print("DROP 4: ");
+                    System.out.println(t);
+                }
                 droppedTypes.add(t);
                 return null;
             }
@@ -1680,7 +1727,9 @@ s.writeObject(this.parameterArray());
         for (int i = 0; i < objectOnlyTypes.length; i++) {
             MethodType t = archiver.clean(objectOnlyTypes[i]);
             if (t != null) {
-                //System.out.println("archived: " + t.toStringFull());
+                if (DEBUG2) {
+                    System.out.print("archived 1: " + t + ", " + t.hashCode());
+                }
                 objectOnlyTypesCopy[i] = t;
             }
         }
@@ -1690,18 +1739,21 @@ s.writeObject(this.parameterArray());
         archivedObjects[1] = objectOnlyTypesCopy;
 
         for (var t : archiver.archived) {
-            //if (DEBUG2) {
-            //    System.out.println("archived: " +  t.toStringFull());
-            //}
+            if (DEBUG2) {
+                System.out.println("archived 2: " + t + ", " + t.hashCode());
+            }
         }
 
         DirectMethodHandle.dumpSharedArchive();
         LambdaForm.NamedFunction.dumpSharedArchive();
+
+        if (DEBUG2) {
+            System.out.println("MethodType hashCode: " + MethodType.class.hashCode());
+            System.out.print("MethodType module hashCode: ");
+            System.out.println(MethodType.class.getModule().hashCode());
+        }
     }
 
-    static final boolean DUMP_SET = !"false".equals(sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.dumpset"));
-    static final boolean DEBUG2   = (sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.debug2") != null);
-    static final boolean USE_ARCHIVE   = !"false".equals(sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.use.archive"));
     static {
         String s = sun.security.action.GetPropertyAction.privilegedGetProperty("ioi.debug");
         if (s != null) {

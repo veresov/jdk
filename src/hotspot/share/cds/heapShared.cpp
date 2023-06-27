@@ -473,6 +473,15 @@ void HeapShared::copy_preinitialized_mirror(Klass* orig_k, oop orig_mirror, oop 
   }
 }
 
+static void copy_java_mirror_hashcode(oop orig_mirror, oop scratch_m) {
+  int src_hash = orig_mirror->identity_hash();
+  scratch_m->set_mark(markWord::prototype().copy_set_hash(src_hash));
+  assert(scratch_m->mark().is_unlocked(), "sanity");
+
+  DEBUG_ONLY(int archived_hash = scratch_m->identity_hash());
+  assert(src_hash == archived_hash, "Java mirror wrong hash: original %x, scratch %x", src_hash, archived_hash);
+}
+
 void HeapShared::archive_java_mirrors() {
   for (int i = T_BOOLEAN; i < T_VOID+1; i++) {
     BasicType bt = (BasicType)i;
@@ -480,6 +489,7 @@ void HeapShared::archive_java_mirrors() {
       oop orig_mirror = Universe::java_mirror(bt);
       oop m = _scratch_basic_type_mirrors[i].resolve();
       assert(m != nullptr, "sanity");
+      copy_java_mirror_hashcode(orig_mirror, m);
       bool success = archive_reachable_objects_from(1, _default_subgraph_info, orig_mirror);
       assert(success, "sanity");
 
@@ -498,6 +508,7 @@ void HeapShared::archive_java_mirrors() {
     oop orig_mirror = orig_k->java_mirror();
     oop m = scratch_java_mirror(orig_k);
     if (m != nullptr) {
+      copy_java_mirror_hashcode(orig_mirror, m);
       copy_preinitialized_mirror(orig_k, orig_mirror, m);
       Klass* buffered_k = ArchiveBuilder::get_buffered_klass(orig_k);
       bool success = archive_reachable_objects_from(1, _default_subgraph_info, orig_mirror);

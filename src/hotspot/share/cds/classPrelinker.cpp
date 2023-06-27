@@ -361,11 +361,15 @@ void ClassPrelinker::preresolve_field_and_method_cp_entries(JavaThread* current,
       bcs.next();
       Bytecodes::Code bc = bcs.raw_code();
       switch (bc) {
+      case Bytecodes::_invokehandle:
+        if (!ArchiveInvokeDynamic) {
+          break;
+        }
+        // fall-through
       case Bytecodes::_getfield:
       case Bytecodes::_putfield:
       case Bytecodes::_invokespecial:
       case Bytecodes::_invokevirtual:
-      //case Bytecodes::_invokehandle:
       case Bytecodes::_invokestatic:
         maybe_resolve_fmi_ref(ik, m, bc, bcs.get_index_u2_cpcache(), preresolve_list, THREAD);
         if (HAS_PENDING_EXCEPTION) {

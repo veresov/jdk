@@ -307,6 +307,15 @@ objArrayOop ConstantPool::prepare_resolved_references_for_archiving() {
       }
     }
 
+    if (cache() != nullptr && ArchiveInvokeDynamic) {
+      for (int i = 0; i < cache()->length(); i++) {
+        ConstantPoolCacheEntry* cpce = cache()->entry_at(i);
+        if (can_archive_invokehandle(cpce) && cpce->has_appendix()) {
+          keep_resolved_refs.at_put(cpce->f2_as_index(), true);
+        }
+      }
+    }
+
     Array<u2>* ref_map = reference_map();
     int ref_map_len = ref_map == nullptr ? 0 : ref_map->length();
     for (int i = 0; i < rr_len; i++) {
@@ -530,6 +539,24 @@ bool ConstantPool::maybe_archive_resolved_klass_at(int cp_index) {
   return false;
 }
 
+bool ConstantPool::can_archive_invokehandle(ConstantPoolCacheEntry* cpce) {
+  int cp_index = cpce->constant_pool_index();
+
+  if (!cpce->is_resolved(Bytecodes::_invokehandle)) {
+    return false;
+  }
+
+  int klass_cp_index = uncached_klass_ref_index_at(cp_index);
+  Klass* resolved_klass = resolved_klass_at(klass_cp_index);
+  if (!resolved_klass->is_instance_klass()) {
+    // FIXME: can this ever happen
+    return false;
+  }
+  // FIXME -- any class referenced by the archived CP entries should be added to ArchiveBuilder::classes, or should be
+  // filtered out.
+  return true;
+}
+
 bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index, int cp_tag) {
   if (pool_holder()->is_hidden()) { // Not sure how to handle this yet ...
     if (pool_holder()->name()->starts_with("java/lang/invoke/LambdaForm$")) {
@@ -567,11 +594,12 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
     break;
   case JVM_CONSTANT_Methodref:
     if (cpce->is_resolved(Bytecodes::_invokehandle)) {
-      if (!ArchiveInvokeDynamic || true/*FIXME this doesn't work yet*/) {
+      if (!ArchiveInvokeDynamic) {
         // FIXME We don't dump the MethodType tables. This somehow breaks stuff.
         return false;
+      } else if (!can_archive_invokehandle(cpce)) {
+        return false;
       }
-
     } else if (cpce->is_resolved(Bytecodes::_invokestatic)) {
       // TODO: allow invokestatic on current class and supertypes??
       if (!ArchiveInvokeDynamic) {

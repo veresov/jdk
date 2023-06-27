@@ -3083,6 +3083,10 @@ jint Arguments::finalize_vm_init_args(bool patch_mod_javabase) {
       log_info(cds)("All non-system classes will be verified (-Xverify:remote) during CDS dump time.");
     }
   }
+
+  if (DynamicDumpSharedSpaces) {
+    ArchiveInvokeDynamic = false; // requires heap dumping, which is not supported in dynamic archive.
+  }
 #endif
 
 #ifndef CAN_SHOW_REGISTERS_ON_ASSERT
