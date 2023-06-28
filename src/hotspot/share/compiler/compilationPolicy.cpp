@@ -54,12 +54,14 @@
 #include "jvmci/jvmci.hpp"
 #endif
 
-jlong CompilationPolicy::_start_time = 0;
+int64_t CompilationPolicy::_start_time = 0;
 int CompilationPolicy::_c1_count = 0;
 int CompilationPolicy::_c2_count = 0;
 int CompilationPolicy::_c3_count = 0;
 int CompilationPolicy::_sc_count = 0;
 double CompilationPolicy::_increase_threshold_at_ratio = 0;
+WeightedMovingAverage<> CompilationPolicy::_load_average;
+
 
 void compilationPolicy_init() {
   CompilationPolicy::initialize();
@@ -72,6 +74,16 @@ int CompilationPolicy::compiler_count(CompLevel comp_level) {
     return c2_count();
   }
   return 0;
+}
+
+void CompilationPolicy::sample_load_average() {
+  const int c2_queue_size = CompileBroker::queue_size(CompLevel_full_optimization);
+  _load_average.sample(c2_queue_size);
+/*
+  if (UseNewCode) {
+    tty->print_cr("load = %lf", _load_average.value());
+  }
+*/
 }
 
 // Returns true if m must be compiled before executing it
@@ -709,7 +721,7 @@ CompileTask* CompilationPolicy::select_task(CompileQueue* compile_queue, JavaThr
   CompileTask *max_task = nullptr;
   Method* max_method = nullptr;
 
-  jlong t = nanos_to_millis(os::javaTimeNanos());
+  int64_t t = nanos_to_millis(os::javaTimeNanos());
   // Iterate through the queue and find a method with a maximum rate.
   for (CompileTask* task = compile_queue->first(); task != nullptr;) {
     CompileTask* next_task = task->next();
@@ -932,7 +944,7 @@ void CompilationPolicy::compile(const methodHandle& mh, int bci, CompLevel level
 }
 
 // update_rate() is called from select_task() while holding a compile queue lock.
-void CompilationPolicy::update_rate(jlong t, const methodHandle& method) {
+void CompilationPolicy::update_rate(int64_t t, const methodHandle& method) {
   // Skip update if counters are absent.
   // Can't allocate them since we are holding compile queue lock.
   if (method->method_counters() == nullptr)  return;
@@ -946,8 +958,8 @@ void CompilationPolicy::update_rate(jlong t, const methodHandle& method) {
 
   // We don't update the rate if we've just came out of a safepoint.
   // delta_s is the time since last safepoint in milliseconds.
-  jlong delta_s = t - SafepointTracing::end_of_last_safepoint_ms();
-  jlong delta_t = t - (method->prev_time() != 0 ? method->prev_time() : start_time()); // milliseconds since the last measurement
+  int64_t delta_s = t - SafepointTracing::end_of_last_safepoint_ms();
+  int64_t delta_t = t - (method->prev_time() != 0 ? method->prev_time() : start_time()); // milliseconds since the last measurement
   // How many events were there since the last time?
   int event_count = method->invocation_count() + method->backedge_count();
   int delta_e = event_count - method->prev_event_count();
@@ -970,9 +982,9 @@ void CompilationPolicy::update_rate(jlong t, const methodHandle& method) {
 
 // Check if this method has been stale for a given number of milliseconds.
 // See select_task().
-bool CompilationPolicy::is_stale(jlong t, jlong timeout, const methodHandle& method) {
-  jlong delta_s = t - SafepointTracing::end_of_last_safepoint_ms();
-  jlong delta_t = t - method->prev_time();
+bool CompilationPolicy::is_stale(int64_t t, int64_t timeout, const methodHandle& method) {
+  int64_t delta_s = t - SafepointTracing::end_of_last_safepoint_ms();
+  int64_t delta_t = t - method->prev_time();
   if (delta_t > timeout && delta_s > timeout) {
     int event_count = method->invocation_count() + method->backedge_count();
     int delta_e = event_count - method->prev_event_count();

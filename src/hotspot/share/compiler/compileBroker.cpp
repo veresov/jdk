@@ -413,6 +413,8 @@ CompileTask* CompileQueue::get(CompilerThread* thread) {
   // case we perform code cache sweeps to free memory such that we can re-enable
   // compilation.
   while (_first == nullptr) {
+    CompilationPolicy::sample_load_average();
+
     // Exit loop if compilation is disabled forever
     if (CompileBroker::is_compilation_disabled_forever()) {
       return nullptr;
@@ -464,6 +466,7 @@ CompileTask* CompileQueue::get(CompilerThread* thread) {
     remove(task);
   }
   purge_stale_tasks(); // may temporarily release MCQ lock
+  CompilationPolicy::sample_load_average();
   return task;
 }
 
