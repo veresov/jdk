@@ -2747,8 +2747,13 @@ void SCAFile::print_on(outputStream* st) {
       int index = search_entries[2*i + 1];
       SCAEntry* entry = &(load_entries[index]);
 
-      st->print_cr("%4u: %4u: K%u L%u offset=%u decompile=%u size=%u code_size=%u%s",
-                i, index, entry->kind(), entry->comp_level(), entry->offset(), entry->decompile(), entry->size(), entry->code_size(), entry->not_entrant() ? " not_entrant" : "");
+      st->print_cr("%4u: %4u: K%u L%u offset=%u decompile=%u size=%u code_size=%u%s%s%s%s",
+                i, index, entry->kind(), entry->comp_level(), entry->offset(),
+                entry->decompile(), entry->size(), entry->code_size(),
+                entry->has_clinit_barriers() ? " has_clinit_barriers" : "",
+                entry->for_preload()         ? " for_preload"         : "",
+                entry->preloaded()           ? " preloaded"           : "",
+                entry->not_entrant()         ? " not_entrant"         : "");
       st->print_raw("         ");
       SCAReader reader(archive, entry, nullptr);
       reader.print_on(st);
