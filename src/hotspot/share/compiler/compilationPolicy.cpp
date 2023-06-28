@@ -1114,29 +1114,18 @@ CompLevel CompilationPolicy::trained_transition_from_none(const methodHandle& me
     return CompLevel_none;
   }
 
-  CompLevel initial_level = initial_compile_level(method);
-  // Stay in Interpreter if C1 is not available.
-  CompLevel full_profile_level    = CompLevel_none;
-  CompLevel limited_profile_level = CompLevel_none;
-  CompLevel simple_level          = CompLevel_none;
-
-  if (initial_level <= CompLevel_full_profile) {
-    full_profile_level    = CompLevel_full_profile;
-    limited_profile_level = CompLevel_limited_profile;
-    simple_level          = CompLevel_simple;
-  }
   bool training_has_profile = (mtd->final_profile() != nullptr);
   if (mtd->saw_level(CompLevel_full_optimization) && !training_has_profile) {
-    return full_profile_level;
+    return CompLevel_full_profile;
   }
 
   CompLevel highest_training_level = static_cast<CompLevel>(mtd->highest_top_level());
   switch (highest_training_level) {
     case CompLevel_limited_profile:
     case CompLevel_full_profile:
-      return limited_profile_level;
+      return CompLevel_limited_profile;
     case CompLevel_simple:
-      return simple_level;
+      return CompLevel_simple;
     case CompLevel_none:
       return CompLevel_none;
     default:
@@ -1148,12 +1137,12 @@ CompLevel CompilationPolicy::trained_transition_from_none(const methodHandle& me
   if (!training_has_profile) {
     // The method was a part of a level 4 compile, but don't have a stored profile,
     // we need to profile it.
-    return full_profile_level;
+    return CompLevel_full_profile;
   }
   const bool deopt = (static_cast<CompLevel>(method->highest_comp_level()) == CompLevel_full_optimization);
   // If we deopted, then we reprofile
   if (deopt && !is_method_profiled(method)) {
-    return full_profile_level;
+    return CompLevel_full_profile;
   }
 
   CompileTrainingData* ctd = mtd->last_toplevel_compile(CompLevel_full_optimization);
@@ -1167,7 +1156,7 @@ CompLevel CompilationPolicy::trained_transition_from_none(const methodHandle& me
   }
 
   // Otherwise go to level 2
-  return limited_profile_level;
+  return CompLevel_limited_profile;
 }
 
 
@@ -1239,6 +1228,13 @@ CompLevel CompilationPolicy::trained_transition(const methodHandle& method, Comp
       break;
   }
 
+  // We don't have any special strategies for the C2-only compilation modes, so just fix up the levels for now.
+  if (CompilationModeFlag::high_only_quick_internal() && CompLevel_simple < next_level && next_level < CompLevel_full_optimization) {
+    return CompLevel_none;
+  }
+  if (CompilationModeFlag::high_only() && next_level < CompLevel_full_optimization) {
+    return CompLevel_none;
+  }
   return next_level;
 }
 

@@ -1348,7 +1348,7 @@ void nmethod::unlink_from_method() {
 }
 
 // Invalidate code
-bool nmethod::make_not_entrant() {
+bool nmethod::make_not_entrant(bool make_not_entrant) {
   // This can be called while the system is already at a safepoint which is ok
   NoSafepointVerifier nsv;
 
@@ -1411,9 +1411,11 @@ bool nmethod::make_not_entrant() {
     // Remove nmethod from method.
     unlink_from_method();
 
-    // Invalidate shared code
-    SCArchive::invalidate(_sca_entry);
-
+    if (make_not_entrant) {
+      // Keep cached code if it was simply replaced
+      // otherwise make it not entrant too.
+      SCArchive::invalidate(_sca_entry);
+    }
   } // leave critical region under CompiledMethod_lock
 
 #if INCLUDE_JVMCI
@@ -1541,11 +1543,11 @@ void nmethod::flush_dependencies() {
 }
 
 bool nmethod::preloaded() const {
-  return (_sca_entry != nullptr) && (_sca_entry->preloaded());
+  return SCArchive::is_on() && (_sca_entry != nullptr) && (_sca_entry->preloaded());
 }
 
 bool nmethod::has_clinit_barriers() const {
-  return (_sca_entry != nullptr) && (_sca_entry->has_clinit_barriers());
+  return SCArchive::is_on() && (_sca_entry != nullptr) && (_sca_entry->has_clinit_barriers());
 }
 
 void nmethod::post_compiled_method(CompileTask* task) {
@@ -1557,8 +1559,8 @@ void nmethod::post_compiled_method(CompileTask* task) {
   // task->is_sca() is true only for loaded cached code.
   // nmethod::_sca_entry is set for loaded and stored cached code
   // to invalidate the entry when nmethod is deoptimized.
-  // There is option to not store in archive not entrant cached code.
-  guarantee((_sca_entry != nullptr) || !task->is_sca(), "sanity");
+  // There is option to not store in archive cached code.
+  guarantee((_sca_entry != nullptr) || !task->is_sca() || VerifySharedCode, "sanity");
 
   // JVMTI -- compiled method notification (must be done outside lock)
   post_compiled_method_load_event();
@@ -2528,7 +2530,7 @@ void nmethod::print(outputStream* st) const {
                                              p2i(jvmci_data_end()),
                                              jvmci_data_size());
 #endif
-  if (_sca_entry != nullptr) {
+  if (SCArchive::is_on() && _sca_entry != nullptr) {
     _sca_entry->print(st);
   }
 }
