@@ -1196,10 +1196,10 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
       // FIXME: handle other cases as well.
       // FIXME: for LambdaForm.transformCache, change from SoftReference to direct reference.
       if (_filtering && ((address)p) == _filtering_addr) {
-        //tty->print_cr("Filtering out LambdaForm.transformCache");
-        //obj->print_on(tty);
-        RawAccess<>::oop_store(p, nullptr);
-        return;
+        tty->print_cr("Found LambdaForm.transformCache");
+        obj->print_on(tty);
+        //RawAccess<>::oop_store(p, nullptr);
+        //return;
       }
       if (!_record_klasses_only && log_is_enabled(Debug, cds, heap)) {
         ResourceMark rm;

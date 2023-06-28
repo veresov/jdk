@@ -136,7 +136,7 @@ final class MethodTypeForm {
         if (entry == null) {
             return null;
         } else if (entry instanceof MethodHandle) {
-            System.out.println("NO_SOFT MH: load");
+            //System.out.println("NO_SOFT MH: load");
             return (MethodHandle) entry;
         } else {
             return ((SoftReference<MethodHandle>)entry).get();
@@ -150,7 +150,7 @@ final class MethodTypeForm {
             return prev;
         }
         if (NO_SOFT_CACHE) {
-            System.out.println("NO_SOFT MH: store");
+            //System.out.println("NO_SOFT MH: store");
             methodHandles[which] = mh;
         } else {
             methodHandles[which] = new SoftReference<>(mh);
@@ -164,7 +164,7 @@ final class MethodTypeForm {
         if (entry == null) {
             return null;
         } else if (entry instanceof LambdaForm) {
-            System.out.println("NO_SOFT LF: load");
+            //System.out.println("NO_SOFT LF: load");
             return (LambdaForm) entry;
         } else {
             return ((SoftReference<LambdaForm>)entry).get();
@@ -178,7 +178,7 @@ final class MethodTypeForm {
             return prev;
         }
         if (NO_SOFT_CACHE) {
-            System.out.println("NO_SOFT LF: store");
+            //System.out.println("NO_SOFT LF: store");
             lambdaForms[which] = form;
         } else {
             lambdaForms[which] = new SoftReference<>(form);
