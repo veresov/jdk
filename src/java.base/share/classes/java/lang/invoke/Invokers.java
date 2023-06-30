@@ -58,20 +58,6 @@ class Invokers {
             VH_INV_GENERIC     =  VH_INV_EXACT   + VarHandle.AccessMode.COUNT,  // MethodHandles.varHandleInvoker
             INV_LIMIT          =  VH_INV_GENERIC + VarHandle.AccessMode.COUNT;
 
-    void cleanInvokers() {
-        for (int i = 0; i < invokers.length; i++) {
-            if (invokers[i] != null) {
-                MethodHandle mh = invokers[i];
-                if (mh instanceof DirectMethodHandle) {
-                    // OK to archive all DirectMethodHandles
-                    // FIXME -- test more combinations with custom HelloLambda classlist
-                    continue;
-                }
-            }
-            //invokers[i] = null;
-        }
-    }
-
     /** Compute and cache information common to all collecting adapters
      *  that implement members of the erasure-family of the given erased type.
      */

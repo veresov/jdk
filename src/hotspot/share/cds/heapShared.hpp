@@ -423,7 +423,7 @@ private:
     return cast_to_oop(to_requested_address(cast_from_oop<address>(dumptime_oop)));
   }
   static bool is_a_test_class_in_unnamed_module(Klass* ik) NOT_CDS_JAVA_HEAP_RETURN_(false);
-  static void init_prelinked_invokedynamic(InstanceKlass* ik, TRAPS);
+  static void initialize_java_lang_invoke(TRAPS);
 
   // Interface for AOT
   static int get_archived_oop_index(oop obj); // AOT-compile time only: get a stable index for an archived object.

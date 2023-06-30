@@ -1626,31 +1626,11 @@ s.writeObject(this.parameterArray());
     }
 
     static class Archiver {
-        HashSet<MethodType> cleanedTypes = new HashSet<>();
         HashSet<MethodType> droppedTypes = new HashSet<>();
         ArrayList<MethodType> archived = new ArrayList<>();
 
         boolean canArchive(Class<?> c) {
             return true; // FIXME -- only archive types that are preloaded by ClassPrelinker.
-
-/*
-            if (c == String.class || c == Object.class || c.isPrimitive()
-                || c == DelegatingMethodHandle.class
-                || c == DirectMethodHandle.class
-                || c == BoundMethodHandle.class
-                || c == CallSite.class
-                || c == Class.class
-                || c == LambdaForm.class
-                || c == MethodHandle.class
-                || c == MethodType.class
-                || c == MemberName.class
-                || c == MethodHandles.Lookup.class
-                || c == Object[].class
-                ) {
-                return true;
-            } else {
-                return false;
-            } */
         }
 
         boolean canArchive(Class<?>[] ptypes) {
@@ -1669,23 +1649,9 @@ s.writeObject(this.parameterArray());
             if (droppedTypes.contains(t)) {
                 return null;
             }
-            if (cleanedTypes.contains(t)) {
+            if (archived.contains(t)) {
                 return t;
             }
-/*
-            if (t.wrapAlt != null) { // What is this??
-                if (DEBUG2) {
-                    System.out.print("DROP 1: ");
-                    System.out.println(t);
-                    droppedTypes.add(t);
-                }
-                return null;
-            }
-*/
-            //if (t.invokers != null) { // Hmmmm ...
-            //    droppedTypes.add(t);
-            //    return null;
-            //}
 
             if (!canArchive(t.rtype) || !canArchive(t.ptypes)) {
                 if (DEBUG2) {
@@ -1695,32 +1661,8 @@ s.writeObject(this.parameterArray());
                 droppedTypes.add(t);
                 return null;
             }
-/*
-            if (t != t.form.erasedType && clean(t.form.erasedType) == null) {
-                if (DEBUG2) {
-                    System.out.print("DROP 3: ");
-                    System.out.println(t);
-                }
-                droppedTypes.add(t);
-                return null;
-            }
-            if (t != t.form.basicType && clean(t.form.basicType) == null) {
-                if (DEBUG2) {
-                    System.out.print("DROP 4: ");
-                    System.out.println(t);
-                }
-                droppedTypes.add(t);
-                return null;
-            }*/
 
-/*
-            t.form.cleanMethodTypeForm();
-            if (t.invokers != null) {
-                t.invokers.cleanInvokers();
-            }
-*/
             archived.add(t);
-            cleanedTypes.add(t);
             return t;
         }
     }

@@ -423,7 +423,7 @@ void Threads::initialize_jsr292_core_classes(TRAPS) {
   initialize_class(vmSymbols::java_lang_invoke_MethodHandleNatives(), CHECK);
 
   if (UseSharedSpaces) {
-    SystemDictionaryShared::init_archived_lambda_form_classes(CHECK);
+    HeapShared::initialize_java_lang_invoke(CHECK);
   }
 }
 

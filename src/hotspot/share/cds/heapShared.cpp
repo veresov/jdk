@@ -964,23 +964,21 @@ void HeapShared::resolve_classes_for_subgraph_of(JavaThread* current, Klass* k) 
   }
 }
 
-void HeapShared::init_prelinked_invokedynamic(InstanceKlass* ik, TRAPS) {
+void HeapShared::initialize_java_lang_invoke(TRAPS) {
   if (!UseSharedSpaces) {
     return;
   }
-  if (
-#ifndef PRODUCT
-      (_test_class_name != NULL && ik->name()->equals(_test_class_name)) ||
-#endif
-      (ik->name()->starts_with("Concat"))) {
-    resolve_or_init("java/lang/invoke/Invokers$Holder", true, CHECK);
-    resolve_or_init("java/lang/invoke/MethodHandle", true, CHECK);
-    resolve_or_init("java/lang/invoke/MethodHandleNatives", true, CHECK);
-    resolve_or_init("java/lang/invoke/DirectMethodHandle$Holder", true, CHECK);
-    resolve_or_init("java/lang/invoke/DelegatingMethodHandle$Holder", true, CHECK);
-    resolve_or_init("java/lang/invoke/LambdaForm$Holder", true, CHECK);
-    resolve_or_init("java/lang/invoke/BoundMethodHandle$Species_L", true, CHECK);
-  }
+
+  SystemDictionaryShared::init_archived_lambda_form_classes(CHECK);
+
+  // FIXME - the following should be called only if we have archived MethodType table.
+  resolve_or_init("java/lang/invoke/Invokers$Holder", true, CHECK);
+  resolve_or_init("java/lang/invoke/MethodHandle", true, CHECK);
+  resolve_or_init("java/lang/invoke/MethodHandleNatives", true, CHECK);
+  resolve_or_init("java/lang/invoke/DirectMethodHandle$Holder", true, CHECK);
+  resolve_or_init("java/lang/invoke/DelegatingMethodHandle$Holder", true, CHECK);
+  resolve_or_init("java/lang/invoke/LambdaForm$Holder", true, CHECK);
+  resolve_or_init("java/lang/invoke/BoundMethodHandle$Species_L", true, CHECK);
 }
 
 void HeapShared::initialize_from_archived_subgraph(JavaThread* current, Klass* k) {
@@ -1207,8 +1205,6 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
   bool _record_klasses_only;
   KlassSubGraphInfo* _subgraph_info;
   oop _referencing_obj;
-  bool _filtering;
-  address _filtering_addr = nullptr;
   // The following are for maintaining a stack for determining
   // CachedOopInfo::_referrer
   static WalkOopAndArchiveClosure* _current;
@@ -1224,16 +1220,6 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
     _referencing_obj(orig) {
     _last = _current;
     _current = this;
-    _filtering = _referencing_obj->klass()->is_subclass_of(vmClasses::LambdaForm_klass());
-    if (_filtering) {
-      TempNewSymbol name = SymbolTable::new_symbol("transformCache");
-      Symbol* sig = vmSymbols::object_signature();
-      fieldDescriptor fd;
-      Klass* k = InstanceKlass::cast(_referencing_obj->klass())->find_field(name, sig, &fd);
-      assert(k != nullptr, "sanity");
-      assert(fd.offset() > 0, "sanity");
-      _filtering_addr = cast_from_oop<address>(_referencing_obj) + fd.offset();
-    }
   }
   ~WalkOopAndArchiveClosure() {
     _current = _last;
@@ -1246,16 +1232,6 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
     oop obj = RawAccess<>::oop_load(p);
     if (!CompressedOops::is_null(obj)) {
       size_t field_delta = pointer_delta(p, _referencing_obj, sizeof(char));
-
-      // FIXME: this is hard coded to filter out LambdaForm.transformCache
-      // FIXME: handle other cases as well.
-      // FIXME: for LambdaForm.transformCache, change from SoftReference to direct reference.
-      if (_filtering && ((address)p) == _filtering_addr) {
-        //tty->print_cr("Found LambdaForm.transformCache");
-        //obj->print_on(tty);
-        //RawAccess<>::oop_store(p, nullptr);
-        //return;
-      }
       if (!_record_klasses_only && log_is_enabled(Debug, cds, heap)) {
         ResourceMark rm;
         log_debug(cds, heap)("(%d) %s[" SIZE_FORMAT "] ==> " PTR_FORMAT " size " SIZE_FORMAT " %s", _level,
