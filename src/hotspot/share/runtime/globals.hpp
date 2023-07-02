@@ -1743,6 +1743,9 @@ const int ObjectAlignmentInBytes = 8;
   product(bool, RecordOptCompilationOrder, false,                           \
           "Record c2 nmethod temperature to guide compilation order.")      \
                                                                             \
+  product(int, RecordOptCompilationOrderInterval, 10,                        \
+          "Sampling interval for RecordOptCompilationOrder")                \
+                                                                            \
   /* flags for performance data collection */                               \
                                                                             \
   product(bool, UsePerfData, true,                                          \

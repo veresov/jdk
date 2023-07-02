@@ -27,6 +27,7 @@
 #include "precompiled.hpp"
 #include "ci/ciEnv.hpp"
 #include "ci/ciMetadata.hpp"
+#include "cds/methodProfiler.hpp"
 #include "classfile/classLoaderData.hpp"
 #include "classfile/javaClasses.hpp"
 #include "classfile/symbolTable.hpp"
@@ -49,7 +50,7 @@
 TrainingData::TrainingDataSet TrainingData::_training_data_set(1024, 0x3fffffff);
 TrainingDataDictionary TrainingData::_archived_training_data_dictionary;
 GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* TrainingData::_dumptime_training_data_dictionary = nullptr;
-
+Array<MethodTrainingData*>* TrainingData::_recompilation_schedule = nullptr;
 int TrainingData::TrainingDataLocker::_lock_mode;
 TrainingData::Options TrainingData::_options;
 
@@ -133,7 +134,6 @@ void TrainingData::initialize() {
     });
   }
 }
-
 
 TrainingData::Key::Key(const KlassTrainingData* klass, Symbol* method_name, Symbol* signature)
   : Key(method_name, signature, klass) {}
@@ -1422,6 +1422,30 @@ void TrainingData::init_dumptime_table(TRAPS) {
   }
 }
 
+void TrainingData::prepare_recompilation_schedule(TRAPS) {
+  if (!need_data()) {
+    return;
+  }
+  auto nmethods = MethodProfiler::sampled_nmethods();
+  GrowableArray<MethodTrainingData*> dyn_recompilation_schedule;
+  for (auto it = nmethods->begin(); it != nmethods->end(); ++it) {
+    nmethod* nm = *it;
+    if (nm->method() != nullptr) {
+      MethodTrainingData* mtd = nm->method()->training_data_or_null();
+      if (mtd != nullptr) {
+        dyn_recompilation_schedule.append(mtd);
+      }
+    }
+  }
+  delete nmethods;
+  ClassLoaderData* loader_data = ClassLoaderData::the_null_class_loader_data();
+  _recompilation_schedule = MetadataFactory::new_array<MethodTrainingData*>(loader_data, dyn_recompilation_schedule.length(), THREAD);
+  int i = 0;
+  for (auto it = dyn_recompilation_schedule.begin(); it != dyn_recompilation_schedule.end(); ++it) {
+    recompilation_schedule()->at_put(i++, *it);
+  }
+}
+
 void TrainingData::iterate_roots(MetaspaceClosure* it) {
   if (!need_data()) {
     return;
@@ -1430,6 +1454,7 @@ void TrainingData::iterate_roots(MetaspaceClosure* it) {
   for (int i = 0; i < _dumptime_training_data_dictionary->length(); i++) {
     _dumptime_training_data_dictionary->at(i).metaspace_pointers_do(it);
   }
+  it->push(&_recompilation_schedule);
 }
 
 void TrainingData::dump_training_data() {
@@ -1492,6 +1517,7 @@ void CompileTrainingData::cleanup() {
 
 void TrainingData::serialize_training_data(SerializeClosure* soc) {
   _archived_training_data_dictionary.serialize_header(soc);
+  soc->do_ptr(&_recompilation_schedule);
 }
 
 void TrainingData::adjust_training_data_dictionary() {

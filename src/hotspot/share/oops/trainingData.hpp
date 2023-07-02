@@ -236,6 +236,7 @@ private:
   static TrainingDataSet _training_data_set;
   static TrainingDataDictionary _archived_training_data_dictionary;
   static GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* _dumptime_training_data_dictionary;
+  static Array<MethodTrainingData*>* _recompilation_schedule;
 
   static Options* options() { return &_options; }
 public:
@@ -253,6 +254,7 @@ public:
 
   static TrainingDataSet* training_data_set() { return &_training_data_set; }
   static TrainingDataDictionary* archived_training_data_dictionary() { return &_archived_training_data_dictionary; }
+  static Array<MethodTrainingData*>* recompilation_schedule() { return _recompilation_schedule; }
 
   virtual MethodTrainingData*   as_MethodTrainingData()  const { return nullptr; }
   virtual KlassTrainingData*    as_KlassTrainingData()   const { return nullptr; }
@@ -346,6 +348,7 @@ public:
   static void restore_all_unshareable_info(TRAPS);
 #endif
   static void init_dumptime_table(TRAPS);
+  static void prepare_recompilation_schedule(TRAPS);
   static void iterate_roots(MetaspaceClosure* it);
   static void dump_training_data();
   static void cleanup_training_data();
