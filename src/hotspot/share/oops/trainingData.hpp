@@ -237,6 +237,7 @@ private:
   static TrainingDataDictionary _archived_training_data_dictionary;
   static GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* _dumptime_training_data_dictionary;
   static Array<MethodTrainingData*>* _recompilation_schedule;
+  static volatile bool* _recompilation_status;
 
   static Options* options() { return &_options; }
 public:
@@ -255,6 +256,7 @@ public:
   static TrainingDataSet* training_data_set() { return &_training_data_set; }
   static TrainingDataDictionary* archived_training_data_dictionary() { return &_archived_training_data_dictionary; }
   static Array<MethodTrainingData*>* recompilation_schedule() { return _recompilation_schedule; }
+  static volatile bool* recompilation_status() { return _recompilation_status; }
 
   virtual MethodTrainingData*   as_MethodTrainingData()  const { return nullptr; }
   virtual KlassTrainingData*    as_KlassTrainingData()   const { return nullptr; }

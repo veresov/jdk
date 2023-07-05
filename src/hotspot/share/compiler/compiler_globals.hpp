@@ -416,6 +416,18 @@
                                                                             \
   product(bool, VerifySharedCode, false, DIAGNOSTIC,                        \
           "Load compiled code but not publish")                             \
+                                                                            \
+  product(int, RecompilationLoadAverageThreshold, 5,                        \
+          "Queues load avergage after while recompilations are allowed")    \
+                                                                            \
+  product(int, RecompilationWorkUnitSize, 5,                                \
+          "Queues load avergage after while recompilations are allowed")    \
+                                                                            \
+  product(bool, UseRecompilation, false,                                    \
+          "Recompile methods for peak performance")                         \
+                                                                            \
+  product(bool, ForceRecompilation, false,                                  \
+          "Testing mode for recompilation")                                 \
 
 // end of COMPILER_FLAGS
 

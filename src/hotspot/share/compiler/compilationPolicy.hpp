@@ -37,7 +37,7 @@ class WeightedMovingAverage {
   int _current;
   int _samples[SAMPLE_COUNT];
   int64_t _timestamps[SAMPLE_COUNT];
-protected:
+
   void sample(int s, int64_t t) {
     assert(s >= 0, "Negative sample values are not supported");
     _samples[_current] = s;
@@ -68,20 +68,17 @@ protected:
       return 0;
     }
   }
+  static int64_t time() {
+    return nanos_to_millis(os::javaTimeNanos());
+  }
 public:
   WeightedMovingAverage() : _current(0) {
     for (int i = 0; i < SAMPLE_COUNT; i++) {
       _samples[i] = -1;
     }
   }
-
-  void sample(int s) {
-    sample(s, nanos_to_millis(os::javaTimeNanos()));
-  }
-
-  double value() const {
-    return value(nanos_to_millis(os::javaTimeNanos()));
-  }
+  void sample(int s) { sample(s, time()); }
+  double value() const { return value(time()); }
 };
 
 class CompileTask;
@@ -227,10 +224,13 @@ class CompilationPolicy : AllStatic {
   friend class CallPredicate;
   friend class LoopPredicate;
 
+  typedef WeightedMovingAverage<> LoadAverage;
+
   static int64_t _start_time;
   static int _c1_count, _c2_count, _c3_count, _sc_count;
   static double _increase_threshold_at_ratio;
-  static WeightedMovingAverage<> _load_average;
+  static LoadAverage _load_average;
+  static volatile bool _recompilation_done;
 
   // Set carry flags in the counters (in Method* and MDO).
   inline static void handle_counter_overflow(const methodHandle& method);
@@ -296,7 +296,7 @@ class CompilationPolicy : AllStatic {
   static void set_c3_count(int x) { _c3_count = x;    }
   static void set_sc_count(int x) { _sc_count = x;    }
 
-  enum EventType { CALL, LOOP, COMPILE, FORCE_COMPILE, REMOVE_FROM_QUEUE, UPDATE_IN_QUEUE, REPROFILE, MAKE_NOT_ENTRANT };
+  enum EventType { CALL, LOOP, COMPILE, FORCE_COMPILE, FORCE_RECOMPILE, REMOVE_FROM_QUEUE, UPDATE_IN_QUEUE, REPROFILE, MAKE_NOT_ENTRANT };
   static void print_event(EventType type, Method* m, Method* im, int bci, CompLevel level);
   // Check if the method can be compiled, change level if necessary
   static void compile(const methodHandle& mh, int bci, CompLevel level, TRAPS);
@@ -327,7 +327,6 @@ class CompilationPolicy : AllStatic {
   static int c3_count() { return _c3_count; }
   static int sc_count() { return _sc_count; }
   static int compiler_count(CompLevel comp_level);
-  static void sample_load_average();
   // If m must_be_compiled then request a compilation from the CompileBroker.
   // This supports the -Xcomp option.
   static void compile_if_required(const methodHandle& m, TRAPS);
@@ -357,6 +356,10 @@ class CompilationPolicy : AllStatic {
   // Return highest level possible
   static CompLevel highest_compile_level();
   static void dump();
+
+  static void sample_load_average();
+  static bool have_recompilation_work();
+  static bool recompilation_step(int step, TRAPS);
 };
 
 #endif // SHARE_COMPILER_COMPILATIONPOLICY_HPP

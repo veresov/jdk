@@ -51,6 +51,7 @@ TrainingData::TrainingDataSet TrainingData::_training_data_set(1024, 0x3fffffff)
 TrainingDataDictionary TrainingData::_archived_training_data_dictionary;
 GrowableArrayCHeap<DumpTimeTrainingDataInfo, mtClassShared>* TrainingData::_dumptime_training_data_dictionary = nullptr;
 Array<MethodTrainingData*>* TrainingData::_recompilation_schedule = nullptr;
+volatile bool* TrainingData::_recompilation_status = nullptr;
 int TrainingData::TrainingDataLocker::_lock_mode;
 TrainingData::Options TrainingData::_options;
 
@@ -132,6 +133,14 @@ void TrainingData::initialize() {
         td->as_MethodTrainingData()->initialize_deps_tracking();
       }
     });
+
+    if (_recompilation_schedule != nullptr && _recompilation_schedule->length() > 0) {
+      const int size = _recompilation_schedule->length();
+      _recompilation_status = NEW_C_HEAP_ARRAY(bool, size, mtCompiler);
+      for (int i = 0; i < size; i++) {
+        _recompilation_status[i] = false;
+      }
+    }
   }
 }
 
@@ -1430,6 +1439,9 @@ void TrainingData::prepare_recompilation_schedule(TRAPS) {
   GrowableArray<MethodTrainingData*> dyn_recompilation_schedule;
   for (auto it = nmethods->begin(); it != nmethods->end(); ++it) {
     nmethod* nm = *it;
+    if (RecordOnlyTopCompilations && nm->method_profiling_count() == 0) {
+      break;
+    }
     if (nm->method() != nullptr) {
       MethodTrainingData* mtd = nm->method()->training_data_or_null();
       if (mtd != nullptr) {
@@ -1472,6 +1484,7 @@ void TrainingData::cleanup_training_data() {
       td->cleanup();
     }
   }
+  _recompilation_status = nullptr;
 }
 
 void KlassTrainingData::cleanup() {

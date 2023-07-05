@@ -280,6 +280,8 @@ bool CompileBroker::can_remove(CompilerThread *ct, bool do_it) {
   assert(UseDynamicNumberOfCompilerThreads, "or shouldn't be here");
   if (!ReduceNumberOfCompilerThreads) return false;
 
+  if (CompilationPolicy::have_recompilation_work()) return false;
+
   AbstractCompiler *compiler = ct->compiler();
   int compiler_count = compiler->num_compiler_threads();
   bool c1 = compiler->is_c1();
@@ -413,8 +415,6 @@ CompileTask* CompileQueue::get(CompilerThread* thread) {
   // case we perform code cache sweeps to free memory such that we can re-enable
   // compilation.
   while (_first == nullptr) {
-    CompilationPolicy::sample_load_average();
-
     // Exit loop if compilation is disabled forever
     if (CompileBroker::is_compilation_disabled_forever()) {
       return nullptr;
@@ -436,6 +436,8 @@ CompileTask* CompileQueue::get(CompilerThread* thread) {
     // is disabled forever. We use 5 seconds wait time; the exiting of compiler threads
     // is not critical and we do not want idle compiler threads to wake up too often.
     locker.wait(5*1000);
+
+    if (CompilationPolicy::have_recompilation_work()) return nullptr;
 
     if (UseDynamicNumberOfCompilerThreads && _first == nullptr) {
       // Still nothing to compile. Give caller a chance to stop this thread.
@@ -466,7 +468,6 @@ CompileTask* CompileQueue::get(CompilerThread* thread) {
     remove(task);
   }
   purge_stale_tasks(); // may temporarily release MCQ lock
-  CompilationPolicy::sample_load_average();
   return task;
 }
 
@@ -1265,7 +1266,7 @@ void CompileBroker::compile_method_base(const methodHandle& method,
   // A request has been made for compilation.  Before we do any
   // real work, check to see if the method has been compiled
   // in the meantime with a definitive result.
-  if (compilation_is_complete(method, osr_bci, comp_level)) {
+  if (compilation_is_complete(method, osr_bci, comp_level, requires_online_compilation)) {
     return;
   }
 
@@ -1323,7 +1324,7 @@ void CompileBroker::compile_method_base(const methodHandle& method,
     // We need to check again to see if the compilation has
     // completed.  A previous compilation may have registered
     // some result.
-    if (compilation_is_complete(method, osr_bci, comp_level)) {
+    if (compilation_is_complete(method, osr_bci, comp_level, requires_online_compilation)) {
       return;
     }
 
@@ -1481,7 +1482,7 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
     // standard compilation
     CompiledMethod* method_code = method->code();
     if (method_code != nullptr && method_code->is_nmethod()) {
-      if (compilation_is_complete(method, osr_bci, comp_level)) {
+      if (compilation_is_complete(method, osr_bci, comp_level, requires_online_compilation)) {
         return (nmethod*) method_code;
       }
     }
@@ -1600,7 +1601,8 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
 // See if compilation of this method is already complete.
 bool CompileBroker::compilation_is_complete(const methodHandle& method,
                                             int                 osr_bci,
-                                            int                 comp_level) {
+                                            int                 comp_level,
+                                            bool                online_only) {
   bool is_osr = (osr_bci != standard_entry_bci);
   if (is_osr) {
     if (method->is_not_osr_compilable(comp_level)) {
@@ -1614,7 +1616,9 @@ bool CompileBroker::compilation_is_complete(const methodHandle& method,
       return true;
     } else {
       CompiledMethod* result = method->code();
-      if (result == nullptr || result->has_clinit_barriers()) return false;
+      if (result == nullptr) return false;
+      if (result->has_clinit_barriers()) return false;
+      if (online_only && result->is_sca()) return false;
       return comp_level == result->comp_level();
     }
   }
@@ -2046,7 +2050,10 @@ void CompileBroker::compiler_thread_loop() {
     // We need this HandleMark to avoid leaking VM handles.
     HandleMark hm(thread);
 
+    CompilationPolicy::recompilation_step(RecompilationWorkUnitSize, thread);
+
     CompileTask* task = queue->get(thread);
+
     if (task == nullptr) {
       if (UseDynamicNumberOfCompilerThreads) {
         // Access compiler_count under lock to enforce consistency.

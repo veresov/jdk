@@ -60,8 +60,9 @@ int CompilationPolicy::_c2_count = 0;
 int CompilationPolicy::_c3_count = 0;
 int CompilationPolicy::_sc_count = 0;
 double CompilationPolicy::_increase_threshold_at_ratio = 0;
-WeightedMovingAverage<> CompilationPolicy::_load_average;
 
+CompilationPolicy::LoadAverage CompilationPolicy::_load_average;
+volatile bool CompilationPolicy::_recompilation_done = false;
 
 void compilationPolicy_init() {
   CompilationPolicy::initialize();
@@ -79,11 +80,79 @@ int CompilationPolicy::compiler_count(CompLevel comp_level) {
 void CompilationPolicy::sample_load_average() {
   const int c2_queue_size = CompileBroker::queue_size(CompLevel_full_optimization);
   _load_average.sample(c2_queue_size);
-/*
-  if (UseNewCode) {
-    tty->print_cr("load = %lf", _load_average.value());
+}
+
+bool CompilationPolicy::have_recompilation_work() {
+  if (TrainingData::have_data() && TrainingData::recompilation_schedule()->length() > 0 && !_recompilation_done) {
+    if (_load_average.value() <= RecompilationLoadAverageThreshold) {
+      return true;
+    }
   }
-*/
+  return false;
+}
+
+bool CompilationPolicy::recompilation_step(int step, TRAPS) {
+  if (!have_recompilation_work()) {
+    return false;
+  }
+
+  const int size = TrainingData::recompilation_schedule()->length();
+  int i = 0;
+  int count = 0;
+  bool repeat = false;
+  for (; i < size && count < step; i++) {
+    if (!TrainingData::recompilation_status()[i]) {
+      MethodTrainingData* mtd = TrainingData::recompilation_schedule()->at(i);
+      if (!mtd->has_holder()) {
+        Atomic::release_store(&TrainingData::recompilation_status()[i], true);
+        continue;
+      }
+      const Method* method = mtd->holder();
+      InstanceKlass* klass = method->method_holder();
+      if (klass->is_not_initialized()) {
+        repeat = true;
+        continue;
+      }
+      CompiledMethod *cm = method->code();
+      if (cm == nullptr) {
+        repeat = true;
+        continue;
+      }
+
+      if (!ForceRecompilation && !cm->is_sca()) {
+        // If it's already online-compiled at level 4, mark it as done.
+        if (cm->comp_level() == CompLevel_full_optimization) {
+          Atomic::store(&TrainingData::recompilation_status()[i], true);
+        } else {
+          repeat = true;
+        }
+        continue;
+      }
+      if (Atomic::cmpxchg(&TrainingData::recompilation_status()[i], false, true) == false) {
+        const methodHandle m(THREAD, const_cast<Method*>(method));
+        CompLevel next_level = CompLevel_full_optimization;
+
+        if (method->method_data() == nullptr) {
+          create_mdo(m, THREAD);
+        }
+
+        if (PrintTieredEvents) {
+          print_event(FORCE_RECOMPILE, m(), m(), InvocationEntryBci, next_level);
+        }
+        CompileBroker::compile_method(m, InvocationEntryBci, CompLevel_full_optimization, methodHandle(), 0,
+                                      true /*requires_online_compilation*/, CompileTask::Reason_MustBeCompiled, THREAD);
+        if (HAS_PENDING_EXCEPTION) {
+          CLEAR_PENDING_EXCEPTION;
+        }
+        count++;
+      }
+    }
+  }
+
+  if (i == size && !repeat) {
+    Atomic::release_store(&_recompilation_done, true);
+  }
+  return count > 0;
 }
 
 // Returns true if m must be compiled before executing it
@@ -444,6 +513,9 @@ void CompilationPolicy::print_event(EventType type, Method* m, Method* im, int b
   case FORCE_COMPILE:
     tty->print("force-compile");
     break;
+  case FORCE_RECOMPILE:
+    tty->print("force-recompile");
+    break;
   case REMOVE_FROM_QUEUE:
     tty->print("remove-from-queue");
     break;
@@ -476,6 +548,7 @@ void CompilationPolicy::print_event(EventType type, Method* m, Method* im, int b
   tty->print(" rate=");
   if (m->prev_time() == 0) tty->print("n/a");
   else tty->print("%f", m->rate());
+  tty->print(" load=%lf", _load_average.value());
 
   tty->print(" k=%.2lf,%.2lf", threshold_scale(CompLevel_full_profile, Tier3LoadFeedback),
                                threshold_scale(CompLevel_full_optimization, Tier4LoadFeedback));

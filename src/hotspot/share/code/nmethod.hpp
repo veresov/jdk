@@ -607,6 +607,7 @@ public:
   int orig_pc_offset() { return _orig_pc_offset; }
 
   SCAEntry* sca_entry() const { return _sca_entry; }
+  bool is_sca() const { return sca_entry() != nullptr; }
   bool preloaded() const;
   bool has_clinit_barriers() const;
 
