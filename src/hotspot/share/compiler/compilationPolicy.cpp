@@ -119,7 +119,7 @@ bool CompilationPolicy::recompilation_step(int step, TRAPS) {
         continue;
       }
 
-      if (!ForceRecompilation && !cm->is_sca()) {
+      if (!ForceRecompilation && !(cm->is_sca() && cm->comp_level() == CompLevel_full_optimization)) {
         // If it's already online-compiled at level 4, mark it as done.
         if (cm->comp_level() == CompLevel_full_optimization) {
           Atomic::store(&TrainingData::recompilation_status()[i], true);
