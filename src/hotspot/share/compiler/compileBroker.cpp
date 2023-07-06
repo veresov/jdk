@@ -1619,10 +1619,17 @@ bool CompileBroker::compilation_is_complete(const methodHandle& method,
       return true;
     } else {
       CompiledMethod* result = method->code();
-      if (result == nullptr) return false;
-      if (result->has_clinit_barriers()) return false;
-      if (online_only && result->is_sca()) return false;
-      return comp_level == result->comp_level();
+      if (result == nullptr) {
+        return false;
+      }
+      if (online_only && result->is_sca()) {
+        return false;
+      }
+      bool same_level = (comp_level == result->comp_level());
+      if (result->has_clinit_barriers()) {
+        return !same_level; // Allow replace preloaded code with new code of the same level
+      }
+      return same_level;
     }
   }
 }

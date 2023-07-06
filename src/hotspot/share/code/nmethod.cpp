@@ -1346,7 +1346,7 @@ void nmethod::unlink_from_method() {
 }
 
 // Invalidate code
-bool nmethod::make_not_entrant() {
+bool nmethod::make_not_entrant(bool make_not_entrant) {
   // This can be called while the system is already at a safepoint which is ok
   NoSafepointVerifier nsv;
 
@@ -1409,9 +1409,11 @@ bool nmethod::make_not_entrant() {
     // Remove nmethod from method.
     unlink_from_method();
 
-    // Invalidate shared code
-    SCArchive::invalidate(_sca_entry);
-
+    if (make_not_entrant) {
+      // Keep cached code if it was simply replaced
+      // otherwise make it not entrant too.
+      SCArchive::invalidate(_sca_entry);
+    }
   } // leave critical region under CompiledMethod_lock
 
 #if INCLUDE_JVMCI
