@@ -471,7 +471,9 @@ void ClassPrelinker::preresolve_indy_cp_entries(JavaThread* current, InstanceKla
   Array<ResolvedIndyEntry>* indy_entries = cp->cache()->resolved_indy_entries();
   for (int i = 0; i < indy_entries->length(); i++) {
     ResolvedIndyEntry* rie = indy_entries->adr_at(i);
-    if (preresolve_list->at(rie->constant_pool_index()) == true && !rie->is_resolved()) {
+    int cp_index = rie->constant_pool_index();
+    if (preresolve_list->at(cp_index) == true && !rie->is_resolved() && 
+        should_preresolve_invokedynamic(cp(), cp_index)) {
       InterpreterRuntime::cds_resolve_invokedynamic(ConstantPool::encode_invokedynamic_index(i), cp, THREAD);
       if (HAS_PENDING_EXCEPTION) {
         CLEAR_PENDING_EXCEPTION; // just ignore
@@ -482,7 +484,7 @@ void ClassPrelinker::preresolve_indy_cp_entries(JavaThread* current, InstanceKla
 
 static GrowableArrayCHeap<char*, mtClassShared>* _invokedynamic_filter = nullptr;
 
-bool ClassPrelinker::should_preresolve_invokedynamic(InstanceKlass* ik) {
+bool ClassPrelinker::should_preresolve_invokedynamic(ConstantPool* cp, int cp_index) {
   if (!ArchiveInvokeDynamic) {
     return false;
   }
@@ -504,11 +506,27 @@ bool ClassPrelinker::should_preresolve_invokedynamic(InstanceKlass* ik) {
     ArchiveInvokeDynamicFilter = nullptr;
   }
 
+  int bsm = cp->bootstrap_method_ref_index_at(cp_index);
+  int bsm_ref = cp->method_handle_index_at(bsm);
+  Symbol* bsm_name = cp->uncached_name_ref_at(bsm_ref);
+//Symbol* bsm_signature = cp->uncached_signature_ref_at(bsm_ref);
+  Symbol* bsm_klass = cp->klass_name_at(cp->uncached_klass_ref_index_at(bsm_ref));
+
+  if (bsm_klass->equals("java/lang/invoke/StringConcatFactory") &&
+      bsm_name->equals("makeConcatWithConstants")) {
+    // Support only string concact for now
+    return true;
+  }
+
+  InstanceKlass* ik = cp->pool_holder();
+
   if (ik->name()->equals("ConcatA")) {
+    // For testing only .... allow everything in this class
     return true;
   }
 
   if (_invokedynamic_filter != nullptr) {
+    // for testing only ... allow everything in these classes
     for (int i = 0; i < _invokedynamic_filter->length(); i++) {
       char* pattern = _invokedynamic_filter->at(i);
       // FIXME - Symbol::is_star_match is too liberal. "A*" matches with "XAY".

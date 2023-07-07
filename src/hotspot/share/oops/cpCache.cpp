@@ -810,15 +810,22 @@ void ConstantPoolCache::remove_unshareable_info(const GrowableArray<bool>* keep_
   _initial_entries = nullptr;
 
   if (_resolved_indy_entries != nullptr) {
+    ConstantPool* cp = constant_pool();
     for (int i = 0; i < _resolved_indy_entries->length(); i++) {
       ResolvedIndyEntry *rei = resolved_indy_entry_at(i);
-      bool save = false;
-      if (rei->is_resolved() && ClassPrelinker::should_preresolve_invokedynamic(constant_pool()->pool_holder())) {
-        // FIXME: use common function to check whether to save -- also for
-        // ConstantPool::prepare_resolved_references_for_archiving()
-        save = true;
-      }
-      if (save) {
+      int cp_index = rei->constant_pool_index();
+      if (rei->is_resolved() && ClassPrelinker::should_preresolve_invokedynamic(cp, cp_index)) {
+        if (log_is_enabled(Debug, cds, resolve)) {
+          ResourceMark rm;
+          int bsm = cp->bootstrap_method_ref_index_at(cp_index);
+          int bsm_ref = cp->method_handle_index_at(bsm);
+          Symbol* bsm_name = cp->uncached_name_ref_at(bsm_ref);
+          Symbol* bsm_signature = cp->uncached_signature_ref_at(bsm_ref);
+          Symbol* bsm_klass = cp->klass_name_at(cp->uncached_klass_ref_index_at(bsm_ref));
+          log_debug(cds, resolve)("archived indy   CP entry [%3d]: %s (%d) => %s.%s:%s", cp_index,
+                                  cp->pool_holder()->name()->as_C_string(), i,
+                                  bsm_klass->as_C_string(), bsm_name->as_C_string(), bsm_signature->as_C_string());
+        }
         rei->mark_and_relocate();
       } else {
         rei->remove_unshareable_info();

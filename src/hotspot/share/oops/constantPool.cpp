@@ -294,20 +294,19 @@ objArrayOop ConstantPool::prepare_resolved_references_for_archiving() {
     ResourceMark rm;
     int rr_len = rr->length();
     GrowableArray<bool> keep_resolved_refs(rr_len, rr_len, false);
-    if (cache() != nullptr && ClassPrelinker::should_preresolve_invokedynamic(pool_holder())) {
+
+    if (cache() != nullptr && ArchiveInvokeDynamic) {
       Array<ResolvedIndyEntry>* indy_entries = cache()->resolved_indy_entries();
       if (indy_entries != nullptr) {
         for (int i = 0; i < indy_entries->length(); i++) {
-          if (indy_entries->at(i).is_resolved()) {
-            // FIXME -- check if the BSM is supported
-            int rr_index = indy_entries->at(i).resolved_references_index();
+          ResolvedIndyEntry *rei = indy_entries->adr_at(i);
+          if (rei->is_resolved() && ClassPrelinker::should_preresolve_invokedynamic(this, rei->constant_pool_index())) {
+            int rr_index = rei->resolved_references_index();
             keep_resolved_refs.at_put(rr_index, true);
           }
         }
       }
-    }
 
-    if (cache() != nullptr && ArchiveInvokeDynamic) {
       for (int i = 0; i < cache()->length(); i++) {
         ConstantPoolCacheEntry* cpce = cache()->entry_at(i);
         if (can_archive_invokehandle(cpce) && cpce->has_appendix()) {
@@ -526,7 +525,7 @@ bool ConstantPool::maybe_archive_resolved_klass_at(int cp_index) {
       if (log_is_enabled(Debug, cds, resolve)) {
         ResourceMark rm;
         log_debug(cds, resolve)("archived klass  CP entry [%3d]: %s => %s", cp_index,
-                                pool_holder()->external_name(), k->external_name());
+                                pool_holder()->name()->as_C_string(), k->name()->as_C_string());
       }
       return true;
     }
@@ -595,7 +594,7 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
   case JVM_CONSTANT_Methodref:
     if (cpce->is_resolved(Bytecodes::_invokehandle)) {
       if (!ArchiveInvokeDynamic) {
-        // FIXME We don't dump the MethodType tables. This somehow breaks stuff.
+        // FIXME We don't dump the MethodType tables. This somehow breaks stuff. Why???
         return false;
       } else if (!can_archive_invokehandle(cpce)) {
         return false;
@@ -640,7 +639,7 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
     Symbol* signature = uncached_signature_ref_at(cp_index);
     const char* type = (cp_tag == JVM_CONSTANT_Fieldref) ? "field " : "method";
     log_debug(cds, resolve)("archived %s CP entry [%3d]: %s => %s.%s:%s%s", type, cp_index,
-                            pool_holder()->external_name(), resolved_klass->external_name(),
+                            pool_holder()->name()->as_C_string(), resolved_klass->name()->as_C_string(),
                             name->as_C_string(), signature->as_C_string(), is_static);
   }
 

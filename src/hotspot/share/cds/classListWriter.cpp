@@ -235,9 +235,8 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
   }
 
   ResourceMark rm;
-  GrowableArray<int> list;
-
   ConstantPool* cp = ik->constants();
+  GrowableArray<bool> list(cp->length(), cp->length(), false);
   int fmi_cpcache_index = 0; // cpcache index for Fieldref/Methodref/InterfaceMethodref
 
   for (int cp_index = 1; cp_index < cp->length(); cp_index++) { // Index 0 is unused
@@ -246,7 +245,7 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
       {
         Klass* k = cp->resolved_klass_at(cp_index);
         if (k->is_instance_klass()) {
-          list.append(cp_index);
+          list.at_put(cp_index, true);
         }
       }
       break;
@@ -255,7 +254,7 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
         ConstantPoolCacheEntry* cpce = cp->cache()->entry_at(fmi_cpcache_index);
         if (cpce->is_resolved(Bytecodes::_getfield) ||
             cpce->is_resolved(Bytecodes::_putfield)) {
-          list.append(cp_index);
+          list.at_put(cp_index, true);
         }
       }
       fmi_cpcache_index++;
@@ -265,13 +264,13 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
         ConstantPoolCacheEntry* cpce = cp->cache()->entry_at(fmi_cpcache_index);
         if (cpce->is_resolved(Bytecodes::_invokevirtual) ||
             cpce->is_resolved(Bytecodes::_invokespecial)) {
-          list.append(cp_index);
+          list.at_put(cp_index, true);
         }
         if (cpce->is_resolved(Bytecodes::_invokehandle)) {
-          list.append(cp_index); /// TODO Can invokehandle trigger <clinit>??
+          list.at_put(cp_index, true); /// TODO Can invokehandle trigger <clinit>??
         }
         if (cpce->is_resolved(Bytecodes::_invokestatic)) {
-          list.append(cp_index); /// TODO Can invokehandle trigger <clinit>??
+          list.at_put(cp_index, true); /// TODO Can invokehandle trigger <clinit>??
         }
       }
       fmi_cpcache_index++;
@@ -286,8 +285,10 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
     Array<ResolvedIndyEntry>* indy_entries = cp->cache()->resolved_indy_entries();
     if (indy_entries != nullptr) {
       for (int i = 0; i < indy_entries->length(); i++) {
-        if (indy_entries->at(i).is_resolved()) {
-          list.append(indy_entries->at(i).constant_pool_index());
+        ResolvedIndyEntry* rie = indy_entries->adr_at(i);
+        int cp_index = rie->constant_pool_index();
+        if (rie->is_resolved()) {
+          list.at_put(cp_index, true);
         }
       }
     }
@@ -297,7 +298,9 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
     outputStream* stream = _classlist_file;
     stream->print("@cp %s", ik->name()->as_C_string());
     for (int i = 0; i < list.length(); i++) {
-      stream->print(" %d", list.at(i));
+      if (list.at(i)) {
+        stream->print(" %d", i);
+      }
     }
     stream->cr();
   }
