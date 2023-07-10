@@ -90,7 +90,7 @@ class CompileTask : public CHeapObj<mtCompiler> {
   int                  _osr_bci;
   bool                 _is_complete;
   bool                 _is_success;
-  bool                 _has_unsatisfied_deps;
+  bool                 _requires_online_compilation;
   bool                 _is_blocking;
   CodeSection::csize_t _nm_content_size;
   CodeSection::csize_t _nm_total_size;
@@ -127,24 +127,24 @@ class CompileTask : public CHeapObj<mtCompiler> {
 
   void initialize(int compile_id, const methodHandle& method, int osr_bci, int comp_level,
                   const methodHandle& hot_method, int hot_count,
-                  CompileTask::CompileReason compile_reason, bool has_unsatisfied_deps, bool is_blocking);
+                  CompileTask::CompileReason compile_reason, bool requires_online_compilation, bool is_blocking);
 
   static CompileTask* allocate();
   static void         free(CompileTask* task);
 
-  int          compile_id() const                { return _compile_id; }
-  Method*      method() const                    { return _method; }
-  Method*      hot_method() const                { return _hot_method; }
-  int          osr_bci() const                   { return _osr_bci; }
-  bool         is_complete() const               { return _is_complete; }
-  bool         is_blocking() const               { return _is_blocking; }
-  bool         is_success() const                { return _is_success; }
-  bool         is_sca() const                    { return _sca_entry != nullptr; }
-  void         clear_sca()                       { _sca_entry = nullptr; }
-  SCAEntry*    sca_entry()                       { return _sca_entry; }
-  bool         has_unsatisfied_deps() const      { return _has_unsatisfied_deps; }
-  DirectiveSet* directive() const                { return _directive; }
-  CompileReason compile_reason() const           { return _compile_reason; }
+  int          compile_id() const                   { return _compile_id; }
+  Method*      method() const                       { return _method; }
+  Method*      hot_method() const                   { return _hot_method; }
+  int          osr_bci() const                      { return _osr_bci; }
+  bool         is_complete() const                  { return _is_complete; }
+  bool         is_blocking() const                  { return _is_blocking; }
+  bool         is_success() const                   { return _is_success; }
+  bool         is_sca() const                       { return _sca_entry != nullptr; }
+  void         clear_sca()                          { _sca_entry = nullptr; }
+  SCAEntry*    sca_entry()                          { return _sca_entry; }
+  bool         requires_online_compilation() const  { return _requires_online_compilation; }
+  DirectiveSet* directive() const                   { return _directive; }
+  CompileReason compile_reason() const              { return _compile_reason; }
   CodeSection::csize_t nm_content_size() { return _nm_content_size; }
   void         set_nm_content_size(CodeSection::csize_t size) { _nm_content_size = size; }
   CodeSection::csize_t nm_insts_size() { return _nm_insts_size; }

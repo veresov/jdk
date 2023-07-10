@@ -59,6 +59,7 @@
 #include "runtime/stubRoutines.hpp"
 #include "runtime/timerTrace.hpp"
 #include "runtime/threadIdentifier.hpp"
+#include "utilities/ostream.hpp"
 #ifdef COMPILER1
 #include "c1/c1_Runtime1.hpp"
 #include "c1/c1_LIRAssembler.hpp"
@@ -524,6 +525,40 @@ void* SCAEntry::operator new(size_t x, SCAFile* sca) {
   return (void*)(sca->add_entry());
 }
 
+static char* exclude_names[42];
+static uint exclude_count = 0;
+static char* exclude_line = nullptr;
+
+bool skip_preload(Method* m) {
+  const char* line = SCPreloadExclude;
+  if (exclude_line == nullptr && line != nullptr && line[0] != '\0') {
+    exclude_line = os::strdup(line);
+    char* ptr;
+    char* tok = strtok_r(exclude_line, ",", &ptr);
+    while (tok != nullptr && exclude_count < 42) {
+      exclude_names[exclude_count++] = tok;
+      tok = strtok_r(nullptr, ",", &ptr);
+    }
+    for(uint i = 0; i < exclude_count; i++) {
+      log_info(sca, init)("Exclude preloading code for '%s'", exclude_names[i]);
+    }
+  }
+  if (exclude_line != nullptr) {
+    char buf[256];
+    stringStream namest(buf, sizeof(buf));
+    m->print_short_name(&namest);
+    const char* name = namest.base() + 1;
+    size_t len = namest.size();
+    for(uint i = 0; i < exclude_count; i++) {
+      if (strncmp(exclude_names[i], name, len) == 0) {
+        log_info(sca, init)("Preloading code for %s excluded by SCPreloadExclude", name);
+        return true; // Exclude preloading for this method
+      }
+    }
+  }
+  return false;
+}
+
 void SCAFile::preload_code(JavaThread* thread) {
   assert(_for_read, "sanity");
   uint count = _load_header->entries_count();
@@ -537,7 +572,8 @@ void SCAFile::preload_code(JavaThread* thread) {
   if (preload_entries_count > 0) {
     uint* entries_index = (uint*)addr(_load_header->preload_entries_offset());
     log_info(sca, init)("Load %d preload entries from shared code archive '%s'", preload_entries_count, _archive_path);
-    for (uint i = 0; i < preload_entries_count; i++) {
+    uint count = MIN2(preload_entries_count, SCPreloadStop);
+    for (uint i = SCPreloadStart; i < count; i++) {
       uint index = entries_index[i];
       SCAEntry* entry = &(_load_entries[index]);
       if (entry->not_entrant()) {
@@ -545,6 +581,9 @@ void SCAFile::preload_code(JavaThread* thread) {
       }
       Method* m = entry->method();
       assert(((m != nullptr) && MetaspaceShared::is_in_shared_metaspace((address)m)), "sanity");
+      if (skip_preload(m)) {
+        continue; // Exclude preloading for this method
+      }
       methodHandle mh(thread, m);
       if (mh->sca_entry() != nullptr) {
         // Second C2 compilation of the same method could happen for
@@ -554,6 +593,8 @@ void SCAFile::preload_code(JavaThread* thread) {
       mh->set_sca_entry(entry);
       CompileBroker::compile_method(mh, InvocationEntryBci, CompLevel_full_optimization, methodHandle(), 0, false, CompileTask::Reason_Preload, thread);
     }
+    os::free(exclude_line);
+    exclude_line = nullptr;
   }
 }
 
