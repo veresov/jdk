@@ -94,7 +94,7 @@ void CompileTask::initialize(int compile_id,
                              const methodHandle& hot_method,
                              int hot_count,
                              CompileTask::CompileReason compile_reason,
-                             bool has_unsatisfied_deps,
+                             bool requires_online_compilation,
                              bool is_blocking) {
   assert(!_lock->is_locked(), "bad locking");
 
@@ -103,7 +103,7 @@ void CompileTask::initialize(int compile_id,
   _method = method();
   _method_holder = JNIHandles::make_weak_global(Handle(thread, method->method_holder()->klass_holder()));
   _osr_bci = osr_bci;
-  _has_unsatisfied_deps = has_unsatisfied_deps;
+  _requires_online_compilation = requires_online_compilation;
   _is_blocking = is_blocking;
   _comp_level = comp_level;
   _num_inlined_bytecodes = 0;
@@ -152,7 +152,7 @@ void CompileTask::initialize(int compile_id,
   }
 
   _sca_entry = nullptr;
-  if (osr_bci == InvocationEntryBci && !has_unsatisfied_deps && SCArchive::is_on_for_read()) {
+  if (osr_bci == InvocationEntryBci && !requires_online_compilation && SCArchive::is_on_for_read()) {
     // Check for cached code.
     if (compile_reason == CompileTask::Reason_Preload) {
       _sca_entry = method->sca_entry();

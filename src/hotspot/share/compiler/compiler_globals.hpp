@@ -408,6 +408,15 @@
   product(bool, PreloadSharedCode, false,                                   \
           "Preload compiled code before method execution")                  \
                                                                             \
+  product(uint, SCPreloadStart, 0,                                          \
+          "The id of the first shared code pre-load to permit")             \
+                                                                            \
+  product(uint, SCPreloadStop, max_jint,                                    \
+          "The id of the last shared code pre-load to permit")              \
+                                                                            \
+  product(ccstrlist, SCPreloadExclude, "",                                  \
+          "Exlcude preloading code for specified method")                   \
+                                                                            \
   product(ccstr, SharedCodeArchive, "code.jsa",                             \
           "File with compiled code")                                        \
                                                                             \
@@ -416,6 +425,18 @@
                                                                             \
   product(bool, VerifySharedCode, false, DIAGNOSTIC,                        \
           "Load compiled code but not publish")                             \
+                                                                            \
+  product(int, RecompilationLoadAverageThreshold, 5,                        \
+          "Queues load avergage after while recompilations are allowed")    \
+                                                                            \
+  product(int, RecompilationWorkUnitSize, 5,                                \
+          "Queues load avergage after while recompilations are allowed")    \
+                                                                            \
+  product(bool, UseRecompilation, false,                                    \
+          "Recompile methods for peak performance")                         \
+                                                                            \
+  product(bool, ForceRecompilation, false,                                  \
+          "Testing mode for recompilation")                                 \
 
 // end of COMPILER_FLAGS
 

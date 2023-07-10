@@ -54,12 +54,15 @@
 #include "jvmci/jvmci.hpp"
 #endif
 
-jlong CompilationPolicy::_start_time = 0;
+int64_t CompilationPolicy::_start_time = 0;
 int CompilationPolicy::_c1_count = 0;
 int CompilationPolicy::_c2_count = 0;
 int CompilationPolicy::_c3_count = 0;
 int CompilationPolicy::_sc_count = 0;
 double CompilationPolicy::_increase_threshold_at_ratio = 0;
+
+CompilationPolicy::LoadAverage CompilationPolicy::_load_average;
+volatile bool CompilationPolicy::_recompilation_done = false;
 
 void compilationPolicy_init() {
   CompilationPolicy::initialize();
@@ -72,6 +75,84 @@ int CompilationPolicy::compiler_count(CompLevel comp_level) {
     return c2_count();
   }
   return 0;
+}
+
+void CompilationPolicy::sample_load_average() {
+  const int c2_queue_size = CompileBroker::queue_size(CompLevel_full_optimization);
+  _load_average.sample(c2_queue_size);
+}
+
+bool CompilationPolicy::have_recompilation_work() {
+  if (UseRecompilation && TrainingData::have_data() && TrainingData::recompilation_schedule()->length() > 0 && !_recompilation_done) {
+    if (_load_average.value() <= RecompilationLoadAverageThreshold) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool CompilationPolicy::recompilation_step(int step, TRAPS) {
+  if (!have_recompilation_work()) {
+    return false;
+  }
+
+  const int size = TrainingData::recompilation_schedule()->length();
+  int i = 0;
+  int count = 0;
+  bool repeat = false;
+  for (; i < size && count < step; i++) {
+    if (!TrainingData::recompilation_status()[i]) {
+      MethodTrainingData* mtd = TrainingData::recompilation_schedule()->at(i);
+      if (!mtd->has_holder()) {
+        Atomic::release_store(&TrainingData::recompilation_status()[i], true);
+        continue;
+      }
+      const Method* method = mtd->holder();
+      InstanceKlass* klass = method->method_holder();
+      if (klass->is_not_initialized()) {
+        repeat = true;
+        continue;
+      }
+      CompiledMethod *cm = method->code();
+      if (cm == nullptr) {
+        repeat = true;
+        continue;
+      }
+
+      if (!ForceRecompilation && !(cm->is_sca() && cm->comp_level() == CompLevel_full_optimization)) {
+        // If it's already online-compiled at level 4, mark it as done.
+        if (cm->comp_level() == CompLevel_full_optimization) {
+          Atomic::store(&TrainingData::recompilation_status()[i], true);
+        } else {
+          repeat = true;
+        }
+        continue;
+      }
+      if (Atomic::cmpxchg(&TrainingData::recompilation_status()[i], false, true) == false) {
+        const methodHandle m(THREAD, const_cast<Method*>(method));
+        CompLevel next_level = CompLevel_full_optimization;
+
+        if (method->method_data() == nullptr) {
+          create_mdo(m, THREAD);
+        }
+
+        if (PrintTieredEvents) {
+          print_event(FORCE_RECOMPILE, m(), m(), InvocationEntryBci, next_level);
+        }
+        CompileBroker::compile_method(m, InvocationEntryBci, CompLevel_full_optimization, methodHandle(), 0,
+                                      true /*requires_online_compilation*/, CompileTask::Reason_MustBeCompiled, THREAD);
+        if (HAS_PENDING_EXCEPTION) {
+          CLEAR_PENDING_EXCEPTION;
+        }
+        count++;
+      }
+    }
+  }
+
+  if (i == size && !repeat) {
+    Atomic::release_store(&_recompilation_done, true);
+  }
+  return count > 0;
 }
 
 // Returns true if m must be compiled before executing it
@@ -98,18 +179,18 @@ void CompilationPolicy::maybe_compile_early(const methodHandle& m, TRAPS) {
     CompLevel cur_level = static_cast<CompLevel>(m->highest_comp_level());
     CompLevel next_level = trained_transition(m, cur_level, THREAD);
     if ((next_level != cur_level || recompile) && can_be_compiled(m, next_level) && !CompileBroker::compilation_is_in_queue(m)) {
-      bool has_unsatisfied_deps = false;
+      bool requires_online_compilation = false;
       CompileTrainingData* ctd = mtd->last_toplevel_compile(next_level);
       if (ctd != nullptr) {
-        has_unsatisfied_deps = (ctd->init_deps_left() > 0);
+        requires_online_compilation = (ctd->init_deps_left() > 0);
       }
-      if (has_unsatisfied_deps && recompile) {
+      if (requires_online_compilation && recompile) {
         return;
       }
       if (PrintTieredEvents) {
         print_event(FORCE_COMPILE, m(), m(), InvocationEntryBci, next_level);
       }
-      CompileBroker::compile_method(m, InvocationEntryBci, next_level, methodHandle(), 0, has_unsatisfied_deps, CompileTask::Reason_MustBeCompiled, THREAD);
+      CompileBroker::compile_method(m, InvocationEntryBci, next_level, methodHandle(), 0, requires_online_compilation, CompileTask::Reason_MustBeCompiled, THREAD);
       if (HAS_PENDING_EXCEPTION) {
         CLEAR_PENDING_EXCEPTION;
       }
@@ -432,6 +513,9 @@ void CompilationPolicy::print_event(EventType type, Method* m, Method* im, int b
   case FORCE_COMPILE:
     tty->print("force-compile");
     break;
+  case FORCE_RECOMPILE:
+    tty->print("force-recompile");
+    break;
   case REMOVE_FROM_QUEUE:
     tty->print("remove-from-queue");
     break;
@@ -464,6 +548,7 @@ void CompilationPolicy::print_event(EventType type, Method* m, Method* im, int b
   tty->print(" rate=");
   if (m->prev_time() == 0) tty->print("n/a");
   else tty->print("%f", m->rate());
+  tty->print(" load=%lf", _load_average.value());
 
   tty->print(" k=%.2lf,%.2lf", threshold_scale(CompLevel_full_profile, Tier3LoadFeedback),
                                threshold_scale(CompLevel_full_optimization, Tier4LoadFeedback));
@@ -709,7 +794,7 @@ CompileTask* CompilationPolicy::select_task(CompileQueue* compile_queue, JavaThr
   CompileTask *max_task = nullptr;
   Method* max_method = nullptr;
 
-  jlong t = nanos_to_millis(os::javaTimeNanos());
+  int64_t t = nanos_to_millis(os::javaTimeNanos());
   // Iterate through the queue and find a method with a maximum rate.
   for (CompileTask* task = compile_queue->first(); task != nullptr;) {
     CompileTask* next_task = task->next();
@@ -917,22 +1002,22 @@ void CompilationPolicy::compile(const methodHandle& mh, int bci, CompLevel level
     }
     int hot_count = (bci == InvocationEntryBci) ? mh->invocation_count() : mh->backedge_count();
     update_rate(nanos_to_millis(os::javaTimeNanos()), mh);
-    bool has_unsatisfied_deps = false;
+    bool requires_online_compilation = false;
     if (TrainingData::have_data()) {
       MethodTrainingData* mtd = MethodTrainingData::find(mh);
       if (mtd != nullptr) {
         CompileTrainingData* ctd = mtd->last_toplevel_compile(level);
         if (ctd != nullptr) {
-          has_unsatisfied_deps = (ctd->init_deps_left() > 0);
+          requires_online_compilation = (ctd->init_deps_left() > 0);
         }
       }
     }
-    CompileBroker::compile_method(mh, bci, level, mh, hot_count, has_unsatisfied_deps, CompileTask::Reason_Tiered, THREAD);
+    CompileBroker::compile_method(mh, bci, level, mh, hot_count, requires_online_compilation, CompileTask::Reason_Tiered, THREAD);
   }
 }
 
 // update_rate() is called from select_task() while holding a compile queue lock.
-void CompilationPolicy::update_rate(jlong t, const methodHandle& method) {
+void CompilationPolicy::update_rate(int64_t t, const methodHandle& method) {
   // Skip update if counters are absent.
   // Can't allocate them since we are holding compile queue lock.
   if (method->method_counters() == nullptr)  return;
@@ -946,8 +1031,8 @@ void CompilationPolicy::update_rate(jlong t, const methodHandle& method) {
 
   // We don't update the rate if we've just came out of a safepoint.
   // delta_s is the time since last safepoint in milliseconds.
-  jlong delta_s = t - SafepointTracing::end_of_last_safepoint_ms();
-  jlong delta_t = t - (method->prev_time() != 0 ? method->prev_time() : start_time()); // milliseconds since the last measurement
+  int64_t delta_s = t - SafepointTracing::end_of_last_safepoint_ms();
+  int64_t delta_t = t - (method->prev_time() != 0 ? method->prev_time() : start_time()); // milliseconds since the last measurement
   // How many events were there since the last time?
   int event_count = method->invocation_count() + method->backedge_count();
   int delta_e = event_count - method->prev_event_count();
@@ -970,9 +1055,9 @@ void CompilationPolicy::update_rate(jlong t, const methodHandle& method) {
 
 // Check if this method has been stale for a given number of milliseconds.
 // See select_task().
-bool CompilationPolicy::is_stale(jlong t, jlong timeout, const methodHandle& method) {
-  jlong delta_s = t - SafepointTracing::end_of_last_safepoint_ms();
-  jlong delta_t = t - method->prev_time();
+bool CompilationPolicy::is_stale(int64_t t, int64_t timeout, const methodHandle& method) {
+  int64_t delta_s = t - SafepointTracing::end_of_last_safepoint_ms();
+  int64_t delta_t = t - method->prev_time();
   if (delta_t > timeout && delta_s > timeout) {
     int event_count = method->invocation_count() + method->backedge_count();
     int delta_e = event_count - method->prev_event_count();

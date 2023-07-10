@@ -33,14 +33,11 @@
 #include "runtime/registerMap.hpp"
 #include "runtime/task.hpp"
 
-static constexpr int sampling_interval = 10; // In milliseconds
-
 volatile uint64_t MethodProfiler::_num_samples = 0;
-
 class MethodProfilerTask : public PeriodicTask {
 public:
   MethodProfilerTask()
-    : PeriodicTask(sampling_interval) {}
+    : PeriodicTask(RecordOptCompilationOrderInterval) {}
 
   void task() {
     MethodProfiler::tick();
@@ -124,7 +121,7 @@ GrowableArrayCHeap<nmethod*, mtClassShared>* MethodProfiler::sampled_nmethods() 
     NMethodIterator iter(NMethodIterator::only_not_unloading);
     while(iter.next()) {
       nmethod* nm = iter.method();
-      if (nm->is_compiled_by_c2()) {
+      if (nm->is_compiled_by_c2() || nm->is_compiled_by_jvmci()) {
         nmethods->append(nm);
       }
     }

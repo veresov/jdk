@@ -31,6 +31,56 @@
 #include "oops/trainingData.hpp"
 #include "utilities/globalDefinitions.hpp"
 
+
+template<int SAMPLE_COUNT = 256>
+class WeightedMovingAverage {
+  int _current;
+  int _samples[SAMPLE_COUNT];
+  int64_t _timestamps[SAMPLE_COUNT];
+
+  void sample(int s, int64_t t) {
+    assert(s >= 0, "Negative sample values are not supported");
+    _samples[_current] = s;
+    _timestamps[_current] = t;
+    if (++_current >= SAMPLE_COUNT) {
+      _current = 0;
+    }
+  }
+
+  // Since sampling happens at irregular invervals the solution is to
+  // discount the older samples proportionally to the time between
+  // the now and the time of the sample.
+  double value(int64_t t) const {
+    double decay_speed = 1;
+    double weighted_sum = 0;
+    int count = 0;
+    for (int i = 0; i < SAMPLE_COUNT; i++) {
+      if (_samples[i] >= 0) {
+        count++;
+        double delta_t = (t - _timestamps[i]) / 1000.0; // in seconds
+        if (delta_t < 1) delta_t = 1;
+        weighted_sum += (double) _samples[i] / (delta_t * decay_speed);
+      }
+    }
+    if (count > 0) {
+      return weighted_sum / count;
+    } else {
+      return 0;
+    }
+  }
+  static int64_t time() {
+    return nanos_to_millis(os::javaTimeNanos());
+  }
+public:
+  WeightedMovingAverage() : _current(0) {
+    for (int i = 0; i < SAMPLE_COUNT; i++) {
+      _samples[i] = -1;
+    }
+  }
+  void sample(int s) { sample(s, time()); }
+  double value() const { return value(time()); }
+};
+
 class CompileTask;
 class CompileQueue;
 /*
@@ -174,9 +224,13 @@ class CompilationPolicy : AllStatic {
   friend class CallPredicate;
   friend class LoopPredicate;
 
-  static jlong _start_time;
+  typedef WeightedMovingAverage<> LoadAverage;
+
+  static int64_t _start_time;
   static int _c1_count, _c2_count, _c3_count, _sc_count;
   static double _increase_threshold_at_ratio;
+  static LoadAverage _load_average;
+  static volatile bool _recompilation_done;
 
   // Set carry flags in the counters (in Method* and MDO).
   inline static void handle_counter_overflow(const methodHandle& method);
@@ -185,7 +239,7 @@ class CompilationPolicy : AllStatic {
   // Clamp the request level according to various constraints.
   inline static CompLevel limit_level(CompLevel level);
   // Common transition function. Given a predicate determines if a method should transition to another level.
-  template<typename Predicate>
+    template<typename Predicate>
   static CompLevel common(const methodHandle& method, CompLevel cur_level, JavaThread* THREAD, bool disable_feedback = false);
   template<typename Predicate>
   static CompLevel transition_from_none(const methodHandle& method, CompLevel cur_level, bool delay_profile, bool disable_feedback);
@@ -216,7 +270,7 @@ class CompilationPolicy : AllStatic {
   inline static bool is_old(const methodHandle& method);
   // Was a given method inactive for a given number of milliseconds.
   // If it is, we would remove it from the queue (see select_task()).
-  inline static bool is_stale(jlong t, jlong timeout, const methodHandle& method);
+  inline static bool is_stale(int64_t t, int64_t timeout, const methodHandle& method);
   // Compute the weight of the method for the compilation scheduling
   inline static double weight(Method* method);
   // Apply heuristics and return true if x should be compiled before y
@@ -224,7 +278,7 @@ class CompilationPolicy : AllStatic {
   inline static bool compare_tasks(CompileTask* x, CompileTask* y);
   // Compute event rate for a given method. The rate is the number of event (invocations + backedges)
   // per millisecond.
-  inline static void update_rate(jlong t, const methodHandle& method);
+  inline static void update_rate(int64_t t, const methodHandle& method);
   // Compute threshold scaling coefficient
   inline static double threshold_scale(CompLevel level, int feedback_k);
   // If a method is old enough and is still in the interpreter we would want to
@@ -242,7 +296,7 @@ class CompilationPolicy : AllStatic {
   static void set_c3_count(int x) { _c3_count = x;    }
   static void set_sc_count(int x) { _sc_count = x;    }
 
-  enum EventType { CALL, LOOP, COMPILE, FORCE_COMPILE, REMOVE_FROM_QUEUE, UPDATE_IN_QUEUE, REPROFILE, MAKE_NOT_ENTRANT };
+  enum EventType { CALL, LOOP, COMPILE, FORCE_COMPILE, FORCE_RECOMPILE, REMOVE_FROM_QUEUE, UPDATE_IN_QUEUE, REPROFILE, MAKE_NOT_ENTRANT };
   static void print_event(EventType type, Method* m, Method* im, int bci, CompLevel level);
   // Check if the method can be compiled, change level if necessary
   static void compile(const methodHandle& mh, int bci, CompLevel level, TRAPS);
@@ -260,8 +314,8 @@ class CompilationPolicy : AllStatic {
                                 int bci, CompLevel level, CompiledMethod* nm, TRAPS);
 
   static void set_increase_threshold_at_ratio() { _increase_threshold_at_ratio = 100 / (100 - (double)IncreaseFirstTierCompileThresholdAt); }
-  static void set_start_time(jlong t) { _start_time = t;    }
-  static jlong start_time()           { return _start_time; }
+  static void set_start_time(int64_t t) { _start_time = t;    }
+  static int64_t start_time()           { return _start_time; }
 
   // m must be compiled before executing it
   static bool must_be_compiled(const methodHandle& m, int comp_level = CompLevel_any);
@@ -273,7 +327,6 @@ class CompilationPolicy : AllStatic {
   static int c3_count() { return _c3_count; }
   static int sc_count() { return _sc_count; }
   static int compiler_count(CompLevel comp_level);
-
   // If m must_be_compiled then request a compilation from the CompileBroker.
   // This supports the -Xcomp option.
   static void compile_if_required(const methodHandle& m, TRAPS);
@@ -303,6 +356,10 @@ class CompilationPolicy : AllStatic {
   // Return highest level possible
   static CompLevel highest_compile_level();
   static void dump();
+
+  static void sample_load_average();
+  static bool have_recompilation_work();
+  static bool recompilation_step(int step, TRAPS);
 };
 
 #endif // SHARE_COMPILER_COMPILATIONPOLICY_HPP
