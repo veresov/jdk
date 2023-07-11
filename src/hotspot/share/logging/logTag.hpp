@@ -150,6 +150,7 @@ class outputStream;
   LOG_TAG(phases) \
   LOG_TAG(plab) \
   LOG_TAG(placeholders) \
+  LOG_TAG(precompile) \
   LOG_TAG(preempt) \
   LOG_TAG(preload) \
   LOG_TAG(preorder)  /* Trace all classes loaded in order referenced (not loaded) */ \

@@ -1987,11 +1987,8 @@ public:
 //    }
     if (td->is_MethodTrainingData()) {
       MethodTrainingData* mtd = td->as_MethodTrainingData();
-      if (mtd->has_holder()) {
-        CompileTrainingData* ctd = mtd->first_compile(/*CompLevel_full_optimization*/);
-        if (ctd != nullptr && ctd->compile_id() > 0) {
-          _methods.push((Method*)mtd->holder());
-        }
+      if (mtd->has_holder() && include((Method*)mtd->holder())) {
+        _methods.push((Method*)mtd->holder());
       }
     }
   }
@@ -2296,6 +2293,7 @@ void SystemDictionaryShared::preload_archived_classes(TRAPS) {
       PrecompileIterator comp;
       TrainingData::archived_training_data_dictionary()->iterate(&comp);
       if (ForcePrecompilation) {
+        _static_archive._builtin_dictionary.iterate(&comp);
         _dynamic_archive._builtin_dictionary.iterate(&comp);
       }
 
@@ -2311,7 +2309,7 @@ void SystemDictionaryShared::preload_archived_classes(TRAPS) {
           assert(!HAS_PENDING_EXCEPTION, "");
 
           CompLevel comp_level = MIN2(CompLevel_full_optimization, (CompLevel)PrecompileLevel);
-          if (cid == 0) {
+          if (cid == 0 && !ForcePrecompileLevel) {
             cid = compile_id(mh);
             comp_level = MIN2(CompLevel_limited_profile, (CompLevel)PrecompileLevel);
           }
@@ -2320,17 +2318,35 @@ void SystemDictionaryShared::preload_archived_classes(TRAPS) {
           if (precompile) {
             log_trace(cds,dynamic)("Precompile %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
             ++count;
-            CompileBroker::compile_method(mh, InvocationEntryBci, comp_level, methodHandle(), 0, false, CompileTask::Reason_Recorded, THREAD);
-            if (mh->code() == nullptr) {
-              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
+            {
+              MutexLocker ml(Compile_lock);
+              NoSafepointVerifier nsv;
+              CompiledMethod* nm = mh->code();
+              if (nm != nullptr) {
+                nm->make_not_used();
+              }
             }
+            assert(mh->code() == nullptr, "");
+            CompileBroker::compile_method(mh, InvocationEntryBci, comp_level, methodHandle(), 0, false, CompileTask::Reason_Recorded, THREAD);
+//            if (mh->code() == nullptr) {
+//              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
+//            }
           } else if (DirectivesStack::getMatchingDirective(mh, nullptr)->PrecompileRecordedOption) {
             log_trace(cds,dynamic)("Precompile (forced) %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
             ++count;
-            CompileBroker::compile_method(mh, InvocationEntryBci, PrecompileLevel, methodHandle(), 0, false, CompileTask::Reason_Recorded, THREAD);
-            if (mh->code() == nullptr) {
-              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
+            {
+              MutexLocker ml(Compile_lock);
+              NoSafepointVerifier nsv;
+              CompiledMethod* nm = mh->code();
+              if (nm != nullptr) {
+                nm->make_not_used();
+              }
             }
+            assert(mh->code() == nullptr, "");
+            CompileBroker::compile_method(mh, InvocationEntryBci, PrecompileLevel, methodHandle(), 0, false, CompileTask::Reason_Recorded, THREAD);
+//            if (mh->code() == nullptr) {
+//              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
+//            }
           }
         } else {
           log_trace(cds,dynamic)("Precompile skipped (not initialized: %s) %d " PTR_FORMAT " " PTR_FORMAT " %s at level %d",

@@ -123,12 +123,18 @@
           "Precompile archived methods")                                    \
            range(0, 4)                                                      \
                                                                             \
+  product(bool, ForcePrecompileLevel, false, DIAGNOSTIC,                    \
+          "Precompile archived methods")                                    \
+                                                                            \
   product(bool, ForcePrecompilation, false, DIAGNOSTIC,                     \
           "Precompile all methods")                                         \
                                                                             \
   product(int, ForcePrecompilationLevel, 0, DIAGNOSTIC,                     \
           "Precompile archived methods")                                    \
            range(0, 4)                                                      \
+                                                                            \
+  product(bool, EnforceClassInitDependencies, false, DIAGNOSTIC,            \
+          "Enforce class initialization dependencies")                      \
                                                                             \
 // end of CDS_FLAGS
 

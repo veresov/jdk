@@ -780,7 +780,9 @@ ciMethod* ciMethod::find_monomorphic_target(ciInstanceKlass* caller,
     // with the same name but different vtable indexes.
     return nullptr;
   }
-  return CURRENT_THREAD_ENV->get_method(target());
+  ciMethod* result = CURRENT_THREAD_ENV->get_method(target());
+  guarantee(result->is_loaded(), "");
+  return result;
 }
 
 // ------------------------------------------------------------------
@@ -850,6 +852,7 @@ ciMethod* ciMethod::resolve_invoke(ciKlass* caller, ciKlass* exact_receiver, boo
     // Don't return abstract methods because they aren't optimizable or interesting.
     return nullptr;
   }
+  guarantee(result->is_loaded(), "");
   return result;
 }
 
@@ -1038,18 +1041,22 @@ bool ciMethod::ensure_method_data() {
 //
 ciMethodData* ciMethod::method_data() {
   CompileTask::CompileReason reason = CURRENT_ENV->task()->compile_reason();
-  assert(reason != CompileTask::Reason_Recorded || CURRENT_ENV->task()->comp_level() == PrecompileLevel, "");
+  //assert(reason != CompileTask::Reason_Recorded || CURRENT_ENV->task()->comp_level() == PrecompileLevel, "");
   if (reason == CompileTask::Reason_Recorded && CURRENT_ENV->task()->comp_level() == CompLevel_full_optimization) {
     if (_method_data_recorded == nullptr) {
       VM_ENTRY_MARK;
       methodHandle h_m(thread, get_Method());
-      MethodData* mdo = SystemDictionaryShared::lookup_method_data(h_m());
+      MethodTrainingData* mtd = TrainingData::lookup_mtd_for(h_m());
+      MethodData* mdo = (mtd != nullptr ? mtd->final_profile() : nullptr); // SystemDictionaryShared::lookup_method_data(h_m());
 
       DirectiveSet* directives = DirectivesStack::getMatchingDirective(h_m, CURRENT_ENV->task()->compiler());
       if (mdo == nullptr || directives->IgnoreRecordedProfileOption) {
         if (directives->IgnoreRecordedProfileOption) {
           ResourceMark rm;
-          log_debug(cds,dynamic)("Ignore recorded profile for %s", h_m->name_and_sig_as_C_string());
+          log_debug(precompile)("Ignore recorded profile for %s", h_m->name_and_sig_as_C_string());
+        } else {
+          ResourceMark rm;
+          log_debug(precompile)("No profile for %s", h_m->name_and_sig_as_C_string());
         }
         _method_data_recorded = CURRENT_ENV->get_empty_methodData();
       } else {
@@ -1060,6 +1067,10 @@ ciMethodData* ciMethod::method_data() {
         }
         _method_data_recorded = CURRENT_ENV->get_method_data(mdo);
         _method_data_recorded->load_data();
+        {
+          ResourceMark rm;
+          log_debug(precompile)("Recorded profile " PTR_FORMAT " for %s", p2i(mdo), h_m->name_and_sig_as_C_string());
+        }
       }
     }
     assert(_method_data_recorded != nullptr, "");

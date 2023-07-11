@@ -220,7 +220,7 @@ MethodTrainingData* MethodTrainingData::make(const methodHandle& method,
       return mtd;
     }
   }
-  assert(td == nullptr && mtd == nullptr, "Should return if have result");
+  assert(td == nullptr && mtd == nullptr && !null_if_not_found, "Should return if have result");
   KlassTrainingData* ktd = KlassTrainingData::make(method->method_holder());
   {
     TrainingDataLocker l;

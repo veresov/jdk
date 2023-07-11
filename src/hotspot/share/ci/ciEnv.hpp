@@ -37,6 +37,7 @@
 #include "runtime/javaThread.hpp"
 
 class CompileTask;
+class CompileTrainingData;
 class OopMapSet;
 class SCAEntry;
 
@@ -221,6 +222,9 @@ private:
   }
   ciMethod* get_method(Method* o) {
     if (o == nullptr) return nullptr;
+    guarantee(o->constMethod()   != nullptr, "");
+    guarantee(o->constants()     != nullptr, "");
+    guarantee(o->method_holder() != nullptr, "");
     return get_metadata(o)->as_method();
   }
   ciMethodData* get_method_data(MethodData* o) {
@@ -524,6 +528,9 @@ public:
   void find_dynamic_call_sites();
 
   bool is_precompiled();
+  CompileTrainingData* training_data();
+  bool is_fully_initialized(InstanceKlass* ik);
+  InstanceKlass::ClassState compute_init_state_for_precompiled(InstanceKlass* ik);
 };
 
 #endif // SHARE_CI_CIENV_HPP

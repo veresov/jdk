@@ -3315,7 +3315,7 @@ void PhaseOutput::install_code(ciMethod*         target,
     if (C->log() != nullptr) { // Print code cache state into compiler log
       C->log()->code_cache_state();
     }
-    if (C->has_clinit_barriers()) {
+    if (C->has_clinit_barriers() && (PrecompileBarriers == 0)) {
       assert(C->for_preload(), "sanity");
       // Build second version of code without class initialization barriers
       C->record_failure(C2Compiler::retry_no_clinit_barriers());

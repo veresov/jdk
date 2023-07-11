@@ -432,7 +432,8 @@ public:
                      bool for_preload,
                      bool has_unsafe_access,
                      bool has_wide_vectors,
-                     bool has_monitors);
+                     bool has_monitors,
+                     uint decompile_count);
 
   static void print_on(outputStream* st);
 };

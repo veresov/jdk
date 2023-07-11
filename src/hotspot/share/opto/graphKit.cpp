@@ -3025,7 +3025,9 @@ void GraphKit::clinit_barrier(ciInstanceKlass* ik, ciMethod* context) {
   }
 }
 
-void GraphKit::clinit_barrier_precompiled(ciInstanceKlass *ik, ciMethod *context) {
+void GraphKit::clinit_barrier_precompiled(ciInstanceKlass* ik, ciMethod* context) {
+  assert(C->needs_clinit_barrier_precompiled(ik, context), "");
+
   Node* klass = makecon(TypeKlassPtr::make(ik));
 
   int init_state_off = in_bytes(InstanceKlass::init_state_offset());
@@ -3046,6 +3048,7 @@ void GraphKit::clinit_barrier_precompiled(ciInstanceKlass *ik, ciMethod *context
   if (UseNewCode) {
     insert_mem_bar(Op_MemBarCPUOrder);
   }
+  C->set_has_clinit_barriers(true);
 }
 
 //------------------------maybe_cast_profiled_receiver-------------------------

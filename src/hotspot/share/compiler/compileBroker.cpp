@@ -1422,6 +1422,20 @@ void CompileBroker::compile_method_base(const methodHandle& method,
                                requires_online_compilation, blocking);
   }
 
+  LogStreamHandle(Debug, compilation, training) log;
+  if (log.is_enabled()) {
+    MethodTrainingData*  mtd = TrainingData::lookup_mtd_for(method());
+    CompileTrainingData* ctd = (mtd != nullptr ? mtd->last_toplevel_compile(comp_level) : nullptr);
+
+    log.print("COMPILE %d %d", task->compile_id(), requires_online_compilation);
+    if (ctd != nullptr) {
+      log.print_raw(" CTD ");
+      ctd->print_on(&log, true);
+    } else {
+      log.print(" %s=null", (mtd == nullptr ? "mtd" : "ctd"));
+    }
+  }
+
   if (blocking) {
     wait_for_completion(task);
   }
