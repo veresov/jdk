@@ -2871,9 +2871,10 @@ void SCAddressTable::init() {
 
   SET_ADDRESS(_extrs, SharedRuntime::complete_monitor_unlocking_C);
   SET_ADDRESS(_extrs, SharedRuntime::enable_stack_reserved_zone);
+#ifdef AMD64
   SET_ADDRESS(_extrs, SharedRuntime::montgomery_multiply);
   SET_ADDRESS(_extrs, SharedRuntime::montgomery_square);
-
+#endif // AMD64
   SET_ADDRESS(_extrs, SharedRuntime::d2f);
   SET_ADDRESS(_extrs, SharedRuntime::d2i);
   SET_ADDRESS(_extrs, SharedRuntime::d2l);
