@@ -3005,13 +3005,13 @@ void GraphKit::guard_init_thread(Node* klass) {
 
 void GraphKit::clinit_barrier(ciInstanceKlass* ik, ciMethod* context) {
   if (C->do_clinit_barriers()) {
-    Node* klass = makecon(TypeKlassPtr::make(ik));
+    Node* klass = makecon(TypeKlassPtr::make(ik, Type::trust_interfaces));
     guard_klass_is_initialized(klass);
     return;
   }
   if (ik->is_being_initialized()) {
     if (C->needs_clinit_barrier(ik, context)) {
-      Node* klass = makecon(TypeKlassPtr::make(ik));
+      Node* klass = makecon(TypeKlassPtr::make(ik, Type::trust_interfaces));
       guard_klass_being_initialized(klass);
       guard_init_thread(klass);
       insert_mem_bar(Op_MemBarCPUOrder);
@@ -3028,7 +3028,15 @@ void GraphKit::clinit_barrier(ciInstanceKlass* ik, ciMethod* context) {
 void GraphKit::clinit_barrier_precompiled(ciInstanceKlass* ik, ciMethod* context) {
   assert(C->needs_clinit_barrier_precompiled(ik, context), "");
 
-  Node* klass = makecon(TypeKlassPtr::make(ik));
+  LogStreamHandle(Trace, precompile) log;
+  if (log.is_enabled()) {
+    log.print("clinit_barrier_precompiled ");
+    ik->print_name_on(&log);
+    log.print(" in ");
+    context->print_name(&log);
+  }
+
+  Node* klass = makecon(TypeKlassPtr::make(ik, Type::trust_interfaces));
 
   int init_state_off = in_bytes(InstanceKlass::init_state_offset());
   Node* adr = basic_plus_adr(top(), klass, init_state_off);
