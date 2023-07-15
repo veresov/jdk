@@ -4226,6 +4226,19 @@ bool Compile::needs_clinit_barrier_precompiled(ciField* field, ciMethod* accessi
 }
 
 bool Compile::needs_clinit_barrier_precompiled(ciInstanceKlass* holder, ciMethod* accessing_method) {
+  bool result = needs_clinit_barrier_precompiled_helper(holder, accessing_method);
+  LogStreamHandle(Trace, precompile) log;
+  if (log.is_enabled()) {
+    log.print("needs_clinit_barrier_precompiled ");
+    holder->print_name_on(&log);
+    log.print(" ");
+    accessing_method->print_name(&log);
+    log.print(" = %s", (result ? "true" : "false"));
+  }
+  return result;
+}
+
+bool Compile::needs_clinit_barrier_precompiled_helper(ciInstanceKlass* holder, ciMethod* accessing_method) {
   if (!env()->is_precompiled()) {
     return false; // not a precompilation
   }

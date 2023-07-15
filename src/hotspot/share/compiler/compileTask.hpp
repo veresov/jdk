@@ -223,7 +223,9 @@ class CompileTask : public CHeapObj<mtCompiler> {
 private:
   static void  print_impl(outputStream* st, Method* method, int compile_id, int comp_level,
                                       bool is_osr_method = false, int osr_bci = -1, bool is_blocking = false,
-                                      bool is_sca = false, bool from_recorded_data = false, bool is_preload = false,
+                                      bool from_recorded_data = false,
+                                      bool is_sca = false, bool is_preload = false,
+                                      bool has_clinit_barriers = false,
                                       const char* compiler_name = nullptr, const char* msg = nullptr, bool short_form = false, bool cr = true,
                                       jlong time_queued = 0, jlong time_started = 0);
 
@@ -233,7 +235,8 @@ public:
   static void  print(outputStream* st, const nmethod* nm, const char* msg = nullptr, bool short_form = false, bool cr = true) {
     print_impl(st, nm->method(), nm->compile_id(), nm->comp_level(),
                            nm->is_osr_method(), nm->is_osr_method() ? nm->osr_entry_bci() : -1, /*is_blocking*/ false,
-                           nm->sca_entry() != nullptr, nm->from_recorded_data(), nm->preloaded(), 
+                           nm->from_recorded_data(),
+                           nm->is_sca(), nm->preloaded(), nm->has_clinit_barriers(),
                            nm->compiler_name(), msg, short_form, cr);
   }
   static void  print_ul(const nmethod* nm, const char* msg = nullptr);

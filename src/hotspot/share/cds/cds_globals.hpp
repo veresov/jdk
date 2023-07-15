@@ -136,6 +136,9 @@
   product(bool, EnforceClassInitDependencies, false, DIAGNOSTIC,            \
           "Enforce class initialization dependencies")                      \
                                                                             \
+  product(bool, ForceClassInit, false, DIAGNOSTIC,                          \
+          "Force class initialization")                                     \
+                                                                            \
 // end of CDS_FLAGS
 
 DECLARE_FLAGS(CDS_FLAGS)

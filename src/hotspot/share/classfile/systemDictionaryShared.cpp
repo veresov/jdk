@@ -2044,6 +2044,31 @@ static int compare_by_compile_id(Method** m1, Method** m2) {
 void SystemDictionaryShared::preload_archived_classes(TRAPS) {
   ResourceMark rm;
 
+  bool prelink                 = (PreloadArchivedClasses > 0);
+  bool preinit                 = (PreloadArchivedClasses > 1);
+  bool preresolve_cp           = (Preresolve & 1) == 1;
+  bool preresolve_indy         = (Preresolve & 2) == 2;
+  bool preresolve_invokehandle = (Preresolve & 4) == 4;
+
+  preload_archived_classes(prelink, preinit, preresolve_cp, preresolve_indy, preresolve_invokehandle, THREAD);
+
+  if (PrecompileLevel > 0) {
+    int count = force_compilation(false, THREAD);
+    assert(!HAS_PENDING_EXCEPTION, "");
+    if (log_is_enabled(Info, cds, nmethod)) {
+      MutexLocker ml(Threads_lock);
+      CodeCache::arm_all_nmethods();
+    }
+  }
+
+  if (!preinit && ForceClassInit) {
+    preload_archived_classes(false, true, false, false, false, THREAD);
+  }
+}
+
+void SystemDictionaryShared::preload_archived_classes(bool prelink, bool preinit,
+                                                      bool preresolve_cp, bool preresolve_indy, bool preresolve_invokehandle,
+                                                      TRAPS) {
   jlong l1 = (UsePerfData ? ClassLoader::perf_ik_link_methods_time()->get_value() : -1);
   jlong l2 = (UsePerfData ? ClassLoader::perf_method_adapters_time()->get_value() : -1);
   jlong l3 = (UsePerfData ? ClassLoader::perf_ik_link_methods_count()->get_value() : -1);
@@ -2053,14 +2078,9 @@ void SystemDictionaryShared::preload_archived_classes(TRAPS) {
   int prelink_cnt = 0;
   int preinit_cnt = 0;
 
-  bool prelink                 = (PreloadArchivedClasses > 0);
-  bool preinit                 = (PreloadArchivedClasses > 1);
-  bool preresolve_cp           = (Preresolve & 1) == 1;
-  bool preresolve_indy         = (Preresolve & 2) == 2;
-  bool preresolve_invokehandle = (Preresolve & 4) == 4;
-
   log_info(cds,dynamic)("Preload started (link_methods = %ld, adapters = %ld, clinit = %ldms)",
                         l3, l4, ClassLoader::class_init_time_ms());
+
   if (_dynamic_archive._init_list != nullptr) {
     PerfTraceTime timer(ClassLoader::perf_preload_total_time());
 
@@ -2188,10 +2208,10 @@ void SystemDictionaryShared::preload_archived_classes(TRAPS) {
             JavaCallArguments args(Handle(THREAD, ik->java_mirror()));
             JavaValue result(T_VOID);
             JavaCalls::call_special(&result,
-                                   vmClasses::Class_klass(),
-                                   vmSymbols::preinit_name(),
-                                   vmSymbols::void_method_signature(),
-                                   &args, THREAD);
+                                    vmClasses::Class_klass(),
+                                    vmSymbols::preinit_name(),
+                                    vmSymbols::void_method_signature(),
+                                    &args, THREAD);
             if (HAS_PENDING_EXCEPTION) {
               Handle exc_handle(THREAD, PENDING_EXCEPTION);
               CLEAR_PENDING_EXCEPTION;
@@ -2287,83 +2307,8 @@ void SystemDictionaryShared::preload_archived_classes(TRAPS) {
         default: fatal("unknown: %d", info->type());
       }
     }
-
-    if (PrecompileLevel > 0) {
-      log_info(cds,dynamic)("Precompile started");
-      PrecompileIterator comp;
-      TrainingData::archived_training_data_dictionary()->iterate(&comp);
-      if (ForcePrecompilation) {
-        _static_archive._builtin_dictionary.iterate(&comp);
-        _dynamic_archive._builtin_dictionary.iterate(&comp);
-      }
-
-      comp._methods.sort(&compare_by_compile_id);
-
-      int count = 0;
-      for (int i = 0; i < comp._methods.length(); i++) {
-        methodHandle mh(THREAD, comp._methods.at(i));
-        int cid = compile_id(mh, CompLevel_full_optimization);
-
-        if (mh->method_holder()->is_initialized() ||
-            (!preinit && mh->method_holder()->is_linked())) {
-          assert(!HAS_PENDING_EXCEPTION, "");
-
-          CompLevel comp_level = MIN2(CompLevel_full_optimization, (CompLevel)PrecompileLevel);
-          if (cid == 0 && !ForcePrecompileLevel) {
-            cid = compile_id(mh);
-            comp_level = MIN2(CompLevel_limited_profile, (CompLevel)PrecompileLevel);
-          }
-
-          bool precompile = (cid > 0) || ForcePrecompilation;
-          if (precompile) {
-            log_trace(cds,dynamic)("Precompile %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
-            ++count;
-            {
-              MutexLocker ml(Compile_lock);
-              NoSafepointVerifier nsv;
-              CompiledMethod* nm = mh->code();
-              if (nm != nullptr) {
-                nm->make_not_used();
-              }
-            }
-            assert(mh->code() == nullptr, "");
-            CompileBroker::compile_method(mh, InvocationEntryBci, comp_level, methodHandle(), 0, false, CompileTask::Reason_Recorded, THREAD);
-//            if (mh->code() == nullptr) {
-//              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
-//            }
-          } else if (DirectivesStack::getMatchingDirective(mh, nullptr)->PrecompileRecordedOption) {
-            log_trace(cds,dynamic)("Precompile (forced) %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
-            ++count;
-            {
-              MutexLocker ml(Compile_lock);
-              NoSafepointVerifier nsv;
-              CompiledMethod* nm = mh->code();
-              if (nm != nullptr) {
-                nm->make_not_used();
-              }
-            }
-            assert(mh->code() == nullptr, "");
-            CompileBroker::compile_method(mh, InvocationEntryBci, PrecompileLevel, methodHandle(), 0, false, CompileTask::Reason_Recorded, THREAD);
-//            if (mh->code() == nullptr) {
-//              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
-//            }
-          }
-        } else {
-          log_trace(cds,dynamic)("Precompile skipped (not initialized: %s) %d " PTR_FORMAT " " PTR_FORMAT " %s at level %d",
-                                 InstanceKlass::state2name(mh->method_holder()->init_state()),
-                                 cid,
-                                 p2i(mh()), p2i(mh->method_holder()),
-                                 mh->name_and_sig_as_C_string(), PrecompileLevel);
-        }
-        assert(!HAS_PENDING_EXCEPTION, "");
-      }
-      if (log_is_enabled(Info, cds, nmethod)) {
-        MutexLocker ml(Threads_lock);
-        CodeCache::arm_all_nmethods();
-      }
-      log_info(cds,dynamic)("Precompile finished: %d methods compiled", count);
-    }
   }
+
   l1 = (UsePerfData ? ClassLoader::perf_ik_link_methods_time()->get_value() - l1: -1);
   l2 = (UsePerfData ? ClassLoader::perf_method_adapters_time()->get_value() - l2: -1);
   l3 = (UsePerfData ? ClassLoader::perf_ik_link_methods_count()->get_value() - l3: -1);
@@ -2381,6 +2326,86 @@ void SystemDictionaryShared::preload_archived_classes(TRAPS) {
       l3, Management::ticks_to_ms(l1), l1,
       l4, Management::ticks_to_ms(l2), l2,
       ClassLoader::class_init_time_ms());
+}
+
+bool SystemDictionaryShared::force_compilation(bool recompile, TRAPS) {
+  log_info(cds,dynamic)("Precompile started");
+  PrecompileIterator comp;
+  TrainingData::archived_training_data_dictionary()->iterate(&comp);
+  if (ForcePrecompilation) {
+    _static_archive._builtin_dictionary.iterate(&comp);
+    _dynamic_archive._builtin_dictionary.iterate(&comp);
+  }
+
+  comp._methods.sort(&compare_by_compile_id);
+
+  CompileTask::CompileReason comp_reason = (recompile ? CompileTask::Reason_MustBeCompiled
+                                                      : CompileTask::Reason_Recorded);
+  bool preinit = (PreloadArchivedClasses > 1) || recompile;
+  bool requires_online_comp = recompile;
+
+  int count = 0;
+  for (int i = 0; i < comp._methods.length(); i++) {
+    methodHandle mh(THREAD, comp._methods.at(i));
+    int cid = compile_id(mh, CompLevel_full_optimization);
+
+    if (mh->method_holder()->is_initialized() ||
+        (!preinit && mh->method_holder()->is_linked())) {
+      assert(!HAS_PENDING_EXCEPTION, "");
+
+      CompLevel comp_level = MIN2(CompLevel_full_optimization, (CompLevel)PrecompileLevel);
+      if (cid == 0 && !ForcePrecompileLevel) {
+        cid = compile_id(mh);
+        comp_level = MIN2(CompLevel_limited_profile, (CompLevel)PrecompileLevel);
+      }
+
+      bool compile = (cid > 0 && !DirectivesStack::getMatchingDirective(mh, nullptr)->DontPrecompileOption) || ForcePrecompilation;
+      if (compile) {
+        log_trace(cds,dynamic)("Precompile %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
+        ++count;
+        {
+          MutexLocker ml(Compile_lock);
+          NoSafepointVerifier nsv;
+          CompiledMethod* nm = mh->code();
+          if (nm != nullptr) {
+            nm->make_not_used();
+          }
+        }
+        assert(mh->code() == nullptr, "");
+        CompileBroker::compile_method(mh, InvocationEntryBci, comp_level, methodHandle(), 0, requires_online_comp, comp_reason, THREAD);
+//            if (mh->code() == nullptr) {
+//              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
+//            }
+      } else if (!recompile &&
+                 /*!DirectivesStack::getMatchingDirective(mh, nullptr)->DontPrecompileOption &&*/
+                 DirectivesStack::getMatchingDirective(mh, nullptr)->PrecompileRecordedOption) {
+        log_trace(cds,dynamic)("Precompile (forced) %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
+        ++count;
+        {
+          MutexLocker ml(Compile_lock);
+          NoSafepointVerifier nsv;
+          CompiledMethod* nm = mh->code();
+          if (nm != nullptr) {
+            nm->make_not_used();
+          }
+        }
+        assert(mh->code() == nullptr, "");
+        CompileBroker::compile_method(mh, InvocationEntryBci, PrecompileLevel, methodHandle(), 0, requires_online_comp, comp_reason, THREAD);
+//            if (mh->code() == nullptr) {
+//              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
+//            }
+      }
+    } else {
+      log_trace(cds,dynamic)("Precompile skipped (not initialized: %s) %d " PTR_FORMAT " " PTR_FORMAT " %s at level %d",
+                             InstanceKlass::state2name(mh->method_holder()->init_state()),
+                             cid,
+                             p2i(mh()), p2i(mh->method_holder()),
+                             mh->name_and_sig_as_C_string(), PrecompileLevel);
+    }
+    assert(!HAS_PENDING_EXCEPTION, "");
+  }
+  log_info(cds,dynamic)("Precompile finished: %d methods compiled", count);
+  return true;
 }
 
 InstanceKlass::ClassState SystemDictionaryShared::ArchiveInfo::lookup_init_state(InstanceKlass* ik) const {

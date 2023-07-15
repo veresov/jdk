@@ -83,7 +83,8 @@ void CompilationPolicy::sample_load_average() {
 }
 
 bool CompilationPolicy::have_recompilation_work() {
-  if (UseRecompilation && TrainingData::have_data() && TrainingData::recompilation_schedule()->length() > 0 && !_recompilation_done) {
+  if (UseRecompilation && TrainingData::have_data() && !_recompilation_done &&
+      (TrainingData::recompilation_schedule()->length() > 0 /*|| ForceRecompilation*/)) {
     if (_load_average.value() <= RecompilationLoadAverageThreshold) {
       return true;
     }
@@ -95,6 +96,16 @@ bool CompilationPolicy::recompilation_step(int step, TRAPS) {
   if (!have_recompilation_work()) {
     return false;
   }
+
+//  if (ForceRecompilation) {
+//    SystemDictionaryShared::force_compilation(true, THREAD);
+//    assert(!HAS_PENDING_EXCEPTION, "");
+//    if (HAS_PENDING_EXCEPTION) {
+//      CLEAR_PENDING_EXCEPTION;
+//    }
+//    Atomic::release_store(&_recompilation_done, true);
+//    return false;
+//  }
 
   const int size = TrainingData::recompilation_schedule()->length();
   int i = 0;
@@ -1320,7 +1331,7 @@ CompLevel CompilationPolicy::trained_transition(const methodHandle& method, Comp
   if (CompilationModeFlag::high_only() && next_level < CompLevel_full_optimization) {
     return CompLevel_none;
   }
-  return next_level;
+  return (next_level != cur_level) ? limit_level(next_level) : next_level;
 }
 
 /*
