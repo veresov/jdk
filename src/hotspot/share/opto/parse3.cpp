@@ -208,6 +208,17 @@ void Parse::do_get_xxx(Node* obj, ciField* field, bool is_field) {
 
   Node* ld = access_load_at(obj, adr, adr_type, type, bt, decorators);
 
+  if (CURRENT_ENV->is_precompiled() && is_obj && strcmp(field_klass->name(), "jdk/vm/ci/meta/SpeculationLog$Speculation") == 0) {
+    LogStreamHandle(Debug, precompile) log;
+    if (log.is_enabled()) {
+      log.print("getstatic: must_be_not_null ");
+      field->print_on(&log);
+    }
+    ld = must_be_not_null(ld, true);
+  } else {
+    log_trace(precompile)("getstatic: %s", field_klass->name());
+  }
+
   if (UseNewCode && CURRENT_ENV->is_precompiled() && field->is_static() && field->is_constant() && (PrecompileBarriers & 16) == 16) {
     ciConstant con = field->archived_value();
     if (con.is_valid()) {
