@@ -65,12 +65,12 @@ ciConstant ciInstance::field_value_impl(ciField* field, BasicType field_btype, i
     return value;
   }
   if (CURRENT_ENV->is_precompiled() && field->is_static() && (PrecompileBarriers & 16) == 16) {
-//    LogStreamHandle(Trace, cds, dynamic) log;
-//    if (log.is_enabled()) {
-//      ResourceMark rm;
-//      log.print("constant_value: %s: DISABLED: ", (field->is_static() ? "STATIC" : "INSTANCE"));
-//      field->print_on(&log);
-//    }
+    LogStreamHandle(Trace, precompile) log;
+    if (log.is_enabled()) {
+      ResourceMark rm;
+      log.print("constant_value: %s: DISABLED: ", (field->is_static() ? "STATIC" : "INSTANCE"));
+      field->print_on(&log);
+    }
     return ciConstant();
   }
   VM_ENTRY_MARK;
@@ -106,12 +106,16 @@ ciConstant ciInstance::field_value_impl(ciField* field, BasicType field_btype, i
     default:
       fatal("no field value: %s", type2name(field_btype));
   }
-//  LogStreamHandle(Trace, cds, dynamic) log;
-//  if (log.is_enabled()) {
-//    ResourceMark rm;
-//    log.print("constant_value: %s: ", (field->is_static() ? "STATIC" : "INSTANCE"));
-//    print_on(&log);
-//  }
+  if (CURRENT_ENV->is_precompiled()) {
+    LogStreamHandle(Trace, precompile) log;
+    if (log.is_enabled()) {
+      ResourceMark rm;
+      log.print("constant_value: %s: ", (field->is_static() ? "STATIC" : "INSTANCE"));
+      field->print_on(&log);
+      log.print(" = ");
+      value.print_on(&log);
+    }
+  }
   add_to_constant_value_cache(offset, value);
   return value;
 }
