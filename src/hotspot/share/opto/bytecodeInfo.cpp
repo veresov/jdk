@@ -207,9 +207,6 @@ bool InlineTree::should_not_inline(ciMethod* callee_method, ciMethod* caller_met
              // access allowed in the context of static initializer
              C->needs_clinit_barrier(callee_method->holder(), caller_method)) {
     fail_msg = "method holder not initialized";
-  } else if ((PrecompileBarriers & 2) == 2 &&
-             C->needs_clinit_barrier_precompiled(callee_method->holder(), caller_method)) {
-    fail_msg = "needs_clinit_barrier_precompiled";
   } else if (callee_method->is_native()) {
     fail_msg = "native method";
   } else if (callee_method->dont_inline()) {
@@ -501,10 +498,6 @@ bool InlineTree::pass_initial_checks(ciMethod* caller_method, int caller_bci, ci
   if (!callee_holder->is_initialized() &&
       // access allowed in the context of static initializer
       C->needs_clinit_barrier(callee_holder, caller_method)) {
-    return false;
-  }
-  if ((PrecompileBarriers & 1) == 1 &&
-      C->needs_clinit_barrier_precompiled(callee_holder, caller_method)) {
     return false;
   }
   if( !UseInterpreter ) /* running Xcomp */ {
