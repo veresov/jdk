@@ -1414,6 +1414,8 @@ void ClassLoader::initialize(TRAPS) {
     NEWPERFBYTECOUNTER(_perf_app_classfile_bytes_read, SUN_CLS, "appClassBytes");
     NEWPERFBYTECOUNTER(_perf_sys_classfile_bytes_read, SUN_CLS, "sysClassBytes");
 
+    NEWPERFEVENTCOUNTER(_unsafe_defineClassCallCounter, SUN_CLS, "unsafeDefineClassCalls");
+
     NEWPERFTICKCOUNTER(_perf_preload_total_time, SUN_CLS, "preloadTotalTime");
     NEWPERFTICKCOUNTER(_perf_preload_time, SUN_CLS, "preloadTime");
     NEWPERFTICKCOUNTER(_perf_prelink_time, SUN_CLS, "prelinkTime");
