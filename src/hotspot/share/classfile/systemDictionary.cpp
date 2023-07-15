@@ -159,7 +159,10 @@ void SystemDictionary::compute_java_loaders(TRAPS) {
       oop system_loader = get_system_class_loader_impl(CHECK);
       assert(_java_system_loader.resolve() == system_loader, "must be");
     )
- }
+  }
+
+  SystemDictionaryShared::init_archived_lambda_proxy_classes(Handle(THREAD, java_platform_loader()), CHECK);
+  SystemDictionaryShared::init_archived_lambda_proxy_classes(Handle(THREAD, java_system_loader()), CHECK);
 }
 
 oop SystemDictionary::get_system_class_loader_impl(TRAPS) {

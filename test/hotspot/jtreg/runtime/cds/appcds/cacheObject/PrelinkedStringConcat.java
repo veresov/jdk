@@ -247,7 +247,7 @@ public class PrelinkedStringConcat {
         if (!testAOT) {
             // Run with archive
             CDSOptions runOpts = (new CDSOptions())
-                .addPrefix("-cp", appJar, "-Xlog:class+load", "-Xlog:cds=debug",
+                .addPrefix("-cp", appJar, "-Xlog:class+load", "-Xlog:cds=debug", "-Xlog:cds+heap=debug",
                            "-Xlog:methodhandles")
                 .setArchiveName(archiveName)
                 .setUseVersion(false)

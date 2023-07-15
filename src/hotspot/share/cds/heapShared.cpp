@@ -421,6 +421,17 @@ void HeapShared::remove_scratch_objects(Klass* k) {
   _scratch_java_mirror_table->remove_oop(k);
 }
 
+bool HeapShared::is_lambda_form_klass(InstanceKlass* ik) {
+  return ik->is_hidden() &&
+    (ik->name()->starts_with("java/lang/invoke/LambdaForm$MH+") ||
+     ik->name()->starts_with("java/lang/invoke/LambdaForm$DMH+"));
+     
+}
+
+bool HeapShared::is_lambda_proxy_klass(InstanceKlass* ik) {
+  return ik->is_hidden() && (ik->name()->index_of_at(0, "$$Lambda+", 9) > 0);
+}
+
 void HeapShared::copy_preinitialized_mirror(Klass* orig_k, oop orig_mirror, oop m) {
   if (!orig_k->is_instance_klass()) {
     return;
@@ -429,7 +440,7 @@ void HeapShared::copy_preinitialized_mirror(Klass* orig_k, oop orig_mirror, oop 
   if (!ik->is_hidden()) {
     return;
   }
-  if (!ik->name()->starts_with("java/lang/invoke/LambdaForm$")) { // FIXME
+  if (!HeapShared::is_archived_hidden_klass(ik)) {
     return;
   }
 
@@ -677,8 +688,11 @@ void KlassSubGraphInfo::add_subgraph_object_klass(Klass* orig_k) {
   }
 
   if (buffered_k->is_instance_klass()) {
-    assert(InstanceKlass::cast(buffered_k)->is_shared_boot_class(),
-          "must be boot class");
+    if (!ArchiveInvokeDynamic) {
+      // FIXME: this supports Lambda Proxy classes
+      assert(InstanceKlass::cast(buffered_k)->is_shared_boot_class(),
+             "must be boot class");
+    }
     // vmClasses::xxx_klass() are not updated, need to check
     // the original Klass*
     if (orig_k == vmClasses::String_klass() ||
@@ -718,6 +732,10 @@ void KlassSubGraphInfo::add_subgraph_object_klass(Klass* orig_k) {
 }
 
 void KlassSubGraphInfo::check_allowed_klass(InstanceKlass* ik) {
+  if (ArchiveInvokeDynamic) {
+    // FIXME -- this allows LambdaProxy classes
+    return;
+  }
   if (ik->module()->name() == vmSymbols::java_base()) {
     assert(ik->package() != nullptr, "classes in java.base cannot be in unnamed package");
     return;
@@ -970,6 +988,7 @@ void HeapShared::initialize_java_lang_invoke(TRAPS) {
   }
 
   SystemDictionaryShared::init_archived_lambda_form_classes(CHECK);
+  SystemDictionaryShared::init_archived_lambda_proxy_classes(Handle(), CHECK);
 
   // FIXME - the following should be called only if we have archived MethodType table.
   resolve_or_init("java/lang/invoke/Invokers$Holder", true, CHECK);

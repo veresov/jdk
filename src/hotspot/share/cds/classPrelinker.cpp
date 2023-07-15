@@ -25,6 +25,7 @@
 #include "precompiled.hpp"
 #include "cds/archiveBuilder.hpp"
 #include "cds/classPrelinker.hpp"
+#include "cds/heapShared.hpp"
 #include "cds/lambdaFormInvokers.inline.hpp"
 #include "cds/regeneratedClasses.hpp"
 #include "classfile/classLoader.hpp"
@@ -267,7 +268,7 @@ void ClassPrelinker::dumptime_resolve_constants(InstanceKlass* ik, TRAPS) {
   if (LambdaFormInvokers::may_be_regenerated_class(ik->name())) {
     eager_resolve = true;
   }
-  if (ik->is_hidden() && ik->name()->starts_with("java/lang/invoke/LambdaForm$")) {
+  if (ik->is_hidden() && HeapShared::is_archived_hidden_klass(ik)) {
     eager_resolve = true;
   }
 
@@ -509,11 +510,18 @@ bool ClassPrelinker::should_preresolve_invokedynamic(ConstantPool* cp, int cp_in
   int bsm = cp->bootstrap_method_ref_index_at(cp_index);
   int bsm_ref = cp->method_handle_index_at(bsm);
   Symbol* bsm_name = cp->uncached_name_ref_at(bsm_ref);
-//Symbol* bsm_signature = cp->uncached_signature_ref_at(bsm_ref);
+  Symbol* bsm_signature = cp->uncached_signature_ref_at(bsm_ref);
   Symbol* bsm_klass = cp->klass_name_at(cp->uncached_klass_ref_index_at(bsm_ref));
 
   if (bsm_klass->equals("java/lang/invoke/StringConcatFactory") &&
       bsm_name->equals("makeConcatWithConstants")) {
+    // Support string concact for now
+    return true;
+  }
+
+  if (bsm_klass->equals("java/lang/invoke/LambdaMetafactory") &&
+      bsm_name->equals("metafactory") &&
+      bsm_signature->equals("(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;")) {
     // Support only string concact for now
     return true;
   }

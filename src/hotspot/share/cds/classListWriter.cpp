@@ -281,7 +281,7 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
     }
   }
 
-  if (cp->cache() != nullptr /*&& (ik->name()->equals("ConcatA") /*|| ik->name()->starts_with("Concat"))*/) {
+  if (cp->cache() != nullptr) {
     Array<ResolvedIndyEntry>* indy_entries = cp->cache()->resolved_indy_entries();
     if (indy_entries != nullptr) {
       for (int i = 0; i < indy_entries->length(); i++) {
