@@ -1556,6 +1556,11 @@ void nmethod::post_compiled_method(CompileTask* task) {
   task->set_nm_insts_size(insts_size());
   task->set_nm_total_size(total_size());
 
+  if (task->compile_reason() == CompileTask::Reason_Precompile ||
+      task->compile_reason() == CompileTask::Reason_Recorded) {
+    set_from_recorded_data();
+  }
+
   // task->is_sca() is true only for loaded cached code.
   // nmethod::_sca_entry is set for loaded and stored cached code
   // to invalidate the entry when nmethod is deoptimized.
