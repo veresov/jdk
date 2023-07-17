@@ -733,6 +733,11 @@ void SystemDictionaryShared::dumptime_classes_do(class MetaspaceClosure* it) {
 bool SystemDictionaryShared::add_verification_constraint(InstanceKlass* k, Symbol* name,
          Symbol* from_name, bool from_field_is_protected, bool from_is_array, bool from_is_object) {
   Arguments::assert_is_dumping_archive();
+  if (DynamicDumpSharedSpaces && k->is_shared()) {
+    // k is a new class in the static archive, but one of its supertypes is an old class, so k wasn't
+    // verified during dump time. No need to record constraints as k won't be included in the dynamic archive.
+    return false;
+  }
   DumpTimeClassInfo* info = get_info(k);
   info->add_verification_constraint(k, name, from_name, from_field_is_protected,
                                     from_is_array, from_is_object);
