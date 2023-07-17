@@ -892,7 +892,7 @@ void ClassListParser::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Byteco
     ref_kind = "field ";
     break;
   case Bytecodes::_invokevirtual:
-    InterpreterRuntime::cds_resolve_invoke(bc, raw_index, mh, cp, cp_cache_entry, CHECK);
+   //InterpreterRuntime::cds_resolve_invoke(bc, raw_index, mh, cp, cp_cache_entry, CHECK); FIXME: do this after classes have linked!
     ref_kind = "method";
     break;
   case Bytecodes::_invokespecial:

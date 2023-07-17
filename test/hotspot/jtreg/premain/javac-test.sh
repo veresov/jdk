@@ -372,8 +372,8 @@ for i in $TESTS; do
         REPLAY=" (With Training Data Replay)"
         X1="-XX:+RecordTraining"
         X2="-XX:+ReplayTraining"
-        STEP3="(STEP 3 of 4) "
-        STEP4="(STEP 4 of 4) "
+        STEP3="(STEP 3 of 5) "
+        STEP4="(STEP 4 of 5) "
         STEP5="(STEP 5 of 5) "
    fi
 
