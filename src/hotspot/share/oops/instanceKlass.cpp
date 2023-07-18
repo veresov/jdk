@@ -1606,6 +1606,9 @@ void InstanceKlass::call_class_initializer(TRAPS) {
     if (initialized) {
       return;
     }
+  } else if (is_shared() && is_hidden() && name()->starts_with("java/lang/invoke/LambdaForm$")) {
+    oop mirror = java_mirror();
+    return;
   }
 #endif
 
@@ -2651,6 +2654,7 @@ void InstanceKlass::metaspace_pointers_do(MetaspaceClosure* it) {
     }
   }
 
+  it->push(&_nest_host);
   it->push(&_nest_members);
   it->push(&_permitted_subclasses);
   it->push(&_record_components);
@@ -2712,8 +2716,12 @@ void InstanceKlass::remove_unshareable_info() {
   _methods_jmethod_ids = nullptr;
   _jni_ids = nullptr;
   _oop_map_cache = nullptr;
-  // clear _nest_host to ensure re-load at runtime
-  _nest_host = nullptr;
+  if (DumpSharedSpaces && ArchiveInvokeDynamic && HeapShared::is_lambda_proxy_klass(this)) {
+    // keep _nest_host
+  } else {
+    // clear _nest_host to ensure re-load at runtime
+    _nest_host = nullptr;
+  }
   init_shared_package_entry();
   _dep_context_last_cleaned = 0;
   _init_monitor = nullptr;

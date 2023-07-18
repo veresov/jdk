@@ -167,7 +167,9 @@ void LambdaFormInvokers::regenerate_holder_classes(TRAPS) {
       char *buf = NEW_RESOURCE_ARRAY(char, len);
       memcpy(buf, (char*)h_bytes->byte_at_addr(0), len);
       ClassFileStream st((u1*)buf, len, nullptr, ClassFileStream::verify);
-      regenerate_class(class_name, st, CHECK);
+      if (!ArchiveInvokeDynamic /* disabled for ArchiveInvokeDynamic because of JDK-8310831 */) {
+        regenerate_class(class_name, st, CHECK);
+      }
     }
   }
 }

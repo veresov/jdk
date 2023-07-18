@@ -33,6 +33,7 @@
 #include "classfile/javaClasses.hpp"
 #include "classfile/javaThreadStatus.hpp"
 #include "classfile/systemDictionary.hpp"
+#include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "code/SCArchive.hpp"
@@ -421,6 +422,10 @@ void Threads::initialize_jsr292_core_classes(TRAPS) {
   initialize_class(vmSymbols::java_lang_invoke_ResolvedMethodName(), CHECK);
   initialize_class(vmSymbols::java_lang_invoke_MemberName(), CHECK);
   initialize_class(vmSymbols::java_lang_invoke_MethodHandleNatives(), CHECK);
+
+  if (UseSharedSpaces) {
+    HeapShared::initialize_java_lang_invoke(CHECK);
+  }
 }
 
 jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {

@@ -25,6 +25,7 @@
 #include "precompiled.hpp"
 #include "cds/archiveUtils.hpp"
 #include "cds/classListParser.hpp"
+#include "cds/classPrelinker.hpp"
 #include "cds/lambdaFormInvokers.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "cds/unregisteredClasses.hpp"
@@ -36,7 +37,6 @@
 #include "classfile/vmClasses.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "interpreter/bytecode.hpp"
-#include "interpreter/bytecodeStream.hpp"
 #include "interpreter/interpreterRuntime.hpp"
 #include "interpreter/linkResolver.hpp"
 #include "jimage.hpp"
@@ -802,9 +802,12 @@ void ClassListParser::parse_constant_pool_tag() {
   }
 
   ResourceMark rm(THREAD);
-  ConstantPool* cp = ik->constants();
-  GrowableArray<bool> resolve_fmi_list(cp->length(), cp->length(), false);
-  bool has_fmi_index = false;
+  constantPoolHandle cp(THREAD, ik->constants());
+  GrowableArray<bool> preresolve_list(cp->length(), cp->length(), false);
+  bool preresolve_class = false;
+  bool preresolve_fmi = false;
+  bool preresolve_indy = false;
+  
   while (*_token) {
     int cp_index;
     skip_whitespaces();
@@ -812,27 +815,22 @@ void ClassListParser::parse_constant_pool_tag() {
     if (cp_index < 1 || cp_index >= cp->length()) {
       constant_pool_resolution_warning("Invalid constant pool index %d", cp_index);
       return;
+    } else {
+      preresolve_list.at_put(cp_index, true);
     }
     switch (cp->tag_at(cp_index).value()) {
     case JVM_CONSTANT_UnresolvedClass:
-      if (PreloadSharedClasses) {
-        cp->klass_at(cp_index, THREAD);
-        if (HAS_PENDING_EXCEPTION) {
-          CLEAR_PENDING_EXCEPTION; // just ignore
-        }
-      }
+      preresolve_class = true;
       break;
     case JVM_CONSTANT_UnresolvedClassInError:
     case JVM_CONSTANT_Class:
       // ignore
-      break;
     case JVM_CONSTANT_Fieldref:
-      resolve_fmi_list.at_put(cp_index, true);
-      has_fmi_index = true;
-      break;
     case JVM_CONSTANT_Methodref:
-      resolve_fmi_list.at_put(cp_index, true);
-      has_fmi_index = true;
+      preresolve_fmi = true;
+      break;
+    case JVM_CONSTANT_InvokeDynamic:
+      preresolve_indy = true;
       break;
     default:
       constant_pool_resolution_warning("Unsupported constant pool index %d (type=%d)",
@@ -841,74 +839,13 @@ void ClassListParser::parse_constant_pool_tag() {
     }
   }
 
-  if (has_fmi_index && cp->cache() != nullptr) {
-    // Resolve all getfield/setfield bytecodes if possible.
-    for (int i = 0; i < ik->methods()->length(); i++) {
-      Method* m = ik->methods()->at(i);
-      BytecodeStream bcs(methodHandle(THREAD, m));
-      while (!bcs.is_last_bytecode()) {
-        bcs.next();
-        Bytecodes::Code bc = bcs.raw_code();
-        switch (bc) {
-        case Bytecodes::_getfield:
-        case Bytecodes::_putfield:
-        case Bytecodes::_invokespecial:
-        case Bytecodes::_invokevirtual:
-          maybe_resolve_fmi_ref(ik, m, bc, bcs.get_index_u2_cpcache(), &resolve_fmi_list, THREAD);
-          if (HAS_PENDING_EXCEPTION) {
-            CLEAR_PENDING_EXCEPTION; // just ignore
-          }
-          break;
-        default:
-          break;
-        }
-      }
-    }
+  if (preresolve_class) {
+    ClassPrelinker::preresolve_class_cp_entries(THREAD, ik, &preresolve_list);
   }
-}
-
-void ClassListParser::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecodes::Code bc, int raw_index,
-                                            GrowableArray<bool>* resolve_fmi_list, TRAPS) {
-  methodHandle mh(THREAD, m);
-  constantPoolHandle cp(THREAD, ik->constants());
-
-  int cpc_index = cp->decode_cpcache_index(raw_index);
-  ConstantPoolCacheEntry* cp_cache_entry = cp->cache()->entry_at(cpc_index);
-  if (cp_cache_entry->is_resolved(bc)) {
-    return;
+  if (preresolve_fmi) {
+    ClassPrelinker::preresolve_field_and_method_cp_entries(THREAD, ik, &preresolve_list);
   }
-  int cp_index = cp_cache_entry->constant_pool_index();
-  if (!resolve_fmi_list->at(cp_index)) {
-    // This field wasn't resolved during the trial run. Don't attempt to resolve it. Otherwise
-    // the compiler may generate less efficient code.
-    return;
-  }
-
-  const char* ref_kind = "";
-  switch (bc) {
-  case Bytecodes::_getfield:
-  case Bytecodes::_putfield:
-    InterpreterRuntime::resolve_get_put(bc, raw_index, mh, cp, cp_cache_entry, CHECK);
-    ref_kind = "field ";
-    break;
-  case Bytecodes::_invokevirtual:
-   //InterpreterRuntime::cds_resolve_invoke(bc, raw_index, mh, cp, cp_cache_entry, CHECK); FIXME: do this after classes have linked!
-    ref_kind = "method";
-    break;
-  case Bytecodes::_invokespecial:
-    // Not implemented yet.
-    return;
-  default:
-    ShouldNotReachHere();
-  }
-
-  if (log_is_enabled(Trace, cds, resolve)) {
-    ResourceMark rm(THREAD);
-    Klass* resolved_klass = cp->klass_ref_at(raw_index, bc, CHECK);
-    Symbol* name = cp->name_ref_at(raw_index, bc);
-    Symbol* signature = cp->signature_ref_at(raw_index, bc);
-    log_trace(cds, resolve)("Resolved %s [%3d] %s -> %s.%s:%s", ref_kind, cp_index, ik->external_name(),
-                            resolved_klass->external_name(),
-                            name->as_C_string(), signature->as_C_string());
+  if (preresolve_indy) {
+    ClassPrelinker::preresolve_indy_cp_entries(THREAD, ik, &preresolve_list);
   }
 }

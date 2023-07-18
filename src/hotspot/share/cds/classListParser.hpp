@@ -134,8 +134,6 @@ private:
 
   void resolve_indy(JavaThread* current, Symbol* class_name_symbol);
   void resolve_indy_impl(Symbol* class_name_symbol, TRAPS);
-  void maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecodes::Code bc, int raw_index,
-                             GrowableArray<bool>* resolve_fmi_list, TRAPS);
   bool parse_one_line();
   Klass* load_current_class(Symbol* class_name_symbol, TRAPS);
   void parse_constant_pool_tag();

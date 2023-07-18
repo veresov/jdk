@@ -26,6 +26,7 @@
 #include "cds/archiveHeapWriter.hpp"
 #include "cds/filemap.hpp"
 #include "cds/heapShared.hpp"
+#include "cds/regeneratedClasses.hpp"
 #include "classfile/javaClasses.hpp"
 #include "gc/shared/collectedHeap.hpp"
 #include "memory/iterator.inline.hpp"
@@ -611,6 +612,10 @@ void ArchiveHeapWriter::compute_ptrmap(ArchiveHeapInfo* heap_info) {
     Metadata** buffered_field_addr = requested_addr_to_buffered_addr(requested_field_addr);
     Metadata* native_ptr = *buffered_field_addr;
     assert(native_ptr != nullptr, "sanity");
+
+    if (RegeneratedClasses::has_been_regenerated((address)native_ptr)) {
+      native_ptr = (Metadata*)RegeneratedClasses::get_regenerated_object((address)native_ptr);
+    }
 
     address buffered_native_ptr = ArchiveBuilder::current()->get_buffered_addr((address)native_ptr);
     address requested_native_ptr = ArchiveBuilder::current()->to_requested(buffered_native_ptr);

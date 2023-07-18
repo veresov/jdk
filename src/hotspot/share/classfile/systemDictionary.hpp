@@ -333,12 +333,13 @@ private:
                                             bool is_superclass, TRAPS);
   static bool check_shared_class_super_types(InstanceKlass* ik, Handle class_loader,
                                                Handle protection_domain, TRAPS);
-  // Second part of load_shared_class
-  static void load_shared_class_misc(InstanceKlass* ik, ClassLoaderData* loader_data) NOT_CDS_RETURN;
   static void restore_archived_method_handle_intrinsics_impl(TRAPS);
 
 protected:
   // Used by SystemDictionaryShared
+
+  // Second part of load_shared_class
+  static void load_shared_class_misc(InstanceKlass* ik, ClassLoaderData* loader_data) NOT_CDS_RETURN;
 
   static bool add_loader_constraint(Symbol* name, Klass* klass_being_linked,  Handle loader1,
                                     Handle loader2);

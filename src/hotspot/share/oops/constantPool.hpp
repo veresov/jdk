@@ -695,6 +695,7 @@ class ConstantPool : public Metadata {
   // CDS support
   objArrayOop prepare_resolved_references_for_archiving() NOT_CDS_JAVA_HEAP_RETURN_(nullptr);
   void add_dumped_interned_strings() NOT_CDS_JAVA_HEAP_RETURN;
+  bool can_archive_invokehandle(ConstantPoolCacheEntry* cpce);
   bool maybe_archive_resolved_klass_at(int cp_index);
   bool maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index, int cp_tag);
   void archive_entries();

@@ -27,19 +27,22 @@
 
 #include "memory/allStatic.hpp"
 #include "oops/oopHandle.hpp"
-#include "runtime/handles.hpp"
 #include "utilities/growableArray.hpp"
 #include "utilities/resourceHash.hpp"
 
 class RegeneratedClasses : public AllStatic {
  private:
-  using RegeneratedObjTable = ResourceHashtable<address, address, 15889, AnyObj::C_HEAP, mtClassShared>;
-  static RegeneratedObjTable* _renegerated_objs; // InstanceKlass* and Method*
+  using AddrToAddrTable = ResourceHashtable<address, address, 15889, AnyObj::C_HEAP, mtClassShared>;
+  // These two tables contain InstanceKlass* and Method*.
+  static AddrToAddrTable* _original_objs;    // regenerated object -> orig object
+  static AddrToAddrTable* _renegerated_objs; // orig object        -> regenerated object
   static GrowableArrayCHeap<OopHandle, mtClassShared>* _regenerated_mirrors;
  public:
   static void add_class(InstanceKlass* src_klass, InstanceKlass* regen_klass);
   static void cleanup();
   static bool has_been_regenerated(address orig_obj);
+  static address get_regenerated_object(address orig_obj);
+  static bool is_a_regenerated_object(address obj);
   static void record_regenerated_objects();
 };
 
