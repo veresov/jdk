@@ -279,6 +279,7 @@ private:
 
   static GrowableArrayCHeap<oop, mtClassShared>* _pending_roots;
   static OopHandle _roots;
+  static int _permobj_segments;
   static OopHandle _scratch_basic_type_mirrors[T_VOID+1];
   static KlassToOopHandleTable* _scratch_java_mirror_table;
 
@@ -389,7 +390,7 @@ private:
 
   // Run-time only
   static void clear_root(int index);
-
+  static void set_permobj_segments(int n) { _permobj_segments = n; }
   static void setup_test_class(const char* test_class_name) PRODUCT_RETURN;
 #endif // INCLUDE_CDS_JAVA_HEAP
 
@@ -416,6 +417,9 @@ private:
     return cast_to_oop(to_requested_address(cast_from_oop<address>(dumptime_oop)));
   }
   static bool is_a_test_class_in_unnamed_module(Klass* ik) NOT_CDS_JAVA_HEAP_RETURN_(false);
+
+  static int get_archived_object_permanent_index(oop obj) NOT_CDS_JAVA_HEAP_RETURN_(-1);
+  static oop get_archived_object(int permanent_index) NOT_CDS_JAVA_HEAP_RETURN_(nullptr);
 };
 
 #if INCLUDE_CDS_JAVA_HEAP

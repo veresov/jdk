@@ -134,6 +134,7 @@ GrowableArrayCHeap<oop, mtClassShared>* HeapShared::_pending_roots = nullptr;
 OopHandle HeapShared::_roots;
 OopHandle HeapShared::_scratch_basic_type_mirrors[T_VOID+1];
 KlassToOopHandleTable* HeapShared::_scratch_java_mirror_table = nullptr;
+int HeapShared::_permobj_segments = 0;
 
 static bool is_subgraph_root_class_of(ArchivableStaticFieldInfo fields[], InstanceKlass* ik) {
   for (int i = 0; fields[i].valid(); i++) {
@@ -235,6 +236,69 @@ objArrayOop HeapShared::roots() {
   objArrayOop roots = (objArrayOop)_roots.resolve();
   assert(roots != nullptr, "should have been initialized");
   return roots;
+}
+
+static unsigned int oop_handle_hash(const OopHandle& oh) {
+  oop o = oh.resolve();
+  if (o == nullptr) {
+    return 0;
+  } else {
+    return o->identity_hash();
+  }
+}
+
+static bool oop_handle_equals(const OopHandle& a, const OopHandle& b) {
+  return a.resolve() == b.resolve();
+}
+
+class ArchivedObjectPermanentIndexTable: public ResourceHashtable<OopHandle, int,
+    36137, // prime number
+    AnyObj::C_HEAP,
+    mtClassShared,
+    oop_handle_hash,
+    oop_handle_equals> {};
+
+static ArchivedObjectPermanentIndexTable* _permanent_index_table = nullptr;
+
+int HeapShared::get_archived_object_permanent_index(oop obj) {
+  if (_permobj_segments <= 0) {
+    return -1;
+  }
+
+  int first_permobj_segment = roots()->length() - _permobj_segments;
+
+  MutexLocker ml(ArchivedObjectTables_lock);
+  if (_permanent_index_table == nullptr) {
+    _permanent_index_table = new ArchivedObjectPermanentIndexTable();
+    for (int i = 0; i < _permobj_segments; i++) {
+      objArrayOop a = (objArrayOop)roots()->obj_at(i + first_permobj_segment);
+      for (int j = 0; j < a->length(); j++) {
+        OopHandle oh(Universe::vm_global(), a->obj_at(j));
+        int index = (i << ArchiveHeapWriter::PERMOBJ_SEGMENT_MAX_SHIFT) + j;
+        _permanent_index_table->put(oh, index);
+      }
+    }
+  }
+
+  OopHandle tmp(&obj);
+  int* v = _permanent_index_table->get(tmp);
+  if (v == nullptr) {
+    return -1;
+  } else {
+    int n = *v;
+    return n;
+  }
+}
+
+oop HeapShared::get_archived_object(int permanent_index) {
+  assert(ArchiveHeapLoader::is_in_use(), "Do not call this if CDS heap is not in use");
+  assert(_permobj_segments > 0, "must be");
+
+  int first_permobj_segment = roots()->length() - _permobj_segments;
+  int upper = permanent_index >> ArchiveHeapWriter::PERMOBJ_SEGMENT_MAX_SHIFT;
+  int lower = permanent_index &  ArchiveHeapWriter::PERMOBJ_SEGMENT_MAX_MASK;
+  objArrayOop a = (objArrayOop)roots()->obj_at(upper + first_permobj_segment);
+  return a->obj_at(lower);
 }
 
 // Returns an objArray that contains all the roots of the archived objects
@@ -835,6 +899,7 @@ void HeapShared::write_subgraph_info_table() {
 void HeapShared::serialize_root(SerializeClosure* soc) {
   oop roots_oop = nullptr;
 
+  soc->do_int(&_permobj_segments);
   if (soc->reading()) {
     soc->do_oop(&roots_oop); // read from archive
     assert(oopDesc::is_oop_or_null(roots_oop), "is oop");
