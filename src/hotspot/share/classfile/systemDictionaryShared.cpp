@@ -696,7 +696,10 @@ void SystemDictionaryShared::set_excluded(InstanceKlass* k) {
 void SystemDictionaryShared::set_class_has_failed_verification(InstanceKlass* ik) {
   Arguments::assert_is_dumping_archive();
   DumpTimeClassInfo* p = get_info(ik);
-  p->set_failed_verification();
+  if (p != nullptr) {
+    // TEMP: work around JDK-8312427
+    p->set_failed_verification();
+  }
 }
 
 bool SystemDictionaryShared::has_class_failed_verification(InstanceKlass* ik) {
