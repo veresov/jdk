@@ -997,15 +997,19 @@ bool ciMethod::has_member_arg() const {
 //
 // Generate new MethodData* objects at compile time.
 // Return true if allocation was successful or no MDO is required.
-bool ciMethod::ensure_method_data(const methodHandle& h_m) {
+bool ciMethod::ensure_method_data(const methodHandle& h_m, bool training_data_only) {
   EXCEPTION_CONTEXT;
   if (is_native() || is_abstract() || h_m()->is_accessor()) {
     return true;
   }
   if (h_m()->method_data() == nullptr) {
-    Method::build_profiling_method_data(h_m, THREAD);
-    if (HAS_PENDING_EXCEPTION) {
-      CLEAR_PENDING_EXCEPTION;
+    if (training_data_only) {
+      Method::install_training_method_data(h_m);
+    } else {
+      Method::build_profiling_method_data(h_m, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        CLEAR_PENDING_EXCEPTION;
+      }
     }
   }
   if (h_m()->method_data() != nullptr) {
@@ -1018,12 +1022,12 @@ bool ciMethod::ensure_method_data(const methodHandle& h_m) {
 }
 
 // public, retroactive version
-bool ciMethod::ensure_method_data() {
+bool ciMethod::ensure_method_data(bool training_data_only) {
   bool result = true;
   if (_method_data == nullptr || _method_data->is_empty()) {
     GUARDED_VM_ENTRY({
       methodHandle mh(Thread::current(), get_Method());
-      result = ensure_method_data(mh);
+      result = ensure_method_data(mh, training_data_only);
     });
   }
   return result;

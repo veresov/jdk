@@ -417,7 +417,7 @@ class Method : public Metadata {
   bool was_never_executed()                     { return !was_executed_more_than(0);  }
 
   static void build_profiling_method_data(const methodHandle& method, TRAPS);
-
+  static bool install_training_method_data(const methodHandle& method);
   static MethodCounters* build_method_counters(Thread* current, Method* m);
 
   int interpreter_invocation_count()            { return invocation_count();          }
