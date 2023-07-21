@@ -593,8 +593,10 @@ void SCAFile::preload_code(JavaThread* thread) {
       mh->set_sca_entry(entry);
       CompileBroker::compile_method(mh, InvocationEntryBci, CompLevel_full_optimization, methodHandle(), 0, false, CompileTask::Reason_Preload, thread);
     }
-    os::free(exclude_line);
-    exclude_line = nullptr;
+    if (exclude_line != nullptr) {
+      os::free(exclude_line);
+      exclude_line = nullptr;
+    }
   }
 }
 
