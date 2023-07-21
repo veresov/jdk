@@ -92,7 +92,7 @@ bool CompilationPolicy::have_recompilation_work() {
 }
 
 bool CompilationPolicy::recompilation_step(int step, TRAPS) {
-  if (!have_recompilation_work()) {
+  if (!have_recompilation_work() || os::elapsedTime() < DelayRecompilation) {
     return false;
   }
 
