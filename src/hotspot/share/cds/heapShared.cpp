@@ -267,7 +267,7 @@ int HeapShared::get_archived_object_permanent_index(oop obj) {
 
   int first_permobj_segment = roots()->length() - _permobj_segments;
 
-  MutexLocker ml(ArchivedObjectTables_lock);
+  MutexLocker ml(ArchivedObjectTables_lock, Mutex::_no_safepoint_check_flag);
   if (_permanent_index_table == nullptr) {
     _permanent_index_table = new (mtClass)ArchivedObjectPermanentIndexTable();
     for (int i = 0; i < _permobj_segments; i++) {

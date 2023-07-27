@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "asm/macroAssembler.hpp"
+#include "cds/heapShared.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "ci/ciConstant.hpp"
 #include "ci/ciEnv.hpp"
@@ -2009,6 +2010,13 @@ jobject SCAReader::read_oop(JavaThread* thread, const methodHandle& comp_method)
     BasicType bt = (BasicType)t;
     obj = java_lang_Class::primitive_mirror(bt);
     log_info(sca)("%d (L%d): Read primitive type klass: %s", compile_id(), comp_level(), type2name(bt));
+  } else if (kind == DataKind::String_Shared) {
+    code_offset = read_position();
+    int k = *(int*)addr(code_offset);
+    code_offset += sizeof(int);
+    set_read_position(code_offset);
+    obj = HeapShared::get_archived_object(k);
+    assert(k == HeapShared::get_archived_object_permanent_index(obj), "sanity");
   } else if (kind == DataKind::String) {
     code_offset = read_position();
     int length = *(int*)addr(code_offset);
@@ -2031,6 +2039,13 @@ jobject SCAReader::read_oop(JavaThread* thread, const methodHandle& comp_method)
   } else if (kind == DataKind::PlaLoader) {
     obj = SystemDictionary::java_platform_loader();
     log_info(sca)("%d (L%d): Read java_platform_loader", compile_id(), comp_level());
+  } else if (kind == DataKind::MH_Oop_Shared) {
+    code_offset = read_position();
+    int k = *(int*)addr(code_offset);
+    code_offset += sizeof(int);
+    set_read_position(code_offset);
+    obj = HeapShared::get_archived_object(k);
+    assert(k == HeapShared::get_archived_object_permanent_index(obj), "sanity");
   } else {
     set_lookup_failed();
     log_warning(sca)("%d (L%d): Unknown oop's kind: %d",
@@ -2187,6 +2202,19 @@ bool SCAFile::write_oop(jobject& jo) {
       }
     }
   } else if (java_lang_String::is_instance(obj)) {
+    int k = HeapShared::get_archived_object_permanent_index(obj);  // k >= 1 means obj is a "permanent heap object"
+    if (k > 0) {
+      kind = DataKind::String_Shared;
+      n = write_bytes(&kind, sizeof(int));
+      if (n != sizeof(int)) {
+        return false;
+      }
+      n = write_bytes(&k, sizeof(int));
+      if (n != sizeof(int)) {
+        return false;
+      }
+      return true;
+    }
     kind = DataKind::String;
     n = write_bytes(&kind, sizeof(int));
     if (n != sizeof(int)) {
@@ -2223,6 +2251,19 @@ bool SCAFile::write_oop(jobject& jo) {
       return false;
     }
   } else {
+    int k = HeapShared::get_archived_object_permanent_index(obj);  // k >= 1 means obj is a "permanent heap object"
+    if (k > 0) {
+      kind = DataKind::MH_Oop_Shared;
+      n = write_bytes(&kind, sizeof(int));
+      if (n != sizeof(int)) {
+        return false;
+      }
+      n = write_bytes(&k, sizeof(int));
+      if (n != sizeof(int)) {
+        return false;
+      }
+      return true;
+    }
     // Unhandled oop - bailout
     set_lookup_failed();
     log_warning(sca, nmethod)("%d (L%d): Unhandled obj: " PTR_FORMAT " : %s",
