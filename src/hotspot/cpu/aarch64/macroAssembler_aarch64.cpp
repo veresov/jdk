@@ -29,6 +29,7 @@
 #include "asm/assembler.hpp"
 #include "asm/assembler.inline.hpp"
 #include "ci/ciEnv.hpp"
+#include "code/SCArchive.hpp"
 #include "compiler/compileTask.hpp"
 #include "compiler/disassembler.hpp"
 #include "compiler/oopMap.hpp"
@@ -345,6 +346,16 @@ public:
     return 2;
   }
   virtual int immediate(address insn_addr, address &target) {
+    // Metadata pointers are either narrow (32 bits) or wide (48 bits).
+    // We encode narrow ones by setting the upper 16 bits in the first
+    // instruction.
+    if (Instruction_aarch64::extract(_insn, 31, 21) == 0b11010010101) {
+      assert(nativeInstruction_at(insn_addr+4)->is_movk(), "wrong insns in patch");
+      narrowKlass nk = CompressedKlassPointers::encode((Klass*)target);
+      Instruction_aarch64::patch(insn_addr, 20, 5, nk >> 16);
+      Instruction_aarch64::patch(insn_addr+4, 20, 5, nk & 0xffff);
+      return 2;
+    }
     assert(Instruction_aarch64::extract(_insn, 31, 21) == 0b11010010100, "must be");
     uint64_t dest = (uint64_t)target;
     // Move wide constant
@@ -475,6 +486,16 @@ public:
   }
   virtual int immediate(address insn_addr, address &target) {
     uint32_t *insns = (uint32_t *)insn_addr;
+    // Metadata pointers are either narrow (32 bits) or wide (48 bits).
+    // We encode narrow ones by setting the upper 16 bits in the first
+    // instruction.
+    if (Instruction_aarch64::extract(_insn, 31, 21) == 0b11010010101) {
+      assert(nativeInstruction_at(insn_addr+4)->is_movk(), "wrong insns in patch");
+      narrowKlass nk = (narrowKlass)((uint32_t(Instruction_aarch64::extract(_insn, 20, 5)) << 16)
+                                   +  uint32_t(Instruction_aarch64::extract(insns[1], 20, 5)));
+      target = (address)CompressedKlassPointers::decode(nk);
+      return 2;
+    }
     assert(Instruction_aarch64::extract(_insn, 31, 21) == 0b11010010100, "must be");
     // Move wide constant: movz, movk, movk.  See movptr().
     assert(nativeInstruction_at(insns+1)->is_movk(), "wrong insns in patch");
@@ -672,6 +693,9 @@ void MacroAssembler::set_last_Java_frame(Register last_java_sp,
 }
 
 static inline bool target_needs_far_branch(address addr) {
+  if (SCArchive::is_on() && StoreSharedCode) {
+    return true;
+  }
   // codecache size <= 128M
   if (!MacroAssembler::far_branches()) {
     return false;
