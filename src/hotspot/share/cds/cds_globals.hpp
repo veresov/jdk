@@ -103,10 +103,14 @@
   product(bool, ArchiveFieldReferences, true,                               \
           "Archive resolved JVM_CONSTANT_Fieldref in ConstantPool")         \
                                                                             \
+  product(bool, ArchiveInvokeDynamic, false,                                \
+          "Archive resolved JVM_CONSTANT_InvokeDynamic in ConstantPool")    \
+                                                                            \
   product(bool, ArchiveMethodReferences, true,                              \
           "Archive resolved JVM_CONSTANT_Methodref and "                    \
           "JVM_CONSTANT_InterfaceMethodref in ConstantPool")                \
                                                                             \
+
 // end of CDS_FLAGS
 
 DECLARE_FLAGS(CDS_FLAGS)

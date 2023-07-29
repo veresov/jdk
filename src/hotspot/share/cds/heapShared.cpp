@@ -82,6 +82,27 @@ struct ArchivableStaticFieldInfo {
   }
 };
 
+class HeapShared::ArchivingObjectMark : public StackObj {
+public:
+  ArchivingObjectMark(oop obj) {
+    _trace->push(obj);
+  }
+  ~ArchivingObjectMark() {
+    _trace->pop();
+  }
+};
+
+class HeapShared::ContextMark : public StackObj {
+  ResourceMark rm;
+public:
+  ContextMark(const char* c) : rm{} {
+    _context->push(c);
+  }
+  ~ContextMark() {
+    _context->pop();
+  }
+};
+
 bool HeapShared::_disable_writing = false;
 bool HeapShared::_box_classes_inited = false;
 DumpedInternedStrings *HeapShared::_dumped_interned_strings = nullptr;
@@ -117,6 +138,9 @@ static ArchivableStaticFieldInfo archive_subgraph_entry_fields[] = {
   {"java/lang/ModuleLayer",                       "EMPTY_LAYER"},
   {"java/lang/module/Configuration",              "EMPTY_CONFIGURATION"},
   {"jdk/internal/math/FDBigInteger",              "archivedCaches"},
+  {"java/lang/invoke/DirectMethodHandle",         "archivedObjects"},
+  {"java/lang/invoke/MethodType",                 "archivedObjects"},
+  {"java/lang/invoke/LambdaForm$NamedFunction",   "archivedObjects"},
 #ifndef PRODUCT
   {nullptr, nullptr}, // Extra slot for -XX:ArchiveHeapTestClass
 #endif
@@ -133,6 +157,8 @@ static ArchivableStaticFieldInfo fmg_archive_subgraph_entry_fields[] = {
 
 KlassSubGraphInfo* HeapShared::_default_subgraph_info;
 GrowableArrayCHeap<oop, mtClassShared>* HeapShared::_pending_roots = nullptr;
+GrowableArrayCHeap<oop, mtClassShared>* HeapShared::_trace = nullptr;
+GrowableArrayCHeap<const char*, mtClassShared>* HeapShared::_context = nullptr;
 OopHandle HeapShared::_roots;
 OopHandle HeapShared::_scratch_basic_type_mirrors[T_VOID+1];
 KlassToOopHandleTable* HeapShared::_scratch_java_mirror_table = nullptr;
@@ -459,13 +485,88 @@ void HeapShared::remove_scratch_objects(Klass* k) {
   _scratch_java_mirror_table->remove_oop(k);
 }
 
+bool HeapShared::is_lambda_form_klass(InstanceKlass* ik) {
+  return ik->is_hidden() &&
+    (ik->name()->starts_with("java/lang/invoke/LambdaForm$MH+") ||
+     ik->name()->starts_with("java/lang/invoke/LambdaForm$DMH+") ||
+     ik->name()->starts_with("java/lang/invoke/LambdaForm$BMH+"));
+     
+}
+
+bool HeapShared::is_lambda_proxy_klass(InstanceKlass* ik) {
+  return ik->is_hidden() && (ik->name()->index_of_at(0, "$$Lambda+", 9) > 0);
+}
+
+void HeapShared::copy_preinitialized_mirror(Klass* orig_k, oop orig_mirror, oop m) {
+  if (!orig_k->is_instance_klass()) {
+    return;
+  }
+  InstanceKlass* ik = InstanceKlass::cast(orig_k);
+  if (!ik->is_hidden()) {
+    return;
+  }
+  if (!HeapShared::is_archived_hidden_klass(ik)) {
+    return;
+  }
+
+  for (JavaFieldStream fs(ik); !fs.done(); fs.next()) {
+    if (fs.access_flags().is_static()) {
+      fieldDescriptor& fd = fs.field_descriptor();
+      int offset = fd.offset();
+      switch (fd.field_type()) {
+      case T_OBJECT:
+      case T_ARRAY:
+        m->obj_field_put(offset, orig_mirror->obj_field(offset));
+        break;
+      case T_BOOLEAN:
+        m->bool_field_put(offset, orig_mirror->bool_field(offset));
+        break;
+      case T_BYTE:
+        m->byte_field_put(offset, orig_mirror->byte_field(offset));
+        break;
+      case T_SHORT:
+        m->short_field_put(offset, orig_mirror->short_field(offset));
+        break;
+      case T_CHAR:
+        m->char_field_put(offset, orig_mirror->char_field(offset));
+        break;
+      case T_INT:
+        m->int_field_put(offset, orig_mirror->int_field(offset));
+        break;
+      case T_LONG:
+        m->long_field_put(offset, orig_mirror->long_field(offset));
+        break;
+      case T_FLOAT:
+        m->float_field_put(offset, orig_mirror->float_field(offset));
+        break;
+      case T_DOUBLE:
+        m->double_field_put(offset, orig_mirror->double_field(offset));
+        break;
+      default:
+        ShouldNotReachHere();
+      }
+    }
+  }
+}
+
+static void copy_java_mirror_hashcode(oop orig_mirror, oop scratch_m) {
+  int src_hash = orig_mirror->identity_hash();
+  scratch_m->set_mark(markWord::prototype().copy_set_hash(src_hash));
+  assert(scratch_m->mark().is_unlocked(), "sanity");
+
+  DEBUG_ONLY(int archived_hash = scratch_m->identity_hash());
+  assert(src_hash == archived_hash, "Java mirror wrong hash: original %x, scratch %x", src_hash, archived_hash);
+}
+
 void HeapShared::archive_java_mirrors() {
   for (int i = T_BOOLEAN; i < T_VOID+1; i++) {
     BasicType bt = (BasicType)i;
     if (!is_reference_type(bt)) {
+      oop orig_mirror = Universe::java_mirror(bt);
       oop m = _scratch_basic_type_mirrors[i].resolve();
       assert(m != nullptr, "sanity");
-      bool success = archive_reachable_objects_from(1, _default_subgraph_info, m);
+      copy_java_mirror_hashcode(orig_mirror, m);
+      bool success = archive_reachable_objects_from(1, _default_subgraph_info, orig_mirror);
       assert(success, "sanity");
 
       log_trace(cds, heap, mirror)(
@@ -480,10 +581,13 @@ void HeapShared::archive_java_mirrors() {
   assert(klasses != nullptr, "sanity");
   for (int i = 0; i < klasses->length(); i++) {
     Klass* orig_k = klasses->at(i);
+    oop orig_mirror = orig_k->java_mirror();
     oop m = scratch_java_mirror(orig_k);
     if (m != nullptr) {
+      copy_java_mirror_hashcode(orig_mirror, m);
+      copy_preinitialized_mirror(orig_k, orig_mirror, m);
       Klass* buffered_k = ArchiveBuilder::get_buffered_klass(orig_k);
-      bool success = archive_reachable_objects_from(1, _default_subgraph_info, m);
+      bool success = archive_reachable_objects_from(1, _default_subgraph_info, orig_mirror);
       guarantee(success, "scratch mirrors must point to only archivable objects");
       buffered_k->set_archived_java_mirror(append_root(m));
       ResourceMark rm;
@@ -520,6 +624,8 @@ void HeapShared::mark_native_pointers(oop orig_obj) {
   if (java_lang_Class::is_instance(orig_obj)) {
     ArchiveHeapWriter::mark_native_pointer(orig_obj, java_lang_Class::klass_offset());
     ArchiveHeapWriter::mark_native_pointer(orig_obj, java_lang_Class::array_klass_offset());
+  } else if (java_lang_invoke_ResolvedMethodName::is_instance(orig_obj)) {
+    ArchiveHeapWriter::mark_native_pointer(orig_obj, java_lang_invoke_ResolvedMethodName::vmtarget_offset());
   }
 }
 
@@ -528,6 +634,8 @@ void HeapShared::archive_objects(ArchiveHeapInfo *heap_info) {
     NoSafepointVerifier nsv;
 
     _default_subgraph_info = init_subgraph_info(vmClasses::Object_klass(), false);
+    _trace = new GrowableArrayCHeap<oop, mtClassShared>(250);
+    _context = new GrowableArrayCHeap<const char*, mtClassShared>(250);
 
     // Cache for recording where the archived objects are copied to
     create_archived_object_cache();
@@ -645,8 +753,11 @@ void KlassSubGraphInfo::add_subgraph_object_klass(Klass* orig_k) {
   }
 
   if (buffered_k->is_instance_klass()) {
-    assert(InstanceKlass::cast(buffered_k)->is_shared_boot_class(),
-          "must be boot class");
+    if (!ArchiveInvokeDynamic) {
+      // FIXME: this supports Lambda Proxy classes
+      assert(InstanceKlass::cast(buffered_k)->is_shared_boot_class(),
+             "must be boot class");
+    }
     // vmClasses::xxx_klass() are not updated, need to check
     // the original Klass*
     if (orig_k == vmClasses::String_klass() ||
@@ -686,6 +797,10 @@ void KlassSubGraphInfo::add_subgraph_object_klass(Klass* orig_k) {
 }
 
 void KlassSubGraphInfo::check_allowed_klass(InstanceKlass* ik) {
+  if (ArchiveInvokeDynamic) {
+    // FIXME -- this allows LambdaProxy classes
+    return;
+  }
   if (ik->module()->name() == vmSymbols::java_base()) {
     assert(ik->package() != nullptr, "classes in java.base cannot be in unnamed package");
     return;
@@ -933,6 +1048,24 @@ void HeapShared::resolve_classes_for_subgraph_of(JavaThread* current, Klass* k) 
   }
 }
 
+void HeapShared::initialize_java_lang_invoke(TRAPS) {
+  if (!UseSharedSpaces) {
+    return;
+  }
+
+  SystemDictionaryShared::init_archived_lambda_form_classes(CHECK);
+  SystemDictionaryShared::init_archived_lambda_proxy_classes(Handle(), CHECK);
+
+  // FIXME - the following should be called only if we have archived MethodType table.
+  resolve_or_init("java/lang/invoke/Invokers$Holder", true, CHECK);
+  resolve_or_init("java/lang/invoke/MethodHandle", true, CHECK);
+  resolve_or_init("java/lang/invoke/MethodHandleNatives", true, CHECK);
+  resolve_or_init("java/lang/invoke/DirectMethodHandle$Holder", true, CHECK);
+  resolve_or_init("java/lang/invoke/DelegatingMethodHandle$Holder", true, CHECK);
+  resolve_or_init("java/lang/invoke/LambdaForm$Holder", true, CHECK);
+  resolve_or_init("java/lang/invoke/BoundMethodHandle$Species_L", true, CHECK);
+}
+
 void HeapShared::initialize_from_archived_subgraph(JavaThread* current, Klass* k) {
   JavaThread* THREAD = current;
   if (!ArchiveHeapLoader::is_in_use()) {
@@ -1004,6 +1137,58 @@ HeapShared::resolve_or_init_classes_for_subgraph_of(Klass* k, bool do_init, TRAP
       log_info(cds, heap)("%s subgraph %s ", do_init ? "init" : "resolve", k->external_name());
     }
 
+    if (do_init && k->name() == vmSymbols::java_lang_invoke_MethodType()) {
+      // FIXME - hack.
+      //
+      // (The real fix would be to archive the MethodType class in its already initialized state. That
+      //  way we don't need to re-execute the <clinit> methods)
+      //
+      // We need to do this to break a cycle in the way the archived subgraphs are restored. Without this block, we
+      // have the following sequence
+      //
+      // MethodType.<clinit>()
+      //  -> CDS.initializeFromArchive(MethodType.class);
+      //   -> (this "if" block)
+      //   -> resolve_or_init("MethodType", ...); // this does nothing because MethodType.<clinit> is already executing
+      //   -> resolve_or_init("DirectMethodHandle", ...); // this class is in record->subgraph_object_klasses();
+      //      -> DirectMethodHandle.<clinit>()
+      //          -> MethodType.methodType()
+      //             -> MethodType.genericMethodType()
+      //               -> aaload MethodType.objectOnlyTypes[n]; <<<< here
+      //
+      // We need to restore MethodType.objectOnlyTypes here, or else the above aaload will
+      // get an NPE.
+      Array<int>* entry_field_records = record->entry_field_records();
+      assert(entry_field_records != nullptr, "must be");
+      int efr_len = entry_field_records->length();
+      assert(efr_len == 2, "must be");
+      int root_index = entry_field_records->at(1);
+      oop obj = get_root(root_index, /*clear=*/false);
+      if (obj != nullptr) {
+        objArrayOop archivedObjects = objArrayOop(obj);
+        InstanceKlass* ik = InstanceKlass::cast(k);
+        oop m = ik->java_mirror();
+
+        {
+          fieldDescriptor fd;
+          TempNewSymbol name = SymbolTable::new_symbol("archivedMethodTypes");
+          TempNewSymbol sig  = SymbolTable::new_symbol("Ljava/util/HashMap;");
+          Klass* result = ik->find_field(name, sig, true, &fd);
+          assert(result != nullptr, "must be");
+          m->obj_field_put(fd.offset(), archivedObjects->obj_at(0));
+        }
+
+        {
+          fieldDescriptor fd;
+          TempNewSymbol name = SymbolTable::new_symbol("objectOnlyTypes");
+          TempNewSymbol sig  = SymbolTable::new_symbol("[Ljava/lang/invoke/MethodType;");
+          Klass* result = ik->find_field(name, sig, true, &fd);
+          assert(result != nullptr, "must be");
+          m->obj_field_put(fd.offset(), archivedObjects->obj_at(1));
+        }
+      }
+    }
+
     resolve_or_init(k, do_init, CHECK_NULL);
 
     // Load/link/initialize the klasses of the objects in the subgraph.
@@ -1021,6 +1206,19 @@ HeapShared::resolve_or_init_classes_for_subgraph_of(Klass* k, bool do_init, TRAP
   }
 
   return record;
+}
+
+void HeapShared::resolve_or_init(const char* klass_name, bool do_init, TRAPS) {
+  TempNewSymbol klass_name_sym =  SymbolTable::new_symbol(klass_name);
+  InstanceKlass* k = SystemDictionaryShared::find_builtin_class(klass_name_sym);
+  if (k == nullptr) {
+    return;
+  }
+  assert(k->is_shared_boot_class(), "sanity");
+  resolve_or_init(k, false, CHECK);
+  if (do_init) {
+    resolve_or_init(k, true, CHECK);
+  }
 }
 
 void HeapShared::resolve_or_init(Klass* k, bool do_init, TRAPS) {
@@ -1092,7 +1290,6 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
   bool _record_klasses_only;
   KlassSubGraphInfo* _subgraph_info;
   oop _referencing_obj;
-
   // The following are for maintaining a stack for determining
   // CachedOopInfo::_referrer
   static WalkOopAndArchiveClosure* _current;
@@ -1120,7 +1317,6 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
     oop obj = RawAccess<>::oop_load(p);
     if (!CompressedOops::is_null(obj)) {
       size_t field_delta = pointer_delta(p, _referencing_obj, sizeof(char));
-
       if (!_record_klasses_only && log_is_enabled(Debug, cds, heap)) {
         ResourceMark rm;
         log_debug(cds, heap)("(%d) %s[" SIZE_FORMAT "] ==> " PTR_FORMAT " size " SIZE_FORMAT " %s", _level,
@@ -1184,6 +1380,30 @@ void HeapShared::init_box_classes(TRAPS) {
   }
 }
 
+void HeapShared::exit_on_error() {
+  if (_context != nullptr) {
+    ResourceMark rm;
+    LogStream ls(Log(cds, heap)::error());
+    ls.print_cr("Context");
+    for (int i = 0; i < _context->length(); i++) {
+      const char* s = _context->at(i);
+      ls.print_cr("- %s", s);
+    }
+  }
+  if (_trace != nullptr) {
+    ResourceMark rm;
+    LogStream ls(Log(cds, heap)::error());
+    ls.print_cr("Reference trace");
+    for (int i = 0; i < _trace->length(); i++) {
+      oop orig_obj = _trace->at(i);
+      ls.print_cr("[%d] ========================================", i);
+      orig_obj->print_on(&ls);
+      ls.cr();
+    }
+  }
+  MetaspaceShared::unrecoverable_writing_error();
+}
+
 // (1) If orig_obj has not been archived yet, archive it.
 // (2) If orig_obj has not been seen yet (since start_recording_subgraph() was called),
 //     trace all  objects that are reachable from it, and make sure these objects are archived.
@@ -1191,6 +1411,7 @@ void HeapShared::init_box_classes(TRAPS) {
 bool HeapShared::archive_reachable_objects_from(int level,
                                                 KlassSubGraphInfo* subgraph_info,
                                                 oop orig_obj) {
+  ArchivingObjectMark mark(orig_obj);
   assert(orig_obj != nullptr, "must be");
 
   if (!JavaClasses::is_supported_for_archiving(orig_obj)) {
@@ -1199,24 +1420,29 @@ bool HeapShared::archive_reachable_objects_from(int level,
     // these objects that are referenced (directly or indirectly) by static fields.
     ResourceMark rm;
     log_error(cds, heap)("Cannot archive object of class %s", orig_obj->klass()->external_name());
-    MetaspaceShared::unrecoverable_writing_error();
+    exit_on_error();
   }
 
+#if 0
   if (java_lang_Class::is_instance(orig_obj) && subgraph_info != _default_subgraph_info) {
     if (can_mirror_be_used_in_subgraph(orig_obj)) {
       orig_obj = scratch_java_mirror(orig_obj);
       assert(orig_obj != nullptr, "must be archived");
     } else {
-      // Except for a few well-known types (see can_mirror_be_used_in_subgraph(orig_obj)),
-      // java mirrors cannot be included in an archived object sub-graph.
-      //
-      // If you get an error here, you probably made a change in the JDK library that has added a Class
-      // object that is referenced (directly or indirectly) by an ArchivableStaticFieldInfo
-      // defined at the top of this file.
-      log_error(cds, heap)("(%d) Unknown java.lang.Class object is in the archived sub-graph", level);
-      MetaspaceShared::unrecoverable_writing_error();
+      // Don't follow the fields -- they will be nulled out when the mirror was copied
+
+      // FIXME - we should preserve the static fields of LambdaForm classes (and other hidden classes?)
+      // so we need to walk the oop fields.
+      orig_obj = scratch_java_mirror(orig_obj);
+      assert(orig_obj != nullptr, "must be archived");
     }
   }
+#else
+  if (java_lang_Class::is_instance(orig_obj)) {
+    orig_obj = scratch_java_mirror(orig_obj);
+    assert(orig_obj != nullptr, "must be archived");
+  }
+#endif
 
   if (has_been_seen_during_subgraph_recording(orig_obj)) {
     // orig_obj has already been archived and traced. Nothing more to do.
@@ -1244,7 +1470,7 @@ bool HeapShared::archive_reachable_objects_from(int level,
         // We don't know how to handle an object that has been archived, but some of its reachable
         // objects cannot be archived. Bail out for now. We might need to fix this in the future if
         // we have a real use case.
-        MetaspaceShared::unrecoverable_writing_error();
+        exit_on_error();
       }
     }
   }
@@ -1404,12 +1630,26 @@ void HeapShared::check_default_subgraph_classes() {
           i, subgraph_k->external_name());
     }
 
+#if 0
     guarantee(subgraph_k->name()->equals("java/lang/Class") ||
               subgraph_k->name()->equals("java/lang/String") ||
               subgraph_k->name()->equals("[Ljava/lang/Object;") ||
               subgraph_k->name()->equals("[C") ||
               subgraph_k->name()->equals("[B"),
               "default subgraph can have only these objects");
+#endif
+
+    if (subgraph_k->is_instance_klass() &&
+        !subgraph_k->name()->equals("java/lang/Class") &&
+        !subgraph_k->name()->equals("java/lang/String") &&
+        !subgraph_k->name()->equals("[Ljava/lang/Object;") &&
+        !subgraph_k->name()->equals("[C") &&
+        !subgraph_k->name()->equals("[B")) {
+      ResourceMark rm;
+      log_warning(cds, heap)(
+          "TODO: Archived unusual klass (default subgraph %d) => %s",
+          i, subgraph_k->external_name());
+    }
   }
 }
 
@@ -1661,6 +1901,7 @@ void HeapShared::archive_object_subgraphs(ArchivableStaticFieldInfo fields[],
     const char* klass_name = info->klass_name;
     start_recording_subgraph(info->klass, klass_name, is_full_module_graph);
 
+    ContextMark cm(klass_name);
     // If you have specified consecutive fields of the same klass in
     // fields[], these will be archived in the same
     // {start_recording_subgraph ... done_recording_subgraph} pass to
@@ -1671,6 +1912,7 @@ void HeapShared::archive_object_subgraphs(ArchivableStaticFieldInfo fields[],
         break;
       }
 
+      ContextMark cm(f->field_name);
       archive_reachable_objects_from_static_field(f->klass, f->klass_name,
                                                   f->offset, f->field_name);
     }
@@ -1795,6 +2037,18 @@ ResourceBitMap HeapShared::calculate_oopmap(MemRegion region) {
 }
 
 #endif // !PRODUCT
+
+int HeapShared::get_archived_oop_index(oop obj) {
+  assert(obj != nullptr, "sanity");
+  // FIXME - think about how this would work with AOT during -Xshare:dump
+  assert(UseSharedSpaces, "currently only works when AOT runs with at least the static archive mapped");
+  return 0;
+}
+
+oop HeapShared::get_archived_oop(int index) {
+  return nullptr;
+}
+
 
 void HeapShared::count_allocation(size_t size) {
   _total_obj_count ++;

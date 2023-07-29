@@ -33,6 +33,7 @@
 #include "classfile/javaClasses.hpp"
 #include "classfile/javaThreadStatus.hpp"
 #include "classfile/systemDictionary.hpp"
+#include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "code/SCArchive.hpp"
@@ -323,13 +324,28 @@ static void call_initPhase2(TRAPS) {
 
   // Preload all boot classes outside of java.base module
   ClassPrelinker::runtime_preload(THREAD, Handle());
+  SystemDictionaryShared::init_archived_lambda_proxy_classes(Handle(), CHECK); // FIXME we can't allow exceptions!
   if (MetaspaceShared::use_full_module_graph() && UseSharedSpaces) {
     // SystemDictionary::java_{platform,system}_loader are already assigned. We can spin
     // this up a little quicker.
     assert(SystemDictionary::java_platform_loader() != nullptr, "must be");
     assert(SystemDictionary::java_system_loader() != nullptr,   "must be");
+#if 1
     ClassPrelinker::runtime_preload(THREAD, Handle(THREAD, SystemDictionary::java_platform_loader()));
     ClassPrelinker::runtime_preload(THREAD, Handle(THREAD, SystemDictionary::java_system_loader()));
+#else
+    {
+      Handle h(Handle(THREAD, SystemDictionary::java_platform_loader()));
+      ClassPrelinker::runtime_preload(THREAD, h);
+      SystemDictionaryShared::init_archived_lambda_proxy_classes(h, CHECK);
+    }
+
+    {
+      Handle h(Handle(THREAD, SystemDictionary::java_system_loader()));
+      ClassPrelinker::runtime_preload(THREAD, h);
+      SystemDictionaryShared::init_archived_lambda_proxy_classes(h, CHECK);
+    }
+#endif
   }
 }
 
@@ -421,6 +437,10 @@ void Threads::initialize_jsr292_core_classes(TRAPS) {
   initialize_class(vmSymbols::java_lang_invoke_ResolvedMethodName(), CHECK);
   initialize_class(vmSymbols::java_lang_invoke_MemberName(), CHECK);
   initialize_class(vmSymbols::java_lang_invoke_MethodHandleNatives(), CHECK);
+
+  if (UseSharedSpaces) {
+    HeapShared::initialize_java_lang_invoke(CHECK);
+  }
 }
 
 jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {

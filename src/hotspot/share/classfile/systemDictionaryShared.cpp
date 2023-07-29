@@ -30,6 +30,7 @@
 #include "cds/classListWriter.hpp"
 #include "cds/dynamicArchive.hpp"
 #include "cds/filemap.hpp"
+#include "cds/heapShared.hpp"
 #include "cds/cdsProtectionDomain.hpp"
 #include "cds/dumpTimeClassInfo.inline.hpp"
 #include "cds/lambdaFormInvokers.inline.hpp"
@@ -85,6 +86,11 @@ DumpTimeLambdaProxyClassDictionary* SystemDictionaryShared::_dumptime_lambda_pro
 
 DumpTimeMethodInfoDictionary* SystemDictionaryShared::_dumptime_method_info_dictionary = nullptr;
 DumpTimeMethodInfoDictionary* SystemDictionaryShared::_cloned_dumptime_method_info_dictionary = nullptr;
+static Array<InstanceKlass*>* _archived_lambda_form_classes = nullptr;
+static Array<InstanceKlass*>* _archived_lambda_proxy_classes_boot = nullptr;
+static Array<InstanceKlass*>* _archived_lambda_proxy_classes_boot2 = nullptr;
+static Array<InstanceKlass*>* _archived_lambda_proxy_classes_platform = nullptr;
+static Array<InstanceKlass*>* _archived_lambda_proxy_classes_app = nullptr;
 
 // Used by NoClassLoadingMark
 DEBUG_ONLY(bool SystemDictionaryShared::_class_loading_may_happen = true;)
@@ -315,9 +321,12 @@ bool SystemDictionaryShared::check_for_exclusion_impl(InstanceKlass* k) {
   }
 
   if (k->is_hidden() && !is_registered_lambda_proxy_class(k)) {
-    ResourceMark rm;
-    log_debug(cds)("Skipping %s: Hidden class", k->name()->as_C_string());
-    return true;
+    if (ArchiveInvokeDynamic && HeapShared::is_archived_hidden_klass(k)) {
+      // Allow Lambda Proxy and LambdaForm classes, for ArchiveInvokeDynamic only
+    } else {
+      log_debug(cds)("Skipping %s: Hidden class", k->name()->as_C_string());
+      return true;
+    }
   }
 
   InstanceKlass* super = k->java_super();
@@ -594,6 +603,9 @@ void SystemDictionaryShared::validate_before_archiving(InstanceKlass* k) {
   guarantee(!info->is_excluded(), "Should not attempt to archive excluded class %s", name);
   if (is_builtin(k)) {
     if (k->is_hidden()) {
+      if (ArchiveInvokeDynamic) { // FIXME -- clean up
+        return;
+      }
       assert(is_registered_lambda_proxy_class(k), "unexpected hidden class %s", name);
     }
     guarantee(!k->is_shared_unregistered_class(),
@@ -790,6 +802,10 @@ void SystemDictionaryShared::add_lambda_proxy_class(InstanceKlass* caller_ik,
                                                     Method* member_method,
                                                     Symbol* instantiated_method_type,
                                                     TRAPS) {
+  if (DumpSharedSpaces && ArchiveInvokeDynamic) {
+    // The proxy classes will be accessible through the archived CP entries.
+    return;
+  }
 
   assert(caller_ik->class_loader() == lambda_ik->class_loader(), "mismatched class loader");
   assert(caller_ik->class_loader_data() == lambda_ik->class_loader_data(), "mismatched class loader data");
@@ -1380,6 +1396,11 @@ void SystemDictionaryShared::serialize_vm_classes(SerializeClosure* soc) {
   for (auto id : EnumRange<vmClassID>{}) {
     soc->do_ptr(vmClasses::klass_addr_at(id));
   }
+  soc->do_ptr((void**)&_archived_lambda_form_classes);
+  soc->do_ptr((void**)&_archived_lambda_proxy_classes_boot);
+  soc->do_ptr((void**)&_archived_lambda_proxy_classes_boot2);
+  soc->do_ptr((void**)&_archived_lambda_proxy_classes_platform);
+  soc->do_ptr((void**)&_archived_lambda_proxy_classes_app);
 }
 
 const RunTimeClassInfo*
@@ -1649,4 +1670,142 @@ void SystemDictionaryShared::cleanup_method_info_dictionary() {
 
   CleanupDumpTimeMethodInfoTable cleanup_method_info;
   _dumptime_method_info_dictionary->unlink(&cleanup_method_info);
+}
+
+
+static Array<InstanceKlass*>* copy_klass_array(GrowableArray<InstanceKlass*>* src) {
+  Array<InstanceKlass*>* dst = ArchiveBuilder::new_ro_array<InstanceKlass*>(src->length());
+  for (int i = 0; i < src->length(); i++) {
+    ArchiveBuilder::current()->write_pointer_in_buffer(dst->adr_at(i), src->at(i));
+  }
+  return dst;
+}
+
+void SystemDictionaryShared::record_archived_lambda_form_classes() {
+  if (!ArchiveInvokeDynamic && !DumpSharedSpaces) {
+    return;
+  }
+
+  GrowableArray<Klass*>* klasses = ArchiveBuilder::current()->klasses();
+  GrowableArray<InstanceKlass*> lf_list;
+  GrowableArray<InstanceKlass*> proxy_list_boot;
+  GrowableArray<InstanceKlass*> proxy_list_boot2;
+  GrowableArray<InstanceKlass*> proxy_list_platform;
+  GrowableArray<InstanceKlass*> proxy_list_app;
+
+  for (int i = 0; i < klasses->length(); i++) {
+    Klass* k = klasses->at(i);
+    //assert(ArchiveBuilder::current()->is_in_buffer_space(k), "must be");
+    if (k->is_instance_klass()) {
+      InstanceKlass* ik = InstanceKlass::cast(k);
+      if (HeapShared::is_lambda_form_klass(ik)) {
+        assert(ArchiveInvokeDynamic, "lambda form classes are archived only if ArchiveInvokeDynamic is true");
+        lf_list.append(ik);
+      } else if (HeapShared::is_lambda_proxy_klass(ik)) {
+        assert(ArchiveInvokeDynamic, "lambda proxy classes are archived only if ArchiveInvokeDynamic is true");
+        oop loader = ik->class_loader();
+        s2 classloader_type;
+
+        if (loader == nullptr) {
+          classloader_type = ClassLoader::BOOT_LOADER;
+          if (ik->module() == ModuleEntryTable::javabase_moduleEntry()) {
+            proxy_list_boot.append(ik);
+          } else {
+            proxy_list_boot2.append(ik);
+          }
+        } else if (SystemDictionary::is_platform_class_loader(loader)) {
+          classloader_type = ClassLoader::PLATFORM_LOADER;
+          proxy_list_platform.append(ik);        
+        } else if (SystemDictionary::is_system_class_loader(loader)) {
+          classloader_type = ClassLoader::APP_LOADER;
+          proxy_list_app.append(ik);        
+        } else {
+          guarantee(0, "ArchiveInvokeDynamic not supported for custom class loaders!");
+          classloader_type = ClassLoader::OTHER;
+        }
+
+        if (classloader_type != ClassLoader::OTHER) {
+          InstanceKlass* buffered_ik = ArchiveBuilder::current()->get_buffered_addr(ik);
+          buffered_ik->set_shared_class_loader_type(classloader_type);
+
+          InstanceKlass* nest_host = ik->nest_host_not_null();
+          buffered_ik->set_shared_classpath_index(nest_host->shared_classpath_index()); // HACK!
+        }
+      }
+    }
+  }
+
+  _archived_lambda_form_classes           = copy_klass_array(&lf_list);
+  _archived_lambda_proxy_classes_boot     = copy_klass_array(&proxy_list_boot);
+  _archived_lambda_proxy_classes_boot2    = copy_klass_array(&proxy_list_boot2);
+  _archived_lambda_proxy_classes_platform = copy_klass_array(&proxy_list_platform);
+  _archived_lambda_proxy_classes_app      = copy_klass_array(&proxy_list_app);
+}
+
+void SystemDictionaryShared::init_archived_lambda_form_classes(TRAPS) {
+  if (_archived_lambda_form_classes == nullptr) {
+    return;
+  }
+
+  for (int i = 0; i < _archived_lambda_form_classes->length(); i++) {
+    InstanceKlass* ik = _archived_lambda_form_classes->at(i);
+    init_archived_hidden_class(Handle(), ik, "lambda form", CHECK);
+  }
+}
+
+void SystemDictionaryShared::init_archived_lambda_proxy_classes(Handle class_loader, TRAPS) {
+  static Array<InstanceKlass*>* classes;
+  const char* name;
+  if (class_loader() == nullptr) {
+    if (!ModuleEntryTable::javabase_defined()) {
+      classes = _archived_lambda_proxy_classes_boot;
+      name = "boot";
+    } else {
+      classes = _archived_lambda_proxy_classes_boot2;
+      name = "boot2";
+    }
+  } else if (SystemDictionary::is_platform_class_loader(class_loader())) {
+    name = "platform";
+    classes = _archived_lambda_proxy_classes_platform;
+  } else {
+    assert(SystemDictionary::is_system_class_loader(class_loader()), "must be");
+    name = "app";
+    classes = _archived_lambda_proxy_classes_app;
+  }
+
+  if (classes != nullptr) {
+    log_info(cds)("init_archived_lambda_proxy_classes %s: %d", name, classes->length());
+    for (int i = 0; i < classes->length(); i++) {
+      InstanceKlass* ik = classes->at(i);
+      init_archived_hidden_class(class_loader, ik, "lambda proxy", CHECK);
+    }
+  }
+}
+
+
+void SystemDictionaryShared::init_archived_hidden_class(Handle class_loader,
+                                                        InstanceKlass* ik, const char* which, TRAPS) {
+  if (log_is_enabled(Debug, cds, heap)) {
+    ResourceMark rm;
+    log_debug(cds, heap)("Init archived %s class: %s ", which, ik->external_name());
+  }
+
+  assert(ik->super() == vmClasses::Object_klass(), "must be");
+  //assert(ik->local_interfaces()->length() == 0, "must be");
+
+  ClassLoaderData* loader_data = ClassLoaderData::class_loader_data(class_loader());
+  if (class_loader() == nullptr) {
+    ik->restore_unshareable_info(loader_data, Handle(), NULL, CHECK);
+  } else {
+      PackageEntry* pkg_entry = CDSProtectionDomain::get_package_entry_from_class(ik, class_loader);
+      Handle protection_domain =
+        CDSProtectionDomain::init_security_info(class_loader, ik, pkg_entry, CHECK);
+      ik->restore_unshareable_info(loader_data, protection_domain, pkg_entry, CHECK);
+  }
+  SystemDictionary::load_shared_class_misc(ik, loader_data);
+  ik->add_to_hierarchy(THREAD);
+
+  assert(ik->is_loaded(), "Must be in at least loaded state");
+  ik->link_class(CHECK);
+  ik->initialize(CHECK); // quick-init that doesn't go through <clinit>
 }

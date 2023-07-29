@@ -25,6 +25,7 @@
 #ifndef SHARE_CDS_CLASSPRELINKER_HPP
 #define SHARE_CDS_CLASSPRELINKER_HPP
 
+#include "interpreter/bytecodes.hpp"
 #include "oops/oopsHierarchy.hpp"
 #include "memory/allStatic.hpp"
 #include "memory/allocation.hpp"
@@ -90,7 +91,8 @@ class ClassPrelinker :  AllStatic {
   static void resolve_string(constantPoolHandle cp, int cp_index, TRAPS) NOT_CDS_JAVA_HEAP_RETURN;
   static Klass* maybe_resolve_class(constantPoolHandle cp, int cp_index, TRAPS);
   static bool can_archive_resolved_klass(InstanceKlass* cp_holder, Klass* resolved_klass);
-  static Klass* find_loaded_class(JavaThread* THREAD, oop class_loader, Symbol* name);
+  static Klass* find_loaded_class(JavaThread* current, oop class_loader, Symbol* name);
+  static Klass* find_loaded_class(JavaThread* current, ConstantPool* cp, int class_cp_index);
   static void add_preloaded_klasses(Array<InstanceKlass*>* klasses);
   static Array<InstanceKlass*>* archive_klass_array(GrowableArray<InstanceKlass*>* tmp_array);
   static Array<InstanceKlass*>* record_preloaded_klasses(int loader_type);
@@ -99,9 +101,18 @@ class ClassPrelinker :  AllStatic {
   static void jvmti_agent_error(InstanceKlass* expected, InstanceKlass* actual, const char* type);
   static Klass* get_fmi_ref_resolved_archivable_klass(ConstantPool* cp, int cp_index);
 
+  static void maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecodes::Code bc, int raw_index,
+                                    GrowableArray<bool>* resolve_fmi_list, TRAPS);
 public:
   static void initialize();
   static void dispose();
+
+  static void preresolve_class_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list);
+  static void preresolve_field_and_method_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list);
+  static void preresolve_indy_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list);
+  static void preresolve_invoker_class(JavaThread* current, InstanceKlass* ik);
+
+  static bool should_preresolve_invokedynamic(ConstantPool* cp, int cp_index);
 
   // Is this class resolved as part of vmClasses::resolve_all()? If so, these
   // classes are guatanteed to be loaded at runtime (and cannot be replaced by JVMTI)

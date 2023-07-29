@@ -269,7 +269,7 @@ void vmClasses::resolve_all(TRAPS) {
 #endif
 
   InstanceStackChunkKlass::init_offset_of_stack();
-  ClassPrelinker::runtime_preload(THREAD, Handle());
+  ClassPrelinker::runtime_preload(THREAD, Handle()); // load only java.base classes
 }
 
 #if INCLUDE_CDS

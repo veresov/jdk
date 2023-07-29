@@ -77,7 +77,7 @@ do_test "(STEP 1 of 5) Dump classlist" \
 
 do_test "(STEP 2 of 5) Create Static $APP-static.jsa" \
     $JAVA -Xshare:dump -XX:SharedArchiveFile=$APP-static.jsa -XX:SharedClassListFile=$APP.classlist -cp $JAR \
-    -Xlog:cds=debug,cds+class=debug:file=$APP-static.dump.log
+    -Xlog:cds=debug,cds+class=debug,cds+resolve=debug:file=$APP-static.dump.log
 
 if false; then
     do_test "Run with $APP-static.jsa" \
@@ -85,12 +85,16 @@ if false; then
 fi
 
 do_test "(STEP 3 of 5) Run with $APP-static.jsa and dump profile in $APP-dynamic.jsa (With Training Data Replay)" \
-    $JAVA -XX:SharedArchiveFile=$APP-static.jsa -XX:ArchiveClassesAtExit=$APP-dynamic.jsa -XX:+RecordTraining $CMDLINE
+    $JAVA -XX:SharedArchiveFile=$APP-static.jsa -XX:ArchiveClassesAtExit=$APP-dynamic.jsa -XX:+RecordTraining \
+        -Xlog:cds=debug,cds+class=debug:file=$APP-dynamic.dump.log \
+        $CMDLINE
 
 do_test "(STEP 4 of 5) Run with $APP-dynamic.jsa and generate AOT code" \
     $JAVA -XX:SharedArchiveFile=$APP-dynamic.jsa -XX:+ReplayTraining -XX:+StoreSharedCode \
+        -Xlog:sca*=trace:file=$APP-store-sc.log \
         -XX:SharedCodeArchive=$APP-dynamic.jsa-sc -XX:ReservedSharedCodeSize=100M $CMDLINE
 
 do_test "(STEP 5 of 5) Final production run: with $APP-dynamic.jsa and load AOT code" \
     $JAVA -XX:SharedArchiveFile=$APP-dynamic.jsa -XX:+ReplayTraining -XX:+LoadSharedCode \
+        -Xlog:sca*=trace:file=$APP-load-sc.log \
         -XX:SharedCodeArchive=$APP-dynamic.jsa-sc -XX:ReservedSharedCodeSize=100M $CMDLINE

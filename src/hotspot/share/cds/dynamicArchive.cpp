@@ -402,6 +402,14 @@ void DynamicArchive::dump_at_exit(JavaThread* current, const char* archive_name)
   log_info(cds, dynamic)("Preparing for dynamic dump at exit in thread %s", current->name());
 
   JavaThread* THREAD = current; // For TRAPS processing related to link_shared_classes
+
+  {
+    // FIXME-HACK - make sure we have at least one class in the dynamic archive
+    TempNewSymbol class_name = SymbolTable::new_symbol("sun/nio/cs/IBM850"); // unusual class; shouldn't be used by our tests cases.
+    SystemDictionary::resolve_or_null(class_name, Handle(), Handle(), THREAD);
+    guarantee(!HAS_PENDING_EXCEPTION, "must have this class");
+  }
+
   MetaspaceShared::link_shared_classes(false/*not from jcmd*/, THREAD);
   if (!HAS_PENDING_EXCEPTION) {
     // copy shared path table to saved.

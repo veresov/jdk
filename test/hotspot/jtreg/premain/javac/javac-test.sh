@@ -324,7 +324,7 @@ CMD="$JVM_AND_ARGS \
     -XX:SharedClassListFile=javac.classlist \
     -XX:+PreloadSharedClasses \
     -cp JavacBench.jar \
-    -Xlog:cds=debug:file=javac.staticdump.log"
+    -Xlog:cds=debug,cds+class=debug,cds+resolve=debug:file=javac.staticdump.log::filesize=0"
 test-info "(STEP 2 of 5) Create Static $JSA" &&
 if $CMD; then
     ls -l $JSA
@@ -406,7 +406,7 @@ for i in $TESTS; do
     fi
 
     #----------------------------------------------------------------------
-    CMD="$JVM_AND_ARGS $EXTRA_ARGS \
+    CMD="$JVM_AND_ARGS $EXTRA_ARGS -Xlog:cds=debug,cds+class=debug:file=javac.dynamicdump.log::filesize=0 \
         -XX:SharedArchiveFile=$JSA -XX:ArchiveClassesAtExit=$JSA2 $X1 \
         -cp JavacBench.jar JavacBench $LOOPS"
     test-info "${STEP3}Run with $JSA and dump profile in $JSA2${REPLAY}" &&
@@ -428,7 +428,7 @@ for i in $TESTS; do
     fi
 
     #----------------------------------------------------------------------
-    CMD="$JVM_AND_ARGS $EXTRA_ARGS \
+    CMD="$JVM_AND_ARGS $EXTRA_ARGS -Xlog:sca*=trace:file=javac.sca-store.log::filesize=0 \
         -XX:SharedArchiveFile=$JSA2 $X2 -XX:+StoreSharedCode -XX:SharedCodeArchive=${JSA2}-sc -XX:ReservedSharedCodeSize=100M \
         -cp JavacBench.jar JavacBench $LOOPS"
     test-info "${STEP4}Run with $JSA2 and generate AOT code" &&
@@ -439,7 +439,7 @@ for i in $TESTS; do
     fi
 
     #----------------------------------------------------------------------
-    CMD="$JVM_AND_ARGS $EXTRA_ARGS \
+    CMD="$JVM_AND_ARGS $EXTRA_ARGS -Xlog:sca*=trace:file=javac.sca-load.log::filesize=0 \
         -XX:SharedArchiveFile=$JSA2 $X2 -XX:+LoadSharedCode -XX:SharedCodeArchive=${JSA2}-sc -XX:ReservedSharedCodeSize=100M \
         -cp JavacBench.jar JavacBench $LOOPS"
     test-info "${STEP5}Final production run: with $JSA2 and load AOT code" &&
