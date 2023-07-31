@@ -45,7 +45,12 @@ public class IndyTestBase {
 
     // bits for runMode
     static final int RUN_STATIC = 1;   // Run with static archive only (no AOT)
-    static final int RUN_AOT = 2;      // Run with AOT (which uses dynamic archive)
+    static final int RUN_AOT    = 2;   // Run with AOT (which uses dynamic archive)
+    static final int RUN_BENCH  = 4;   // Run in benchmark mode (no logs)
+
+    static void setup(String appJar) throws Exception {
+      setup(null, appJar);
+    }
 
     static void setup(String forceSkip, String appJar) throws Exception {
         String testName = System.getProperty("test.name");
@@ -147,60 +152,107 @@ public class IndyTestBase {
             // Run with static archive
             System.out.println("#" + testNumber + ": Run with static archive (no AOT)");
             CDSOptions runOpts = (new CDSOptions())
-                .addPrefix("-cp", appJar, "-Xlog:class+load", "-Xlog:cds=debug", "-Xlog:cds+heap=debug",
-                           "-Xlog:methodhandles")
+                .addPrefix("-cp", appJar)
                 .setArchiveName(archiveName)
                 .setUseVersion(false)
                 .addSuffix(mainClass)
                 .addSuffix(productionArg);
+            if ((runMode & RUN_BENCH) != 0) {
+                runOpts.setBenchmarkMode(true);
+            } else {
+                runOpts.addPrefix("-Xlog:class+load", "-Xlog:cds=debug", "-Xlog:cds+heap=debug",
+                                  "-Xlog:methodhandles");
+            }
             output = CDSTestUtils.runWithArchive(runOpts);
             TestCommon.checkExecReturn(output, 0, true);
         }
 
         if ((runMode & RUN_AOT) != 0) {
-            // For the time being, AOT is only available with dynamic archive.
+            System.out.println("#" + testNumber +
+                               ": (STEP 3 of 5) Run with static archive and dump profile in dynamic archive (With Training Data Replay)");
             String dynamicArchiveName = s + "-dyn.jsa";
-            String sharedCodeArchive = s + ".sca";
             CDSOptions dynDumpOpts = (new CDSOptions())
-                .addPrefix("-cp", appJar, "-Xlog:class+load", "-Xlog:cds=debug",
-                           "-Xlog:methodhandles")
+                .addPrefix("-cp", appJar)
                 .setArchiveName(archiveName)
                 .setUseVersion(false)
                 .addSuffix("-XX:ArchiveClassesAtExit=" + dynamicArchiveName)
-                .addSuffix("-Xlog:cds+class=debug")
-                .addSuffix("-XX:+StoreSharedCode")
-                .addSuffix("-XX:SharedCodeArchive=" + sharedCodeArchive)
-                .addSuffix("-XX:ReservedSharedCodeSize=100M")
-                .addSuffix("-Xlog:sca*=trace");
-            if (mainClass.equals("ConcatA")) {
-                // Hard-code the printing of loopA for now
-                dynDumpOpts
-                    .addSuffix("-XX:CompileCommand=print,*::loopA")
-                    .addSuffix("-XX:+PrintAssembly");
-                if (false) {
-                    dynDumpOpts.addSuffix("-XX:-TieredCompilation");
-                }
+                .addSuffix("-XX:+RecordTraining");
+            if ((runMode & RUN_BENCH) != 0) {
+                dynDumpOpts.setBenchmarkMode(true);
+                dynDumpOpts.addPrefix("-Xlog:cds=debug", "-Xlog:sca");
+            } else {
+                dynDumpOpts.addPrefix("-Xlog:class+load", "-Xlog:cds=debug",
+                                      "-Xlog:cds+class=debug");
             }
             // The main class name and arguments
             dynDumpOpts
                 .addSuffix(mainClass)
                 .addSuffix(productionArg);
-            System.out.println("#" + testNumber + ": Dump dynamic archive and AOT cache");
             output = CDSTestUtils.runWithArchive(dynDumpOpts);
             TestCommon.checkExecReturn(output, 0, true);
 
-            // Run with dynamic archive and AOT code cache
+            //======================================================================
+            System.out.println("#" + testNumber +
+                               ": (STEP 4 of 5) Run with dynamic archive and generate AOT code");
+            String sharedCodeArchive = s + ".sca";
+            CDSOptions aotOpts = (new CDSOptions())
+                .addPrefix("-cp", appJar)
+                .setArchiveName(archiveName)
+                .setUseVersion(false)
+                .addSuffix("-XX:+StoreSharedCode")
+                .addSuffix("-XX:SharedCodeArchive=" + sharedCodeArchive)
+                .addSuffix("-XX:ReservedSharedCodeSize=100M");
+
+            if ((runMode & RUN_BENCH) != 0) {
+                aotOpts.setBenchmarkMode(true);
+                aotOpts.addPrefix("-Xlog:cds=debug", "-Xlog:sca");
+            } else {
+                // Tell CDSTestUtils to not add the -XX:VerifyArchivedFields=1 flag, which seems to be causing a crash
+                // in the AOT code.
+                aotOpts.setBenchmarkMode(true);
+
+                aotOpts.addPrefix("-Xlog:class+load", "-Xlog:cds=debug", "-Xlog:sca*=trace");
+                if (mainClass.equals("ConcatA")) {
+                    // Hard-code the printing of loopA for now
+                    dynDumpOpts
+                        .addSuffix("-XX:CompileCommand=print,*::loopA")
+                        .addSuffix("-XX:+PrintAssembly");
+                }
+            }
+            // The main class name and arguments
+            aotOpts
+                .addSuffix(mainClass)
+                .addSuffix(productionArg);
+            output = CDSTestUtils.runWithArchive(aotOpts);
+            TestCommon.checkExecReturn(output, 0, true);
+
+            //======================================================================
+            System.out.println("#" + testNumber + ": (STEP 5 of 5) Run with dynamic archive and AOT cache");
             CDSOptions runOpts = (new CDSOptions())
-                .addPrefix("-cp", appJar, "-Xlog:class+load", "-Xlog:cds=debug",
-                           "-Xlog:methodhandles")
+                .addPrefix("-cp", appJar)
                 .setArchiveName(dynamicArchiveName)
                 .addSuffix("-XX:+LoadSharedCode")
                 .addSuffix("-XX:SharedCodeArchive=" + sharedCodeArchive)
-                .addSuffix("-Xlog:sca*=trace")
                 .setUseVersion(false)
                 .addSuffix(mainClass)
                 .addSuffix(productionArg);
-            System.out.println("#" + testNumber + ": Run with dynamic archive and AOT cache");
+
+            if ((runMode & RUN_BENCH) != 0) {
+                runOpts.setBenchmarkMode(true);
+            } else {
+                // Tell CDSTestUtils to not add the -XX:VerifyArchivedFields=1 flag, which seems to be causing a crash
+                // in the AOT code.
+                runOpts.setBenchmarkMode(true);
+
+                runOpts.addPrefix("-Xlog:class+load", "-Xlog:cds=debug");
+                if (mainClass.equals("ConcatA")) {
+                    // Hard-code the printing of loopA for now
+                    dynDumpOpts
+                        .addSuffix("-XX:CompileCommand=print,*::loopA")
+                        .addSuffix("-XX:+PrintAssembly");
+                }
+            }
+
             output = CDSTestUtils.runWithArchive(runOpts);
             TestCommon.checkExecReturn(output, 0, true);
         }
