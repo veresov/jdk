@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "asm/macroAssembler.hpp"
+#include "cds/heapShared.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "ci/ciConstant.hpp"
 #include "ci/ciEnv.hpp"
@@ -594,8 +595,10 @@ void SCAFile::preload_code(JavaThread* thread) {
       mh->set_sca_entry(entry);
       CompileBroker::compile_method(mh, InvocationEntryBci, CompLevel_full_optimization, methodHandle(), 0, false, CompileTask::Reason_Preload, thread);
     }
-    os::free(exclude_line);
-    exclude_line = nullptr;
+    if (exclude_line != nullptr) {
+      os::free(exclude_line);
+      exclude_line = nullptr;
+    }
   }
 }
 
@@ -756,9 +759,9 @@ bool SCAFile::finish_write() {
     uint preload_entries_cnt = 0;
     uint* preload_entries = NEW_C_HEAP_ARRAY(uint, code_count, mtCode);
     uint preload_entries_size = code_count * sizeof(uint);
-    // _write_position should include headed, code and strings
+    // _write_position should include code and strings
     uint code_alignment = code_count * DATA_ALIGNMENT; // We align_up code size when storing it.
-    uint total_size = align_up(header_size, DATA_ALIGNMENT) +
+    uint total_size = header_size +
                       _write_position + _load_size + code_alignment +
                       preload_entries_size + search_size +
                       align_up(entries_size, DATA_ALIGNMENT);
@@ -1427,8 +1430,14 @@ bool SCAReader::read_relocations(CodeBuffer* buffer, CodeBuffer* orig_buffer,
           }
           break;
         }
+        case relocInfo::trampoline_stub_type: {
+          address dest = _archive->address_for_id(reloc_data[j]);
+          if (dest != (address)-1) {
+            ((trampoline_stub_Relocation*)iter.reloc())->set_destination(dest);
+          }
+          break;
+        }
         case relocInfo::static_stub_type:
-          iter.reloc()->fix_relocation_after_move(orig_buffer, buffer);
           break;
         case relocInfo::runtime_call_type: {
           address dest = _archive->address_for_id(reloc_data[j]);
@@ -1474,6 +1483,8 @@ bool SCAReader::read_relocations(CodeBuffer* buffer, CodeBuffer* orig_buffer,
         case relocInfo::poll_return_type:
           break;
         case relocInfo::post_call_nop_type:
+          break;
+        case relocInfo::entry_guard_type:
           break;
         default:
           fatal("relocation %d unimplemented", (int)iter.type());
@@ -1666,18 +1677,29 @@ bool SCAFile::write_relocations(CodeBuffer* buffer, uint& all_reloc_size) {
         case relocInfo::virtual_call_type:  // Fall through. They all call resolve_*_call blobs.
         case relocInfo::opt_virtual_call_type:
         case relocInfo::static_call_type: {
-          address addr = ((CallRelocation*)iter.reloc())->addr();
-          address dest = ((CallRelocation*)iter.reloc())->destination();
-          reloc_data[j] = (addr != dest ? _table->id_for_address(dest, iter, buffer) : -1); // FIXME: AARCH64: trampoline?
+          CallRelocation* r = (CallRelocation*)iter.reloc();
+          address dest = r->destination();
+          if (dest == r->addr()) { // possible call via trampoline on Aarch64
+            dest = (address)-1;    // do nothing in this case when loading this relocation
+          }
+          reloc_data[j] = _table->id_for_address(dest, iter, buffer);
+          break;
+        }
+        case relocInfo::trampoline_stub_type: {
+          address dest = ((trampoline_stub_Relocation*)iter.reloc())->destination();
+          reloc_data[j] = _table->id_for_address(dest, iter, buffer);
           break;
         }
         case relocInfo::static_stub_type:
           break;
         case relocInfo::runtime_call_type: {
           // Record offset of runtime destination
-          address addr = ((CallRelocation*)iter.reloc())->addr();
-          address dest = ((CallRelocation*)iter.reloc())->destination();
-          reloc_data[j] = (addr != dest ? _table->id_for_address(dest, iter, buffer) : -1); // FIXME: AARCH64: trampoline?
+          CallRelocation* r = (CallRelocation*)iter.reloc();
+          address dest = r->destination();
+          if (dest == r->addr()) { // possible call via trampoline on Aarch64
+            dest = (address)-1;    // do nothing in this case when loading this relocation
+          }
+          reloc_data[j] = _table->id_for_address(dest, iter, buffer);
           break;
         }
         case relocInfo::runtime_call_w_cp_type:
@@ -1699,7 +1721,6 @@ bool SCAFile::write_relocations(CodeBuffer* buffer, uint& all_reloc_size) {
           break;
         case relocInfo::post_call_nop_type:
           break;
-        case relocInfo::trampoline_stub_type:
         case relocInfo::entry_guard_type:
           break; // FIXME
         default:
@@ -2016,6 +2037,13 @@ jobject SCAReader::read_oop(JavaThread* thread, const methodHandle& comp_method)
     BasicType bt = (BasicType)t;
     obj = java_lang_Class::primitive_mirror(bt);
     log_info(sca)("%d (L%d): Read primitive type klass: %s", compile_id(), comp_level(), type2name(bt));
+  } else if (kind == DataKind::String_Shared) {
+    code_offset = read_position();
+    int k = *(int*)addr(code_offset);
+    code_offset += sizeof(int);
+    set_read_position(code_offset);
+    obj = HeapShared::get_archived_object(k);
+    assert(k == HeapShared::get_archived_object_permanent_index(obj), "sanity");
   } else if (kind == DataKind::String) {
     code_offset = read_position();
     int length = *(int*)addr(code_offset);
@@ -2038,6 +2066,13 @@ jobject SCAReader::read_oop(JavaThread* thread, const methodHandle& comp_method)
   } else if (kind == DataKind::PlaLoader) {
     obj = SystemDictionary::java_platform_loader();
     log_info(sca)("%d (L%d): Read java_platform_loader", compile_id(), comp_level());
+  } else if (kind == DataKind::MH_Oop_Shared) {
+    code_offset = read_position();
+    int k = *(int*)addr(code_offset);
+    code_offset += sizeof(int);
+    set_read_position(code_offset);
+    obj = HeapShared::get_archived_object(k);
+    assert(k == HeapShared::get_archived_object_permanent_index(obj), "sanity");
   } else {
     set_lookup_failed();
     log_warning(sca)("%d (L%d): Unknown oop's kind: %d",
@@ -2061,12 +2096,16 @@ if (UseNewCode) {
   {
     VM_ENTRY_MARK;
     methodHandle comp_method(THREAD, target->get_Method());
-    for (int i = 0; i < oop_count; i++) {
+    for (int i = 1; i < oop_count; i++) {
       jobject jo = read_oop(THREAD, comp_method);
       if (lookup_failed()) {
         return false;
       }
-      oop_recorder->find_index(jo);
+      if (oop_recorder->is_real(jo)) {
+        oop_recorder->find_index(jo);
+      } else {
+        oop_recorder->allocate_oop_index(jo);
+      }
 if (UseNewCode) {
       tty->print("%d: " INTPTR_FORMAT " ", i, p2i(jo));
       if (jo == (jobject)Universe::non_oop_word()) {
@@ -2136,12 +2175,16 @@ if (UseNewCode) {
     VM_ENTRY_MARK;
     methodHandle comp_method(THREAD, target->get_Method());
 
-    for (int i = 0; i < metadata_count; i++) {
+    for (int i = 1; i < metadata_count; i++) {
       Metadata* m = read_metadata(comp_method);
       if (lookup_failed()) {
         return false;
       }
-      oop_recorder->find_index(m);
+      if (oop_recorder->is_real(m)) {
+        oop_recorder->find_index(m);
+      } else {
+        oop_recorder->allocate_metadata_index(m);
+      }
 if (UseNewCode) {
      tty->print("%d: " INTPTR_FORMAT " ", i, p2i(m));
       if (m == (Metadata*)Universe::non_oop_word()) {
@@ -2194,6 +2237,19 @@ bool SCAFile::write_oop(jobject& jo) {
       }
     }
   } else if (java_lang_String::is_instance(obj)) {
+    int k = HeapShared::get_archived_object_permanent_index(obj);  // k >= 1 means obj is a "permanent heap object"
+    if (k > 0) {
+      kind = DataKind::String_Shared;
+      n = write_bytes(&kind, sizeof(int));
+      if (n != sizeof(int)) {
+        return false;
+      }
+      n = write_bytes(&k, sizeof(int));
+      if (n != sizeof(int)) {
+        return false;
+      }
+      return true;
+    }
     kind = DataKind::String;
     n = write_bytes(&kind, sizeof(int));
     if (n != sizeof(int)) {
@@ -2230,6 +2286,19 @@ bool SCAFile::write_oop(jobject& jo) {
       return false;
     }
   } else {
+    int k = HeapShared::get_archived_object_permanent_index(obj);  // k >= 1 means obj is a "permanent heap object"
+    if (k > 0) {
+      kind = DataKind::MH_Oop_Shared;
+      n = write_bytes(&kind, sizeof(int));
+      if (n != sizeof(int)) {
+        return false;
+      }
+      n = write_bytes(&k, sizeof(int));
+      if (n != sizeof(int)) {
+        return false;
+      }
+      return true;
+    }
     // Unhandled oop - bailout
     set_lookup_failed();
     log_warning(sca, nmethod)("%d (L%d): Unhandled obj: " PTR_FORMAT " : %s",
@@ -2248,7 +2317,7 @@ bool SCAFile::write_oops(OopRecorder* oop_recorder) {
 if (UseNewCode3) {
   tty->print_cr("======== write oops [%d]:", oop_count);
 }
-  for (int i = 0; i < oop_count; i++) {
+  for (int i = 1; i < oop_count; i++) { // skip first virtual nullptr
     jobject jo = oop_recorder->oop_at(i);
 if (UseNewCode3) {
      tty->print("%d: " INTPTR_FORMAT " ", i, p2i(jo));
@@ -2317,7 +2386,7 @@ bool SCAFile::write_metadata(OopRecorder* oop_recorder) {
 if (UseNewCode3) {
   tty->print_cr("======== write metadata [%d]:", metadata_count);
 }
-  for (int i = 0; i < metadata_count; i++) {
+  for (int i = 1; i < metadata_count; i++) { // skip first virtual nullptr
     Metadata* m = oop_recorder->metadata_at(i);
 if (UseNewCode3) {
      tty->print("%d: " INTPTR_FORMAT " ", i, p2i(m));
@@ -3074,6 +3143,18 @@ void SCAddressTable::init() {
   SET_ADDRESS(_stubs, StubRoutines::aarch64::double_sign_mask());
   SET_ADDRESS(_stubs, StubRoutines::aarch64::double_sign_flip());
   SET_ADDRESS(_stubs, StubRoutines::aarch64::zero_blocks());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::count_positives());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::count_positives_long());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::large_array_equals());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::compare_long_string_LL());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::compare_long_string_UU());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::compare_long_string_LU());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::compare_long_string_UL());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::string_indexof_linear_ul());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::string_indexof_linear_ll());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::string_indexof_linear_uu());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::large_byte_array_inflate());
+  SET_ADDRESS(_stubs, StubRoutines::aarch64::spin_wait());
 #endif
 
   // Blobs

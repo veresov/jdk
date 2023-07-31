@@ -42,6 +42,7 @@ public class JavacBenchStatic extends JavacBenchTestBase {
     public static void main(String[] args) throws Exception {
         appJar = getAppJar();
         List<String> empty = List.of();
+        run(List.of("-XX:+ArchiveInvokeDynamic"), empty);
         run(List.of("-XX:+PreloadSharedClasses"), empty);
         run(List.of("-XX:-PreloadSharedClasses"), empty);
     }
@@ -65,7 +66,7 @@ public class JavacBenchStatic extends JavacBenchTestBase {
         for (String arg : dumpArgs) {
             opts.addPrefix(arg);
         }
-        opts.addSuffix("-Xlog:cds=debug");
+        opts.addSuffix("-Xlog:cds=debug,cds+class=debug,cds+resolve=debug:file=dump.log");
         CDSTestUtils.createArchiveAndCheck(opts);
 
         // Use the dumped static archive

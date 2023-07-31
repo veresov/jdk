@@ -3057,6 +3057,13 @@ jint Arguments::finalize_vm_init_args(bool patch_mod_javabase) {
     // run to another which resulting in non-determinstic CDS archives.
     // Disable UseStringDeduplication while dumping CDS archive.
     UseStringDeduplication = false;
+
+    if (!add_property("java.lang.invoke.MethodHandle.NO_SOFT_CACHE=true")) {
+      return JNI_ENOMEM;
+    }
+  } else {
+    // This flag is useful only when dumping static archive
+    ArchiveInvokeDynamic = false;
   }
 
   // RecordDynamicDumpInfo is not compatible with ArchiveClassesAtExit
@@ -3096,6 +3103,13 @@ jint Arguments::finalize_vm_init_args(bool patch_mod_javabase) {
       BytecodeVerificationRemote = true;
       log_info(cds)("All non-system classes will be verified (-Xverify:remote) during CDS dump time.");
     }
+  }
+
+  if (DynamicDumpSharedSpaces) {
+    ArchiveInvokeDynamic = false; // requires heap dumping, which is not supported in dynamic archive.
+  }
+  if (!PreloadSharedClasses) {
+    ArchiveInvokeDynamic = false;
   }
 #endif
 

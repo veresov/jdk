@@ -204,7 +204,7 @@ void ciObject::add_to_constant_value_cache(int off, ciConstant val) {
 // ------------------------------------------------------------------
 // ciObject::should_be_constant()
 bool ciObject::should_be_constant() {
-  if (ScavengeRootsInCode >= 2 && !SCArchive::is_on()) {
+  if (ScavengeRootsInCode >= 2 && !(SCArchive::is_on() && StoreSharedCode)) {
     return true;  // force everybody to be a constant
   }
   if (is_null_object()) {

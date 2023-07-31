@@ -440,7 +440,9 @@
                                                                             \
   product(int, ForceRecompilationThreshold, 0,                              \
           "Testing mode for recompilation")                                 \
-
+                                                                            \
+  product(double, DelayRecompilation, 0.0,                                  \
+          "Delay recompilation for given number of seconds")                \
 // end of COMPILER_FLAGS
 
 DECLARE_FLAGS(COMPILER_FLAGS)

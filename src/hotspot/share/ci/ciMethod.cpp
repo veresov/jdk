@@ -1003,15 +1003,19 @@ bool ciMethod::has_member_arg() const {
 //
 // Generate new MethodData* objects at compile time.
 // Return true if allocation was successful or no MDO is required.
-bool ciMethod::ensure_method_data(const methodHandle& h_m) {
+bool ciMethod::ensure_method_data(const methodHandle& h_m, bool training_data_only) {
   EXCEPTION_CONTEXT;
   if (is_native() || is_abstract() || h_m()->is_accessor()) {
     return true;
   }
   if (h_m()->method_data() == nullptr) {
-    Method::build_profiling_method_data(h_m, THREAD);
-    if (HAS_PENDING_EXCEPTION) {
-      CLEAR_PENDING_EXCEPTION;
+    if (training_data_only) {
+      Method::install_training_method_data(h_m);
+    } else {
+      Method::build_profiling_method_data(h_m, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        CLEAR_PENDING_EXCEPTION;
+      }
     }
   }
   if (h_m()->method_data() != nullptr) {
@@ -1024,12 +1028,12 @@ bool ciMethod::ensure_method_data(const methodHandle& h_m) {
 }
 
 // public, retroactive version
-bool ciMethod::ensure_method_data() {
+bool ciMethod::ensure_method_data(bool training_data_only) {
   bool result = true;
   if (_method_data == nullptr || _method_data->is_empty()) {
     GUARDED_VM_ENTRY({
       methodHandle mh(Thread::current(), get_Method());
-      result = ensure_method_data(mh);
+      result = ensure_method_data(mh, training_data_only);
     });
   }
   return result;
@@ -1193,7 +1197,7 @@ int ciMethod::inline_instructions_size() {
   if (_inline_instructions_size == -1) {
     GUARDED_VM_ENTRY(
       CompiledMethod* code = get_Method()->code();
-      if (code != nullptr && (code->comp_level() == CompLevel_full_optimization)) {
+      if (code != nullptr && !code->is_sca() && code->comp_level() == CompLevel_full_optimization) {
         int isize = code->insts_end() - code->verified_entry_point() - code->skipped_instructions_size();
         _inline_instructions_size = isize > 0 ? isize : 0;
       } else {

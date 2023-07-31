@@ -374,7 +374,8 @@ private:
   static bool is_registered_lambda_proxy_class(InstanceKlass* ik);
   static bool check_for_exclusion_impl(InstanceKlass* k);
   static void remove_dumptime_info(InstanceKlass* k) NOT_CDS_RETURN;
-
+  static void init_archived_hidden_class(Handle class_loader,
+                                         InstanceKlass* ik, const char* which, TRAPS);
   DEBUG_ONLY(static bool _class_loading_may_happen;)
 
 public:
@@ -502,6 +503,10 @@ public:
   static bool is_dumptime_table_empty() NOT_CDS_RETURN_(true);
   static bool is_supported_invokedynamic(BootstrapInfo* bsi) NOT_CDS_RETURN_(false);
   DEBUG_ONLY(static bool class_loading_may_happen() {return _class_loading_may_happen;})
+
+  static void record_archived_lambda_form_classes();
+  static void init_archived_lambda_form_classes(TRAPS);
+  static void init_archived_lambda_proxy_classes(Handle class_loader, TRAPS);
 
   static MethodData* lookup_method_data(Method* m) {
     const RunTimeMethodDataInfo* info = _dynamic_archive.lookup_method_info(m);

@@ -421,11 +421,11 @@ bool ArchiveBuilder::gather_one_source_obj(MetaspaceClosure::Ref* ref, bool read
   if (src_obj == nullptr) {
     return false;
   }
+  remember_embedded_pointer_in_enclosing_obj(ref);
   if (RegeneratedClasses::has_been_regenerated(src_obj)) {
     // No need to copy it. We will later relocate it to point to the regenerated klass/method.
     return false;
   }
-  remember_embedded_pointer_in_enclosing_obj(ref);
 
   FollowMode follow_mode = get_follow_mode(ref);
   SourceObjInfo src_info(ref, read_only, follow_mode);
@@ -686,6 +686,14 @@ void ArchiveBuilder::write_pointer_in_buffer(address* ptr_location, address src_
   }
 }
 
+void ArchiveBuilder::mark_and_relocate_to_buffered_addr(address* ptr_location) {
+  assert(*ptr_location != nullptr, "sanity");
+  if (!is_in_mapped_static_archive(*ptr_location)) {
+    *ptr_location = get_buffered_addr(*ptr_location);
+  }
+  ArchivePtrMarker::mark_pointer(ptr_location);
+}
+
 address ArchiveBuilder::get_buffered_addr(address src_addr) const {
   SourceObjInfo* p = _src_obj_table.get(src_addr);
   assert(p != nullptr, "src_addr " INTPTR_FORMAT " is used but has not been archived",
@@ -756,7 +764,22 @@ void ArchiveBuilder::make_klasses_shareable() {
         // For static dump, class loader type are already set.
         ik->assign_class_loader_type();
       }
-      if (ik->is_shared_boot_class()) {
+      if (ik->is_hidden()) {
+        oop loader = k->class_loader();
+        if (loader == nullptr) {
+          type = "boot";
+          num_boot_klasses ++;
+        } else if (loader == SystemDictionary::java_platform_loader()) {
+          type = "plat";
+          num_platform_klasses ++;
+        } else if (loader == SystemDictionary::java_system_loader()) {
+          type = "app";
+          num_app_klasses ++;
+        } else {
+          type = "bad";
+          assert(0, "shouldn't happen");
+        }
+      } else if (ik->is_shared_boot_class()) {
         type = "boot";
         num_boot_klasses ++;
       } else if (ik->is_shared_platform_class()) {

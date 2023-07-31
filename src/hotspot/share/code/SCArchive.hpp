@@ -253,7 +253,9 @@ enum class DataKind: int {
   PlaLoader = 6, // java_platform_loader
   MethodCnts= 7,
   Klass_Shared  = 8,
-  Method_Shared = 9
+  Method_Shared = 9,
+  String_Shared = 10,
+  MH_Oop_Shared = 11
 };
 
 class SCAFile;

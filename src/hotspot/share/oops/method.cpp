@@ -610,13 +610,20 @@ void Method::print_invocation_count() {
 #endif
 }
 
-// Build a MethodData* object to hold profiling information collected on this
-// method when requested.
-void Method::build_profiling_method_data(const methodHandle& method, TRAPS) {
+bool Method::install_training_method_data(const methodHandle& method) {
   MethodTrainingData* mtd = MethodTrainingData::find(method);
   if (mtd != nullptr && mtd->has_holder() && mtd->final_profile() != nullptr &&
       mtd->holder() == method() && mtd->final_profile()->method() == method()) { // FIXME
     Atomic::replace_if_null(&method->_method_data, mtd->final_profile());
+    return true;
+  }
+  return false;
+}
+
+// Build a MethodData* object to hold profiling information collected on this
+// method when requested.
+void Method::build_profiling_method_data(const methodHandle& method, TRAPS) {
+  if (install_training_method_data(method)) {
     return;
   }
   // Do not profile the method if metaspace has hit an OOM previously
@@ -1261,7 +1268,9 @@ void Method::remove_unshareable_flags() {
 // Called when the method_holder is getting linked. Setup entrypoints so the method
 // is ready to be called from interpreter, compiler, and vtables.
 void Method::link_method(const methodHandle& h_method, TRAPS) {
-  ClassLoader::perf_ik_link_methods_count()->inc();
+  if (UsePerfData) {
+    ClassLoader::perf_ik_link_methods_count()->inc();
+  }
 
   // If the code cache is full, we may reenter this function for the
   // leftover methods that weren't linked.
@@ -1517,6 +1526,7 @@ methodHandle Method::make_method_handle_intrinsic(vmIntrinsics::ID iid,
   cp->symbol_at_put(_imcp_invoke_name,       name);
   cp->symbol_at_put(_imcp_invoke_signature,  signature);
   cp->set_has_preresolution();
+  cp->set_is_for_method_handle_intrinsic();
 
   // decide on access bits:  public or not?
   int flags_bits = (JVM_ACC_NATIVE | JVM_ACC_SYNTHETIC | JVM_ACC_FINAL);
@@ -1564,6 +1574,16 @@ methodHandle Method::make_method_handle_intrinsic(vmIntrinsics::ID iid,
 
   return m;
 }
+
+#if INCLUDE_CDS
+void Method::restore_archived_method_handle_intrinsic(methodHandle m, TRAPS) {
+  m->link_method(m, CHECK);
+
+  if (m->intrinsic_id() == vmIntrinsics::_linkToNative) {
+    m->set_interpreter_entry(m->adapter()->get_i2c_entry());
+  }
+}
+#endif
 
 Klass* Method::check_non_bcp_klass(Klass* klass) {
   if (klass != nullptr && klass->class_loader() != nullptr) {

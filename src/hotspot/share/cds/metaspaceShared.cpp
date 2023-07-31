@@ -73,6 +73,7 @@
 #include "runtime/arguments.hpp"
 #include "runtime/globals_extension.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/javaCalls.hpp"
 #include "runtime/os.inline.hpp"
 #include "runtime/safepointVerifiers.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -96,6 +97,7 @@ intx MetaspaceShared::_relocation_delta;
 char* MetaspaceShared::_requested_base_address;
 bool MetaspaceShared::_use_optimized_module_handling = true;
 bool MetaspaceShared::_use_full_module_graph = true;
+Array<Method*>* MetaspaceShared::_archived_method_handle_intrinsics = NULL;
 
 // The CDS archive is divided into the following regions:
 //     rw  - read-write metadata
@@ -293,6 +295,7 @@ void MetaspaceShared::post_initialize(TRAPS) {
 
 static GrowableArrayCHeap<OopHandle, mtClassShared>* _extra_interned_strings = nullptr;
 static GrowableArrayCHeap<Symbol*, mtClassShared>* _extra_symbols = nullptr;
+static GrowableArray<Method*>* _method_handle_intrinsics = NULL;
 
 void MetaspaceShared::read_extra_data(JavaThread* current, const char* filename) {
   _extra_interned_strings = new GrowableArrayCHeap<OopHandle, mtClassShared>(10000);
@@ -343,6 +346,25 @@ void MetaspaceShared::read_extra_data(JavaThread* current, const char* filename)
   }
 }
 
+void MetaspaceShared::make_method_handle_intrinsics_shareable() {
+  for (int i = 0; i < _method_handle_intrinsics->length(); i++) {
+    Method* m = ArchiveBuilder::current()->get_buffered_addr(_method_handle_intrinsics->at(i));
+    m->remove_unshareable_info();
+    // Each method has its own constant pool (which is distinct from m->method_holder()->constants());
+    m->constants()->remove_unshareable_info();
+  }
+}
+
+void MetaspaceShared::write_method_handle_intrinsics() {
+  int len = _method_handle_intrinsics->length();
+  _archived_method_handle_intrinsics = ArchiveBuilder::new_ro_array<Method*>(len);
+  for (int i = 0; i < len; i++) {
+    ArchiveBuilder::current()->write_pointer_in_buffer(_archived_method_handle_intrinsics->adr_at(i),
+                                                       _method_handle_intrinsics->at(i));
+  }
+  log_info(cds)("Archived %d method handle intrinsics", len);
+}
+
 // Read/write a data stream for restoring/preserving metadata pointers and
 // miscellaneous data from/to the shared archive file.
 
@@ -388,6 +410,8 @@ void MetaspaceShared::serialize(SerializeClosure* soc) {
   soc->do_tag(--tag);
 
   CDS_JAVA_HEAP_ONLY(ClassLoaderDataShared::serialize(soc);)
+  soc->do_ptr((void**)&_archived_method_handle_intrinsics);
+
 
   LambdaFormInvokers::serialize(soc);
   soc->do_tag(666);
@@ -469,6 +493,10 @@ public:
         it->push(_extra_symbols->adr_at(i));
       }
     }
+
+    for (int i = 0; i < _method_handle_intrinsics->length(); i++) {
+      it->push(_method_handle_intrinsics->adr_at(i));
+    }
   }
 };
 
@@ -477,6 +505,8 @@ char* VM_PopulateDumpSharedSpace::dump_read_only_tables() {
 
   SystemDictionaryShared::write_to_archive();
   ClassPrelinker::record_initiated_klasses(true);
+  MetaspaceShared::write_method_handle_intrinsics();
+  SystemDictionaryShared::record_archived_lambda_form_classes();
 
   // Write lambform lines into archive
   LambdaFormInvokers::dump_static_archive_invokers();
@@ -520,6 +550,7 @@ void VM_PopulateDumpSharedSpace::doit() {
 
   log_info(cds)("Make classes shareable");
   builder.make_klasses_shareable();
+  MetaspaceShared::make_method_handle_intrinsics_shareable();
 
   char* serialized_data = dump_read_only_tables();
 
@@ -597,17 +628,9 @@ bool MetaspaceShared::may_be_eagerly_linked(InstanceKlass* ik) {
   return true;
 }
 
-bool MetaspaceShared::link_class_for_cds(InstanceKlass* ik, TRAPS) {
-  // Link the class to cause the bytecodes to be rewritten and the
-  // cpcache to be created. Class verification is done according
-  // to -Xverify setting.
-  bool res = MetaspaceShared::try_link_class(THREAD, ik);
-  ClassPrelinker::dumptime_resolve_constants(ik, CHECK_(false));
-  return res;
-}
-
 void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
   ClassPrelinker::initialize();
+
   if (!jcmd_request && !DynamicDumpSharedSpaces) {
     // If we have regenerated invoker classes in the dynamic archive,
     // they will conflict with the resolved CONSTANT_Klass references that are stored
@@ -635,7 +658,7 @@ void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
         if (klass->is_instance_klass()) {
           InstanceKlass* ik = InstanceKlass::cast(klass);
           if (may_be_eagerly_linked(ik)) {
-            has_linked |= link_class_for_cds(ik, CHECK);
+            has_linked |= try_link_class(THREAD, ik);
           }
         }
       }
@@ -647,6 +670,20 @@ void MetaspaceShared::link_shared_classes(bool jcmd_request, TRAPS) {
     // Class linking includes verification which may load more classes.
     // Keep scanning until we have linked no more classes.
   }
+
+  // Resolve constant pool entries -- we don't load any new classes during this stage
+  for (int i = 0; i < collect_cld.nof_cld(); i++) {
+    ClassLoaderData* cld = collect_cld.cld_at(i);
+    for (Klass* klass = cld->klasses(); klass != nullptr; klass = klass->next_link()) {
+      if (klass->is_instance_klass()) {
+        InstanceKlass* ik = InstanceKlass::cast(klass);
+        ClassPrelinker::dumptime_resolve_constants(ik, CHECK);
+      }
+    }
+  }
+
+  _method_handle_intrinsics = new (mtClassShared) GrowableArray<Method*>(256, mtClassShared);
+  SystemDictionary::get_all_method_handle_intrinsics(_method_handle_intrinsics);
 }
 
 void MetaspaceShared::prepare_for_dumping() {
@@ -793,6 +830,17 @@ void MetaspaceShared::preload_and_dump_impl(TRAPS) {
   ArchiveHeapWriter::init();
   if (use_full_module_graph()) {
     HeapShared::reset_archived_object_states(CHECK);
+  }
+
+  if (ArchiveInvokeDynamic) {
+    // Do this just before going into the safepoint.
+    // We also assume no other Java threads are running
+    // This makes sure that the MethodType and MethodTypeForm objects are clean.
+    JavaValue result(T_VOID);
+    JavaCalls::call_static(&result, vmClasses::MethodType_klass(),
+                           vmSymbols::dumpSharedArchive(),
+                           vmSymbols::void_method_signature(),
+                           CHECK);
   }
 #endif
 

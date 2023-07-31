@@ -120,7 +120,7 @@ class ciMethod : public ciMetadata {
 
   void load_code();
 
-  bool ensure_method_data(const methodHandle& h_m);
+  bool ensure_method_data(const methodHandle& h_m, bool training_data_only);
 
   void code_at_put(int bci, Bytecodes::Code code) {
     Bytecodes::check(code);
@@ -316,7 +316,7 @@ class ciMethod : public ciMetadata {
   bool has_unloaded_classes_in_signature();
   bool is_klass_loaded(int refinfo_index, Bytecodes::Code bc, bool must_be_resolved) const;
   bool check_call(int refinfo_index, bool is_static) const;
-  bool ensure_method_data();  // make sure it exists in the VM also
+  bool ensure_method_data(bool training_data_only = false);  // make sure it exists in the VM also
   MethodCounters* ensure_method_counters();
 
   int inline_instructions_size();

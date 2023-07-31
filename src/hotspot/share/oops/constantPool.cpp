@@ -27,6 +27,7 @@
 #include "cds/archiveHeapLoader.hpp"
 #include "cds/archiveBuilder.hpp"
 #include "cds/classPrelinker.hpp"
+#include "cds/lambdaFormInvokers.inline.hpp"
 #include "cds/heapShared.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/classLoaderData.hpp"
@@ -290,19 +291,46 @@ objArrayOop ConstantPool::prepare_resolved_references_for_archiving() {
 
   objArrayOop rr = resolved_references();
   if (rr != nullptr) {
+    ResourceMark rm;
+    int rr_len = rr->length();
+    GrowableArray<bool> keep_resolved_refs(rr_len, rr_len, false);
+
+    if (cache() != nullptr && ArchiveInvokeDynamic) {
+      Array<ResolvedIndyEntry>* indy_entries = cache()->resolved_indy_entries();
+      if (indy_entries != nullptr) {
+        for (int i = 0; i < indy_entries->length(); i++) {
+          ResolvedIndyEntry *rei = indy_entries->adr_at(i);
+          if (rei->is_resolved() && ClassPrelinker::should_preresolve_invokedynamic(this, rei->constant_pool_index())) {
+            int rr_index = rei->resolved_references_index();
+            keep_resolved_refs.at_put(rr_index, true);
+          }
+        }
+      }
+
+      for (int i = 0; i < cache()->length(); i++) {
+        ConstantPoolCacheEntry* cpce = cache()->entry_at(i);
+        if (can_archive_invokehandle(cpce) && cpce->has_appendix()) {
+          keep_resolved_refs.at_put(cpce->f2_as_index(), true);
+        }
+      }
+    }
+
     Array<u2>* ref_map = reference_map();
     int ref_map_len = ref_map == nullptr ? 0 : ref_map->length();
-    int rr_len = rr->length();
     for (int i = 0; i < rr_len; i++) {
       oop obj = rr->obj_at(i);
       rr->obj_at_put(i, nullptr);
-      if (obj != nullptr && i < ref_map_len) {
-        int index = object_to_cp_index(i);
-        if (tag_at(index).is_string()) {
-          assert(java_lang_String::is_instance(obj), "must be");
-          if (!ArchiveHeapWriter::is_string_too_large_to_archive(obj)) {
-            rr->obj_at_put(i, obj);
+      if (obj != nullptr) {
+        if (i < ref_map_len) {
+          int index = object_to_cp_index(i);
+          if (tag_at(index).is_string()) {
+            assert(java_lang_String::is_instance(obj), "must be");
+            if (!ArchiveHeapWriter::is_string_too_large_to_archive(obj)) {
+              rr->obj_at_put(i, obj);
+            }
           }
+        } else if (keep_resolved_refs.at(i)) {
+          rr->obj_at_put(i, obj);
         }
       }
     }
@@ -334,6 +362,9 @@ void ConstantPool::restore_unshareable_info(TRAPS) {
   assert(is_constantPool(), "ensure C++ vtable is restored");
   assert(on_stack(), "should always be set for shared constant pools");
   assert(is_shared(), "should always be set for shared constant pools");
+  if (is_for_method_handle_intrinsic()) {
+    return;
+  }
   assert(_cache != nullptr, "constant pool _cache should not be null");
 
   // Only create the new resolved references array if it hasn't been attempted before
@@ -376,6 +407,14 @@ void ConstantPool::remove_unshareable_info() {
   if (!_pool_holder->is_linked() && !_pool_holder->verified_at_dump_time()) {
     return;
   }
+  if (is_for_method_handle_intrinsic()) {
+    // This CP was created by Method::make_method_handle_intrinsic() and has nothing
+    // that need to be removed/restored. It has no cpCache since the intrinsic methods
+    // don't have any bytecodes.
+    assert(cache() == NULL, "must not have cpCache");
+    return;
+  }
+
   // Resolved references are not in the shared archive.
   // Save the length for restoration.  It is not necessarily the same length
   // as reference_map.length() if invokedynamic is saved. It is needed when
@@ -387,7 +426,9 @@ void ConstantPool::remove_unshareable_info() {
 }
 
 void ConstantPool::archive_entries() {
-  if (!_pool_holder->is_linked() && !_pool_holder->verified_at_dump_time()) {
+  if (pool_holder()->name()->starts_with("java/lang/invoke/LambdaForm$MH")) {
+    // TODO -- hidden class ...
+  } else if (!_pool_holder->is_linked() && !_pool_holder->verified_at_dump_time()) {
     return;
   }
   ResourceMark rm;
@@ -484,7 +525,7 @@ bool ConstantPool::maybe_archive_resolved_klass_at(int cp_index) {
       if (log_is_enabled(Debug, cds, resolve)) {
         ResourceMark rm;
         log_debug(cds, resolve)("archived klass  CP entry [%3d]: %s => %s", cp_index,
-                                pool_holder()->external_name(), k->external_name());
+                                pool_holder()->name()->as_C_string(), k->name()->as_C_string());
       }
       return true;
     }
@@ -497,9 +538,31 @@ bool ConstantPool::maybe_archive_resolved_klass_at(int cp_index) {
   return false;
 }
 
+bool ConstantPool::can_archive_invokehandle(ConstantPoolCacheEntry* cpce) {
+  int cp_index = cpce->constant_pool_index();
+
+  if (!cpce->is_resolved(Bytecodes::_invokehandle)) {
+    return false;
+  }
+
+  int klass_cp_index = uncached_klass_ref_index_at(cp_index);
+  Klass* resolved_klass = resolved_klass_at(klass_cp_index);
+  if (!resolved_klass->is_instance_klass()) {
+    // FIXME: can this ever happen
+    return false;
+  }
+  // FIXME -- any class referenced by the archived CP entries should be added to ArchiveBuilder::classes, or should be
+  // filtered out.
+  return true;
+}
+
 bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index, int cp_tag) {
   if (pool_holder()->is_hidden()) { // Not sure how to handle this yet ...
-    return false;
+    if (pool_holder()->name()->starts_with("java/lang/invoke/LambdaForm$")) {
+      // Hmmm, walking on thin ice here, but maybe we are OK :-)
+    } else {
+      return false;
+    }
   }
 
   ConstantPool* src_cp = ArchiveBuilder::current()->get_source_addr(this);
@@ -520,6 +583,7 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
     return false;
   }
   ConstantPoolCacheEntry* cpce = cache()->entry_at(cpc_index);
+  const char* is_static = "";
   switch (cp_tag) {
   case JVM_CONSTANT_Fieldref:
     if (!cpce->is_resolved(Bytecodes::_getfield)) {
@@ -528,7 +592,32 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
     }
     break;
   case JVM_CONSTANT_Methodref:
-    if (!cpce->is_resolved(Bytecodes::_invokevirtual) && !cpce->is_resolved(Bytecodes::_invokespecial)) {
+    if (cpce->is_resolved(Bytecodes::_invokehandle)) {
+      if (!ArchiveInvokeDynamic) {
+        // FIXME We don't dump the MethodType tables. This somehow breaks stuff. Why???
+        return false;
+      } else if (!can_archive_invokehandle(cpce)) {
+        return false;
+      }
+    } else if (cpce->is_resolved(Bytecodes::_invokestatic)) {
+      // TODO: allow invokestatic on current class and supertypes??
+      if (!ArchiveInvokeDynamic) {
+        // FIXME We don't dump the MethodType tables. This somehow breaks stuff.
+        return false;
+      }
+
+      InstanceKlass* src_cp_holder = src_cp->pool_holder();
+      if (!resolved_klass->name()->equals("java/lang/invoke/MethodHandle") &&
+          !resolved_klass->name()->equals("java/lang/invoke/MethodHandleNatives") /* ||
+          !LambdaFormInvokers::may_be_regenerated_class(src_cp_holder->name()) */) {
+        // FIXME - allow LambdaForm classes as well??
+        // FIXME - tighten this check??
+        return false;
+      }
+      // Allow static method refs to MethodHandle from the LambdaForm Invoker Holder classes
+      is_static = " *** static";
+    } else if (!cpce->is_resolved(Bytecodes::_invokevirtual) &&
+               !cpce->is_resolved(Bytecodes::_invokespecial)) {
       return false;
     }
     if (resolved_klass->is_instance_klass()) {
@@ -549,9 +638,9 @@ bool ConstantPool::maybe_archive_resolved_fmi_ref_at(int cp_index, int cpc_index
     Symbol* name = uncached_name_ref_at(cp_index);
     Symbol* signature = uncached_signature_ref_at(cp_index);
     const char* type = (cp_tag == JVM_CONSTANT_Fieldref) ? "field " : "method";
-    log_debug(cds, resolve)("archived %s CP entry [%3d]: %s => %s.%s:%s", type, cp_index,
-                            pool_holder()->external_name(), resolved_klass->external_name(),
-                            name->as_C_string(), signature->as_C_string());
+    log_debug(cds, resolve)("archived %s CP entry [%3d]: %s => %s.%s:%s%s", type, cp_index,
+                            pool_holder()->name()->as_C_string(), resolved_klass->name()->as_C_string(),
+                            name->as_C_string(), signature->as_C_string(), is_static);
   }
 
   // work-o-in-progress, mark_and_relocate could return false if it doesn't know how to

@@ -25,12 +25,18 @@
 #include "precompiled.hpp"
 #include "cds/archiveBuilder.hpp"
 #include "cds/classPrelinker.hpp"
+#include "cds/heapShared.hpp"
 #include "cds/lambdaFormInvokers.inline.hpp"
+#include "cds/regeneratedClasses.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
 #include "gc/shared/gcVMOperations.hpp"
+#include "interpreter/bytecode.hpp"
+#include "interpreter/bytecodeStream.hpp"
+#include "interpreter/interpreterRuntime.hpp"
+#include "interpreter/linkResolver.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/constantPool.inline.hpp"
 #include "oops/instanceKlass.hpp"
@@ -127,10 +133,12 @@ bool ClassPrelinker::can_archive_resolved_klass(InstanceKlass* cp_holder, Klass*
   assert(!is_in_archivebuilder_buffer(cp_holder), "sanity");
   assert(!is_in_archivebuilder_buffer(resolved_klass), "sanity");
 
+#if 0
   if (cp_holder->is_hidden()) {
     // TODO - what is needed for hidden classes?
     return false;
   }
+#endif
 
 #if 0
   if (DumpSharedSpaces && LambdaFormInvokers::may_be_regenerated_class(resolved_klass->name())) {
@@ -176,6 +184,8 @@ bool ClassPrelinker::can_archive_resolved_klass(InstanceKlass* cp_holder, Klass*
         return true;
       } else if (cp_holder->is_shared_boot_class()) {
         assert(loader == nullptr, "must be");
+        return true;
+      } else if (cp_holder->is_hidden() && cp_holder->class_loader() == nullptr) { // FIXME -- use better checks!
         return true;
       }
     }
@@ -239,82 +249,61 @@ void ClassPrelinker::dumptime_resolve_constants(InstanceKlass* ik, TRAPS) {
     return;
   }
 
-  // TODO: normally, we don't want to archive any CP entries that were not resolved
+  constantPoolHandle cp(THREAD, ik->constants());
+  for (int cp_index = 1; cp_index < cp->length(); cp_index++) { // Index 0 is unused
+    if (cp->tag_at(cp_index).value() == JVM_CONSTANT_String) {
+      resolve_string(cp, cp_index, CHECK); // may throw OOM when interning strings.
+    }
+  }
+
+  // Normally, we don't want to archive any CP entries that were not resolved
   // in the training run. Otherwise the AOT/JIT may inline too much code that has not
   // been executed.
   //
   // However, we want to aggressively resolve all klass/field/method constants for
-  // lambda form form invoker holder classes, lambda proxy classes (and lambda form classes
-  // in the future), so that the compiler can inline through them.
+  // LambdaForm Invoker Holder classes, Lambda Proxy classes, and LambdaForm classes,
+  // so that the compiler can inline through them.
+  bool eager_resolve = false;
 
-  constantPoolHandle cp(THREAD, ik->constants());
-  for (int cp_index = 1; cp_index < cp->length(); cp_index++) { // Index 0 is unused
-    switch (cp->tag_at(cp_index).value()) {
-    case JVM_CONSTANT_UnresolvedClass:
-      //maybe_resolve_class(cp, cp_index, CHECK); -- see TODO above
-      break;
+  if (LambdaFormInvokers::may_be_regenerated_class(ik->name())) {
+    eager_resolve = true;
+  }
+  if (ik->is_hidden() && HeapShared::is_archived_hidden_klass(ik)) {
+    eager_resolve = true;
+  }
 
-    case JVM_CONSTANT_String:
-      resolve_string(cp, cp_index, CHECK); // may throw OOM when interning strings.
-      break;
-    }
+  if (eager_resolve) {
+    preresolve_class_cp_entries(THREAD, ik, nullptr);
+    preresolve_field_and_method_cp_entries(THREAD, ik, nullptr);
   }
 }
 
-Klass* ClassPrelinker::find_loaded_class(JavaThread* THREAD, oop class_loader, Symbol* name) {
-  HandleMark hm(THREAD);
-  Handle h_loader(THREAD, class_loader);
-  Klass* k = SystemDictionary::find_instance_or_array_klass(THREAD, name,
+// This works only for the boot/platform/app loaders
+Klass* ClassPrelinker::find_loaded_class(JavaThread* current, oop class_loader, Symbol* name) {
+  HandleMark hm(current);
+  Handle h_loader(current, class_loader);
+  Klass* k = SystemDictionary::find_instance_or_array_klass(current, name,
                                                             h_loader,
                                                             Handle());
   if (k != nullptr) {
     return k;
   }
   if (class_loader == SystemDictionary::java_system_loader()) {
-    return find_loaded_class(THREAD, SystemDictionary::java_platform_loader(), name);
+    return find_loaded_class(current, SystemDictionary::java_platform_loader(), name);
   } else if (class_loader == SystemDictionary::java_platform_loader()) {
-    return find_loaded_class(THREAD, nullptr, name);
+    return find_loaded_class(current, nullptr, name);
+  } else {
+    assert(class_loader == nullptr, "This function only works for boot/platform/app loaders");
   }
 
   return nullptr;
 }
 
-#if 0 // not used today
-Klass* ClassPrelinker::maybe_resolve_class(constantPoolHandle cp, int cp_index, TRAPS) {
-  assert(!is_in_archivebuilder_buffer(cp()), "sanity");
-  InstanceKlass* cp_holder = cp->pool_holder();
-  if (!cp_holder->is_shared_boot_class() &&
-      !cp_holder->is_shared_platform_class() &&
-      !cp_holder->is_shared_app_class()) {
-    // Don't trust custom loaders, as they may not be well-behaved
-    // when resolving classes.
-    return nullptr;
-  }
 
-  Symbol* name = cp->klass_name_at(cp_index);
-  Klass* resolved_klass = find_loaded_class(THREAD, cp_holder->class_loader(), name);
-  if (resolved_klass != nullptr) {
-    // We blindly resolve the CP entry at this point. Later,
-    // ConstantPool::maybe_archive_resolved_klass_at() will undo the ones that can't
-    // be archived (if PreloadSharedClasses is true, only references to excluded classes will be undone)
-    if (cp_holder->is_shared_boot_class()) { // FIXME -- allow for all 3 loaders
-      Klass* k = cp->klass_at(cp_index, THREAD);
-      if (HAS_PENDING_EXCEPTION) {
-        // Sometimes Javac stores InnerClasses attributes that refer to a package-private
-        // inner class from a different package. E.g., this is in java/util/GregorianCalendar
-        //
-        // InnerClasses:
-        // static #888= #886 of #62; // Date=class sun/util/calendar/Gregorian$Date of class sun/util/calendar/Gregorian
-        CLEAR_PENDING_EXCEPTION;
-        return nullptr;
-      }
-      assert(k == resolved_klass, "must be");
-    }
-  }
-
-  return resolved_klass;
+Klass* ClassPrelinker::find_loaded_class(JavaThread* current, ConstantPool* cp, int class_cp_index) {
+  Symbol* name = cp->klass_name_at(class_cp_index);
+  return find_loaded_class(current, cp->pool_holder()->class_loader(), name);
 }
-#endif
 
 #if INCLUDE_CDS_JAVA_HEAP
 void ClassPrelinker::resolve_string(constantPoolHandle cp, int cp_index, TRAPS) {
@@ -327,6 +316,201 @@ void ClassPrelinker::resolve_string(constantPoolHandle cp, int cp_index, TRAPS) 
   ConstantPool::string_at_impl(cp, cp_index, cache_index, CHECK);
 }
 #endif
+
+void ClassPrelinker::preresolve_class_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list) {
+  if (!PreloadSharedClasses) {
+    return;
+  }
+  if (!SystemDictionaryShared::is_builtin_loader(ik->class_loader_data())) {
+    return;
+  }
+
+  JavaThread* THREAD = current;
+  constantPoolHandle cp(THREAD, ik->constants());
+  for (int cp_index = 1; cp_index < cp->length(); cp_index++) {
+    if (cp->tag_at(cp_index).value() == JVM_CONSTANT_UnresolvedClass) {
+      if (preresolve_list != nullptr && preresolve_list->at(cp_index) == false) {
+        // This class was not resolved during trial run. Don't attempt to resolve it. Otherwise
+        // the compiler may generate less efficient code.
+        continue;
+      }
+      if (find_loaded_class(current, cp(), cp_index) == nullptr) {
+        // Do not resolve any class that has not been loaded yet
+        continue;
+      }
+      Klass* resolved_klass = cp->klass_at(cp_index, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        CLEAR_PENDING_EXCEPTION; // just ignore
+      } else {
+        log_trace(cds, resolve)("Resolved class  [%3d] %s -> %s", cp_index, ik->external_name(),
+                                resolved_klass->external_name());
+      }
+    }
+  }
+}
+
+void ClassPrelinker::preresolve_field_and_method_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list) {
+  JavaThread* THREAD = current;
+  constantPoolHandle cp(THREAD, ik->constants());
+  if (cp->cache() == nullptr) {
+    return;
+  }
+  for (int i = 0; i < ik->methods()->length(); i++) {
+    Method* m = ik->methods()->at(i);
+    BytecodeStream bcs(methodHandle(THREAD, m));
+    while (!bcs.is_last_bytecode()) {
+      bcs.next();
+      Bytecodes::Code bc = bcs.raw_code();
+      switch (bc) {
+      case Bytecodes::_invokehandle:
+        if (!ArchiveInvokeDynamic) {
+          break;
+        }
+        // fall-through
+      case Bytecodes::_getfield:
+      case Bytecodes::_putfield:
+      case Bytecodes::_invokespecial:
+    //case Bytecodes::_invokevirtual: This fails with test/hotspot/jtreg/premain/jmh/run.sh
+      case Bytecodes::_invokestatic:
+        maybe_resolve_fmi_ref(ik, m, bc, bcs.get_index_u2_cpcache(), preresolve_list, THREAD);
+        if (HAS_PENDING_EXCEPTION) {
+          CLEAR_PENDING_EXCEPTION; // just ignore
+        }
+        break;
+      default:
+        break;
+      }
+    }
+  }
+}
+
+void ClassPrelinker::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m, Bytecodes::Code bc, int raw_index,
+                                           GrowableArray<bool>* preresolve_list, TRAPS) {
+  methodHandle mh(THREAD, m);
+  constantPoolHandle cp(THREAD, ik->constants());
+  HandleMark hm(THREAD);
+  int cpc_index = cp->decode_cpcache_index(raw_index);
+  ConstantPoolCacheEntry* cp_cache_entry = cp->cache()->entry_at(cpc_index);
+  if (cp_cache_entry->is_resolved(bc)) {
+    return;
+  }
+  int cp_index = cp_cache_entry->constant_pool_index();
+  if (preresolve_list != nullptr && preresolve_list->at(cp_index) == false) {
+    // This field wasn't resolved during the trial run. Don't attempt to resolve it. Otherwise
+    // the compiler may generate less efficient code.
+    return;
+  }
+
+  int klass_cp_index = cp->uncached_klass_ref_index_at(cp_index);
+  if (find_loaded_class(THREAD, cp(), klass_cp_index) == nullptr) {
+    // Do not resolve any field/methods from a class that has not been loaded yet.
+    return;
+  }
+  Klass* resolved_klass = cp->klass_ref_at(raw_index, bc, CHECK);
+
+  const char* ref_kind = "";
+  const char* is_static = "";
+  const char* is_regen = "";
+
+  if (RegeneratedClasses::is_a_regenerated_object((address)ik)) {
+    is_regen = " (regenerated)";
+  }
+
+  switch (bc) {
+  case Bytecodes::_getfield:
+  case Bytecodes::_putfield:
+    InterpreterRuntime::resolve_get_put(bc, raw_index, mh, cp, cp_cache_entry, CHECK);
+    ref_kind = "field ";
+    break;
+  case Bytecodes::_invokevirtual:
+    InterpreterRuntime::cds_resolve_invoke(bc, raw_index, mh, cp, cp_cache_entry, CHECK);
+    ref_kind = "method";
+    break;
+  case Bytecodes::_invokespecial:
+    // TODO Not implemented yet.
+    return;
+  case Bytecodes::_invokehandle:
+    InterpreterRuntime::cds_resolve_invokehandle(raw_index, cp, CHECK);
+    ref_kind = "method";
+    break;
+  case Bytecodes::_invokestatic:
+    if (!resolved_klass->name()->equals("java/lang/invoke/MethodHandle") &&
+        !resolved_klass->name()->equals("java/lang/invoke/MethodHandleNatives")
+/* ||
+        !LambdaFormInvokers::may_be_regenerated_class(ik->name())*/) {
+      return;
+    }
+    InterpreterRuntime::cds_resolve_invoke(bc, raw_index, mh, cp, cp_cache_entry, CHECK);
+    ref_kind = "method";
+    is_static = " *** static";
+    break;
+  default:
+    ShouldNotReachHere();
+  }
+
+  if (log_is_enabled(Trace, cds, resolve)) {
+    ResourceMark rm(THREAD);
+    Symbol* name = cp->name_ref_at(raw_index, bc);
+    Symbol* signature = cp->signature_ref_at(raw_index, bc);
+    log_trace(cds, resolve)("Resolved %s [%3d] %s%s -> %s.%s:%s%s", ref_kind, cp_index,
+                            ik->external_name(), is_regen,
+                            resolved_klass->external_name(),
+                            name->as_C_string(), signature->as_C_string(), is_static);
+  }
+}
+
+void ClassPrelinker::preresolve_indy_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list) {
+  JavaThread* THREAD = current;
+  constantPoolHandle cp(THREAD, ik->constants());
+  if (!ArchiveInvokeDynamic || cp->cache() == nullptr) {
+    return;
+  }
+  assert(preresolve_list != nullptr, "preresolve_indy_cp_entries() should not be called for "
+         "regenerated LambdaForm Invoker classes, which should not have indys anyway.");
+
+
+  Array<ResolvedIndyEntry>* indy_entries = cp->cache()->resolved_indy_entries();
+  for (int i = 0; i < indy_entries->length(); i++) {
+    ResolvedIndyEntry* rie = indy_entries->adr_at(i);
+    int cp_index = rie->constant_pool_index();
+    if (preresolve_list->at(cp_index) == true && !rie->is_resolved() && 
+        should_preresolve_invokedynamic(cp(), cp_index)) {
+      InterpreterRuntime::cds_resolve_invokedynamic(ConstantPool::encode_invokedynamic_index(i), cp, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        CLEAR_PENDING_EXCEPTION; // just ignore
+      }
+    }
+  }
+}
+
+static GrowableArrayCHeap<char*, mtClassShared>* _invokedynamic_filter = nullptr;
+
+bool ClassPrelinker::should_preresolve_invokedynamic(ConstantPool* cp, int cp_index) {
+  if (!ArchiveInvokeDynamic) {
+    return false;
+  }
+
+  int bsm = cp->bootstrap_method_ref_index_at(cp_index);
+  int bsm_ref = cp->method_handle_index_at(bsm);
+  Symbol* bsm_name = cp->uncached_name_ref_at(bsm_ref);
+  Symbol* bsm_signature = cp->uncached_signature_ref_at(bsm_ref);
+  Symbol* bsm_klass = cp->klass_name_at(cp->uncached_klass_ref_index_at(bsm_ref));
+
+  if (bsm_klass->equals("java/lang/invoke/StringConcatFactory") &&
+      bsm_name->equals("makeConcatWithConstants")) {
+    // Support string concact for now
+    return true;
+  }
+
+  if (bsm_klass->equals("java/lang/invoke/LambdaMetafactory") &&
+      bsm_name->equals("metafactory") &&
+      bsm_signature->equals("(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;")) {
+    // Support only string concact for now
+    return true;
+  }
+
+  return false;
+}
 
 #ifdef ASSERT
 bool ClassPrelinker::is_in_archivebuilder_buffer(address p) {

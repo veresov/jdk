@@ -946,10 +946,14 @@ void InterpreterRuntime::cds_resolve_invoke(Bytecodes::Code bytecode, int raw_in
                                             methodHandle& m,
                                             constantPoolHandle& pool,
                                             ConstantPoolCacheEntry* cp_cache_entry, TRAPS) {
-  assert(bytecode == Bytecodes::_invokevirtual, "only this is supported now");
-  LinkInfo link_info(pool, raw_index, Bytecodes::_invokevirtual, CHECK);
+  LinkInfo link_info(pool, raw_index, bytecode, CHECK);
   CallInfo call_info;
-  LinkResolver::cds_resolve_virtual_call(call_info, link_info, CHECK);
+  if (bytecode == Bytecodes::_invokevirtual) {
+    LinkResolver::cds_resolve_virtual_call(call_info, link_info, CHECK);
+  } else {
+    assert(bytecode == Bytecodes::_invokestatic, "other bytecodes aren't supported yet");
+    LinkResolver::resolve_invoke(call_info, Handle(), pool, raw_index, bytecode, CHECK);
+  }
 
   methodHandle resolved_method(THREAD, call_info.resolved_method());
   update_invoke_cp_cache_entry(call_info, bytecode, resolved_method, pool, cp_cache_entry);
@@ -977,6 +981,17 @@ void InterpreterRuntime::resolve_invokehandle(JavaThread* current) {
   cp_cache_entry->set_method_handle(pool, info);
 }
 
+void InterpreterRuntime::cds_resolve_invokehandle(int raw_index,
+                                                  constantPoolHandle& pool, TRAPS) {
+  const Bytecodes::Code bytecode = Bytecodes::_invokehandle;
+  CallInfo info;
+  LinkResolver::resolve_invoke(info, Handle(), pool,
+                               raw_index, bytecode, CHECK);
+  int cpc_index = ConstantPool::decode_cpcache_index(raw_index);
+  ConstantPoolCacheEntry* cp_cache_entry = pool->cache()->entry_at(cpc_index);
+  cp_cache_entry->set_method_handle(pool, info);
+}
+
 // First time execution:  Resolve symbols, create a permanent CallSite object.
 void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
   LastFrameAccessor last_frame(current);
@@ -994,6 +1009,15 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
   } // end JvmtiHideSingleStepping
 
   pool->cache()->set_dynamic_call(info, pool->decode_invokedynamic_index(index));
+}
+
+void InterpreterRuntime::cds_resolve_invokedynamic(int raw_index,
+                                                   constantPoolHandle& pool, TRAPS) {
+  const Bytecodes::Code bytecode = Bytecodes::_invokedynamic;
+  CallInfo info;
+  LinkResolver::resolve_invoke(info, Handle(), pool,
+                               raw_index, bytecode, CHECK);
+  pool->cache()->set_dynamic_call(info, pool->decode_invokedynamic_index(raw_index));
 }
 
 // This function is the interface to the assembly code. It returns the resolved
