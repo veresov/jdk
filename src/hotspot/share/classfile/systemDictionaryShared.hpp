@@ -312,6 +312,9 @@ class SystemDictionaryShared: public SystemDictionary {
 
     InstanceKlass::ClassState lookup_init_state(InstanceKlass* ik) const;
     InitInfo* lookup_static_field_value(InstanceKlass* holder, int offset) const;
+    int compute_init_count(InstanceKlass* ik) const;
+
+    void print_init_count(outputStream* st) const;
 
     void print_on(const char* prefix, outputStream* st);
     void print_table_statistics(const char* prefix, outputStream* st);
@@ -523,6 +526,14 @@ public:
 
   static InitInfo* lookup_static_field_value(InstanceKlass* holder, int offset) {
     return _dynamic_archive.lookup_static_field_value(holder, offset);
+  }
+
+  static int compute_init_count(InstanceKlass* ik) {
+    return _dynamic_archive.compute_init_count(ik);
+  }
+
+  static void print_init_count(outputStream* st) {
+    _dynamic_archive.print_init_count(st);
   }
 
   static void print_init_list(outputStream* st, bool filter, InstanceKlass* value);

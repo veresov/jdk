@@ -83,9 +83,13 @@ void CompilationPolicy::sample_load_average() {
 }
 
 bool CompilationPolicy::have_recompilation_work() {
-  if (UseRecompilation && TrainingData::have_data() && !_recompilation_done &&
-      (TrainingData::recompilation_schedule()->length() > 0 /*|| ForceRecompilation*/)) {
-    if (_load_average.value() <= RecompilationLoadAverageThreshold) {
+  if (UseRecompilation && TrainingData::have_data()) {
+    double load_avg = _load_average.value();
+    bool is_done = _recompilation_done;
+    log_debug(recompile)("load_avg=%.3f done=%d schedule_len=%d", load_avg, is_done, TrainingData::recompilation_schedule()->length());
+    if (!_recompilation_done &&
+       (TrainingData::recompilation_schedule()->length() > 0 /*|| ForceRecompilation*/) &&
+       (load_avg <= RecompilationLoadAverageThreshold)) {
       return true;
     }
   }
@@ -95,6 +99,22 @@ bool CompilationPolicy::have_recompilation_work() {
 bool CompilationPolicy::recompilation_step(int step, TRAPS) {
   if (!have_recompilation_work()) {
     return false;
+  }
+  log_debug(recompile)("Recompilation step started");
+
+  const int size = TrainingData::recompilation_schedule()->length();
+
+  LogStreamHandle(Trace, recompile) log;
+  if (log.is_enabled()) {
+    log.print("Recompilation schedule status (%d entries):", size);
+    for (int i = 0; i < size; i++) {
+      if (!TrainingData::recompilation_status()[i]) {
+        MethodTrainingData* mtd = TrainingData::recompilation_schedule()->at(i);
+        log.print("%4d: ", i);
+        mtd->print_on(&log, true);
+        log.cr();
+      }
+    }
   }
 
 //  if (ForceRecompilation) {
@@ -107,12 +127,15 @@ bool CompilationPolicy::recompilation_step(int step, TRAPS) {
 //    return false;
 //  }
 
-  const int size = TrainingData::recompilation_schedule()->length();
   int i = 0;
   int count = 0;
+  int done = 0;
+  int skipped = 0;
   bool repeat = false;
   for (; i < size && count < step; i++) {
-    if (!TrainingData::recompilation_status()[i]) {
+    if (TrainingData::recompilation_status()[i]) {
+      ++done;
+    } else {
       MethodTrainingData* mtd = TrainingData::recompilation_schedule()->at(i);
       if (!mtd->has_holder()) {
         Atomic::release_store(&TrainingData::recompilation_status()[i], true);
@@ -121,37 +144,62 @@ bool CompilationPolicy::recompilation_step(int step, TRAPS) {
       const Method* method = mtd->holder();
       InstanceKlass* klass = method->method_holder();
       if (klass->is_not_initialized()) {
+        log_debug(recompile)("@ %d: repeat: holder not initialized", i);
+        skipped++;
         repeat = true;
         continue;
       }
-      CompiledMethod *cm = method->code();
+      CompiledMethod* cm = method->code();
       if (cm == nullptr) {
+        log_debug(recompile)("@ %d: repeat: no code", i);
+        skipped++;
         repeat = true;
         continue;
       }
 
-      if (!ForceRecompilation && !(cm->is_sca() && cm->comp_level() == CompLevel_full_optimization)) {
+      if (!ForceRecompilation &&
+          !((cm->is_sca() || cm->as_nmethod()->from_recorded_data()) &&
+            cm->comp_level() == CompLevel_full_optimization)) {
         // If it's already online-compiled at level 4, mark it as done.
         if (cm->comp_level() == CompLevel_full_optimization) {
           Atomic::store(&TrainingData::recompilation_status()[i], true);
+          LogStreamHandle(Debug, recompile) log;
+          if (log.is_enabled()) {
+            log.print("@ %d: done: already online compiled at L4: ", i);
+            cm->as_nmethod()->print_on(&log);
+            log.cr();
+          }
         } else {
+          LogStreamHandle(Debug, recompile) log;
+          if (log.is_enabled()) {
+            log.print("@ %d: repeat: no precompiled code: is_sca=%d from_recorded_data=%d ", i, cm->is_sca(), cm->as_nmethod()->from_recorded_data());
+            cm->as_nmethod()->print_on(&log);
+            log.cr();
+          }
+          skipped++;
           repeat = true;
         }
         continue;
       }
       if (Atomic::cmpxchg(&TrainingData::recompilation_status()[i], false, true) == false) {
+        log_debug(recompile)("@ %d: recompile @ L4", i);
         const methodHandle m(THREAD, const_cast<Method*>(method));
-        CompLevel next_level = CompLevel_full_optimization;
 
-        if (method->method_data() == nullptr) {
-          create_mdo(m, THREAD);
+        CompileTask::CompileReason comp_reason = CompileTask::Reason_MustBeCompiled;
+        if (cm->as_nmethod()->from_recorded_data()) {
+          guarantee(PrecompileBarriers == 0, "");
+          comp_reason = CompileTask::Reason_Recorded;
+        } else {
+          if (m->method_data() == nullptr) {
+            create_mdo(m, THREAD);
+          }
         }
 
         if (PrintTieredEvents) {
-          print_event(FORCE_RECOMPILE, m(), m(), InvocationEntryBci, next_level);
+          print_event(FORCE_RECOMPILE, m(), m(), InvocationEntryBci, CompLevel_full_optimization);
         }
         CompileBroker::compile_method(m, InvocationEntryBci, CompLevel_full_optimization, methodHandle(), 0,
-                                      true /*requires_online_compilation*/, CompileTask::Reason_MustBeCompiled, THREAD);
+                                      true /*requires_online_compilation*/, comp_reason, THREAD);
         if (HAS_PENDING_EXCEPTION) {
           CLEAR_PENDING_EXCEPTION;
         }
@@ -160,7 +208,10 @@ bool CompilationPolicy::recompilation_step(int step, TRAPS) {
     }
   }
 
+  log_info(recompile)("Recompilation step finished: recompiled %d, skipped %d, already done %d out of %d", count, skipped, done, size);
+
   if (i == size && !repeat) {
+    log_info(recompile)("Recompilation finished");
     Atomic::release_store(&_recompilation_done, true);
   }
   return count > 0;

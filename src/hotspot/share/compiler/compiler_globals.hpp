@@ -437,6 +437,9 @@
                                                                             \
   product(bool, ForceRecompilation, false,                                  \
           "Testing mode for recompilation")                                 \
+                                                                            \
+  product(int, ForceRecompilationThreshold, 0,                              \
+          "Testing mode for recompilation")                                 \
 
 // end of COMPILER_FLAGS
 

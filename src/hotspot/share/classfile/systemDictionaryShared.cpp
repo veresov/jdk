@@ -72,6 +72,7 @@
 #include "oops/typeArrayOop.inline.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/init.hpp"
 #include "runtime/java.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
@@ -2053,12 +2054,17 @@ void SystemDictionaryShared::preload_archived_classes(TRAPS) {
   preload_archived_classes(prelink, preinit, preresolve_cp, preresolve_indy, preresolve_invokehandle, THREAD);
 
   if (PrecompileLevel > 0) {
+    log_info(precompile)("Precompile started");
+
+    FlagSetting fs(UseRecompilation, false); // disable recompilation until precompilation is over
     int count = force_compilation(false, THREAD);
     assert(!HAS_PENDING_EXCEPTION, "");
     if (log_is_enabled(Info, cds, nmethod)) {
       MutexLocker ml(Threads_lock);
       CodeCache::arm_all_nmethods();
     }
+
+    log_info(precompile)("Precompile finished: %d methods compiled", count);
   }
 
   if (!preinit && ForceClassInit) {
@@ -2329,7 +2335,6 @@ void SystemDictionaryShared::preload_archived_classes(bool prelink, bool preinit
 }
 
 bool SystemDictionaryShared::force_compilation(bool recompile, TRAPS) {
-  log_info(cds,dynamic)("Precompile started");
   PrecompileIterator comp;
   TrainingData::archived_training_data_dictionary()->iterate(&comp);
   if (ForcePrecompilation) {
@@ -2339,8 +2344,8 @@ bool SystemDictionaryShared::force_compilation(bool recompile, TRAPS) {
 
   comp._methods.sort(&compare_by_compile_id);
 
-  CompileTask::CompileReason comp_reason = (recompile ? CompileTask::Reason_MustBeCompiled
-                                                      : CompileTask::Reason_Recorded);
+  CompileTask::CompileReason comp_reason = CompileTask::Reason_Recorded;
+
   bool preinit = (PreloadArchivedClasses > 1) || recompile;
   bool requires_online_comp = recompile;
 
@@ -2376,7 +2381,7 @@ bool SystemDictionaryShared::force_compilation(bool recompile, TRAPS) {
 //            if (mh->code() == nullptr) {
 //              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
 //            }
-      } else if (!recompile &&
+      } else if (//!recompile && // TODO: any sense NOT to recompile?
                  /*!DirectivesStack::getMatchingDirective(mh, nullptr)->DontPrecompileOption &&*/
                  DirectivesStack::getMatchingDirective(mh, nullptr)->PrecompileRecordedOption) {
         log_trace(cds,dynamic)("Precompile (forced) %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
@@ -2404,8 +2409,7 @@ bool SystemDictionaryShared::force_compilation(bool recompile, TRAPS) {
     }
     assert(!HAS_PENDING_EXCEPTION, "");
   }
-  log_info(cds,dynamic)("Precompile finished: %d methods compiled", count);
-  return true;
+  return count;
 }
 
 InstanceKlass::ClassState SystemDictionaryShared::ArchiveInfo::lookup_init_state(InstanceKlass* ik) const {
@@ -2419,6 +2423,37 @@ InstanceKlass::ClassState SystemDictionaryShared::ArchiveInfo::lookup_init_state
     }
   }
   return init_state;
+}
+
+int SystemDictionaryShared::ArchiveInfo::compute_init_count(InstanceKlass* ik) const {
+  if (MetaspaceObj::is_shared(ik) && _init_list != nullptr) {
+    int init_count = 0;
+    for (int i = 0; i < _init_list->length(); i++) {
+      InitInfo* info = _init_list->adr_at(i);
+      if (info->type() == class_init && info->klass() != nullptr && info->init_state() == InstanceKlass::fully_initialized) {
+        if (info->klass()->init_state() < InstanceKlass::fully_initialized) {
+          ++init_count;
+        }
+      }
+    }
+    return init_count;
+  } else {
+    return (1 << 30); // MAX_INT
+  }
+}
+
+void SystemDictionaryShared::ArchiveInfo::print_init_count(outputStream* st) const {
+  if (_init_list != nullptr) {
+    for (int i = 0; i < _init_list->length(); i++) {
+      InitInfo* info = _init_list->adr_at(i);
+      if (info->type() == class_init && info->klass() != nullptr && info->init_state() == InstanceKlass::fully_initialized) {
+        if (info->klass()->init_state() < InstanceKlass::fully_initialized) {
+          ResourceMark rm;
+          st->print_cr("%6d: %s", i, info->klass()->external_name());
+        }
+      }
+    }
+  }
 }
 
 InitInfo* SystemDictionaryShared::ArchiveInfo::lookup_static_field_value(InstanceKlass* holder, int offset) const {

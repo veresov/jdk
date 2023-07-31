@@ -1243,6 +1243,34 @@ void InstanceKlass::initialize_impl(TRAPS) {
       const methodHandle mh(THREAD, methods()->at(i));
       CompilationPolicy::compile_if_required_after_init(mh, THREAD);
     }
+
+    if (ForceRecompilation && Universe::is_fully_initialized() && is_shared()) {
+      int init_count = SystemDictionaryShared::compute_init_count(this);
+      log_debug(recompile)("init_count = %d", init_count);
+
+      if (init_count <= ForceRecompilationThreshold) {
+        ForceRecompilation = false; // FIXME: coordinate recompilation
+
+        log_info(recompile)("Recompilation started");
+
+        LogTarget(Trace, recompile) lt;
+        if (lt.is_enabled()) {
+          ResourceMark rm(THREAD);
+          LogStream ls(lt);
+          SystemDictionaryShared::print_init_count(&ls);
+        }
+
+        IntFlagSetting fs(PrecompileBarriers, 0); // produce barrier-free code for recompilation purposes
+        int count = SystemDictionaryShared::force_compilation(true, THREAD);
+        assert(!HAS_PENDING_EXCEPTION, "");
+        if (log_is_enabled(Info, cds, nmethod)) {
+          MutexLocker ml(Threads_lock);
+          CodeCache::arm_all_nmethods();
+        }
+
+        log_info(recompile)("Recompilation finished: %d methods recompiled", count);
+      }
+    }
   }
 }
 
