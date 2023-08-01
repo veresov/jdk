@@ -2555,37 +2555,37 @@ bool SystemDictionaryShared::force_compilation(bool recompile, TRAPS) {
       if (compile) {
         log_trace(cds,dynamic)("Precompile %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
         ++count;
-        {
+        if (!recompile) {
           MutexLocker ml(Compile_lock);
           NoSafepointVerifier nsv;
           CompiledMethod* nm = mh->code();
           if (nm != nullptr) {
             nm->make_not_used();
           }
+          assert(mh->code() == nullptr, "");
         }
-        assert(mh->code() == nullptr, "");
         CompileBroker::compile_method(mh, InvocationEntryBci, comp_level, methodHandle(), 0, requires_online_comp, comp_reason, THREAD);
-//            if (mh->code() == nullptr) {
-//              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
-//            }
+        if (mh->code() == nullptr) {
+          log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
+        }
       } else if (//!recompile && // TODO: any sense NOT to recompile?
                  /*!DirectivesStack::getMatchingDirective(mh, nullptr)->DontPrecompileOption &&*/
                  DirectivesStack::getMatchingDirective(mh, nullptr)->PrecompileRecordedOption) {
         log_trace(cds,dynamic)("Precompile (forced) %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
         ++count;
-        {
+        if (!recompile) {
           MutexLocker ml(Compile_lock);
           NoSafepointVerifier nsv;
           CompiledMethod* nm = mh->code();
           if (nm != nullptr) {
             nm->make_not_used();
           }
+          assert(mh->code() == nullptr, "");
         }
-        assert(mh->code() == nullptr, "");
         CompileBroker::compile_method(mh, InvocationEntryBci, PrecompileLevel, methodHandle(), 0, requires_online_comp, comp_reason, THREAD);
-//            if (mh->code() == nullptr) {
-//              log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
-//            }
+        if (mh->code() == nullptr) {
+          log_trace(cds,dynamic)("Precompile failed %d %s at level %d", cid, mh->name_and_sig_as_C_string(), PrecompileLevel);
+        }
       }
     } else {
       log_trace(cds,dynamic)("Precompile skipped (not initialized: %s) %d " PTR_FORMAT " " PTR_FORMAT " %s at level %d",
@@ -2613,7 +2613,7 @@ InstanceKlass::ClassState SystemDictionaryShared::ArchiveInfo::lookup_init_state
 }
 
 int SystemDictionaryShared::ArchiveInfo::compute_init_count(InstanceKlass* ik) const {
-  if (MetaspaceObj::is_shared(ik) && _init_list != nullptr) {
+  if (_init_list != nullptr && (ik == nullptr || MetaspaceObj::is_shared(ik))) {
     int init_count = 0;
     for (int i = 0; i < _init_list->length(); i++) {
       InitInfo* info = _init_list->adr_at(i);

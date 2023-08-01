@@ -1271,7 +1271,8 @@ void CompileBroker::compile_method_base(const methodHandle& method,
   // A request has been made for compilation.  Before we do any
   // real work, check to see if the method has been compiled
   // in the meantime with a definitive result.
-  if (compilation_is_complete(method, osr_bci, comp_level, requires_online_compilation)) {
+  if (compilation_is_complete(method, osr_bci, comp_level, requires_online_compilation) &&
+      (compile_reason != CompileTask::CompileReason::Reason_Recorded)) {
     return;
   }
 
@@ -1329,7 +1330,8 @@ void CompileBroker::compile_method_base(const methodHandle& method,
     // We need to check again to see if the compilation has
     // completed.  A previous compilation may have registered
     // some result.
-    if (compilation_is_complete(method, osr_bci, comp_level, requires_online_compilation)) {
+    if (compilation_is_complete(method, osr_bci, comp_level, requires_online_compilation) &&
+        (compile_reason != CompileTask::CompileReason::Reason_Recorded)) {
       return;
     }
 
@@ -1508,7 +1510,8 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
     // standard compilation
     CompiledMethod* method_code = method->code();
     if (method_code != nullptr && method_code->is_nmethod()) {
-      if (compilation_is_complete(method, osr_bci, comp_level, requires_online_compilation)) {
+      if (compilation_is_complete(method, osr_bci, comp_level, requires_online_compilation) &&
+          (compile_reason != CompileTask::CompileReason::Reason_Recorded)) {
         return (nmethod*) method_code;
       }
     }
@@ -1604,8 +1607,8 @@ nmethod* CompileBroker::compile_method(const methodHandle& method, int osr_bci,
       return nullptr;
     }
     bool is_blocking = !directive->BackgroundCompilationOption || ReplayCompiles ||
-                       compile_reason == CompileTask::Reason_Precompile ||
-                       compile_reason == CompileTask::Reason_Recorded;
+                       (!requires_online_compilation && (compile_reason == CompileTask::Reason_Precompile ||
+                                                         compile_reason == CompileTask::Reason_Recorded));
 	  compile_method_base(method, osr_bci, comp_level, hot_method, hot_count, compile_reason, requires_online_compilation, is_blocking, THREAD);
   }
 
@@ -1647,7 +1650,7 @@ bool CompileBroker::compilation_is_complete(const methodHandle& method,
       if (result == nullptr) {
         return false;
       }
-      if (online_only && result->is_sca()) {
+      if (online_only && (result->is_sca() || result->as_nmethod()->from_recorded_data())) {
         return false;
       }
       bool same_level = (comp_level == result->comp_level());
@@ -2086,6 +2089,32 @@ void CompileBroker::compiler_thread_loop() {
     HandleMark hm(thread);
 
     CompilationPolicy::recompilation_step(RecompilationWorkUnitSize, thread);
+
+    if (ForceRecompilation && Universe::is_fully_initialized() && os::elapsedTime() >= DelayRecompilation) {
+      log_debug(recompile)("init_count = %d, elapsed_time=%.3f delay=%.3f",
+                           SystemDictionaryShared::compute_init_count(nullptr), os::elapsedTime(), DelayRecompilation);
+
+      ForceRecompilation = false; // FIXME: coordinate recompilation
+      log_info(recompile)("Recompilation started");
+
+      LogTarget(Trace, recompile) lt;
+      if (lt.is_enabled()) {
+        ResourceMark rm(thread);
+        LogStream ls(lt);
+        SystemDictionaryShared::print_init_count(&ls);
+      }
+
+      IntFlagSetting fs(PrecompileBarriers, 0); // produce barrier-free code for recompilation purposes
+      assert(!thread->has_pending_exception(), "");
+      int count = SystemDictionaryShared::force_compilation(true, thread);
+      assert(!thread->has_pending_exception(), "");
+      if (log_is_enabled(Info, cds, nmethod)) {
+        MutexLocker ml(Threads_lock);
+        CodeCache::arm_all_nmethods();
+      }
+
+      log_info(recompile)("Recompilation finished: %d methods recompiled", count);
+    }
 
     CompileTask* task = queue->get(thread);
 
