@@ -445,6 +445,7 @@ private:
 public:
   static SCAFile* archive() { return _archive; }
   static void initialize();
+  static void init2();
   static void close();
   static bool is_on() { return _archive != nullptr && !_archive->closing(); }
   static bool is_C3_on();

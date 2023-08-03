@@ -33,6 +33,8 @@
 #include "c1/c1_ValueStack.hpp"
 #include "ci/ciArrayKlass.hpp"
 #include "ci/ciInstance.hpp"
+#include "ci/ciUtilities.hpp"
+#include "code/SCArchive.hpp"
 #include "compiler/oopMap.hpp"
 #include "gc/shared/collectedHeap.hpp"
 #include "gc/shared/gc_globals.hpp"
@@ -591,6 +593,13 @@ void LIR_Assembler::const2reg(LIR_Opr src, LIR_Opr dest, LIR_PatchCode patch_cod
 
     case T_LONG: {
       assert(patch_code == lir_patch_none, "no patching handled here");
+      if (SCArchive::is_on_for_write()) {
+        // SCA needs relocation info for card table base
+        address b = c->as_pointer();
+        if (b == ci_card_table_address_as<address>()) {
+          __ relocate(relocInfo::external_word_type);
+        }
+      }
 #ifdef _LP64
       __ movptr(dest->as_register_lo(), (intptr_t)c->as_jlong());
 #else

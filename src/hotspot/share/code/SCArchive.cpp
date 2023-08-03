@@ -130,6 +130,16 @@ void SCArchive::initialize() {
   }
 }
 
+void SCArchive::init2() {
+  // After Universe initialized
+  address byte_map_base = ci_card_table_address_as<address>();
+  if (is_on_for_write() && !external_word_Relocation::can_be_relocated(byte_map_base)) {
+    // Bail out since we can't encode card table base address with relocation
+    log_warning(sca, init)("Can't create shared code archive because card table base address is not relocatable: " INTPTR_FORMAT, p2i(byte_map_base));
+    close();
+  }
+}
+
 void SCArchive::print_timers() {
   if (LoadSharedCode) {
     tty->print_cr ("    SC Load Time:         %7.3f s", _t_totalLoad.seconds());
@@ -238,16 +248,16 @@ bool SCArchive::open_archive(const char* archive_path) {
     log_info(sca)("Trying to load shared code archive '%s'", archive_path);
     struct stat st;
     if (os::stat(archive_path, &st) != 0) {
-      log_info(sca, init)("Specified shared code archive not found '%s'", archive_path);
+      log_warning(sca, init)("Specified shared code archive not found '%s'", archive_path);
       return false;
     } else if ((st.st_mode & S_IFMT) != S_IFREG) {
-      log_info(sca, init)("Specified shared code archive is not file '%s'", archive_path);
+      log_warning(sca, init)("Specified shared code archive is not file '%s'", archive_path);
       return false;
     }
     int fd = os::open(archive_path, O_RDONLY | O_BINARY, 0);
     if (fd < 0) {
       if (errno == ENOENT) {
-        log_info(sca, init)("Specified shared code archive not found '%s'", archive_path);
+        log_warning(sca, init)("Specified shared code archive not found '%s'", archive_path);
       } else {
         log_warning(sca, init)("Failed to open shared code archive file '%s': (%s)", archive_path, os::strerror(errno));
       }
