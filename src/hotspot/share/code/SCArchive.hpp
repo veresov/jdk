@@ -212,9 +212,14 @@ private:
   address* _extrs_addr;
   address* _stubs_addr;
   address* _blobs_addr;
+  address* _C1_blobs_addr;
+  address* _C2_blobs_addr;
   uint     _extrs_length;
   uint     _stubs_length;
   uint     _blobs_length;
+  uint     _C1_blobs_length;
+  uint     _C2_blobs_length;
+  uint     _final_blobs_length;
 
   bool _complete;
   bool _opto_complete;
@@ -449,6 +454,7 @@ private:
 public:
   static SCAFile* archive() { return _archive; }
   static void initialize();
+  static void init2();
   static void close();
   static bool is_on() { return _archive != nullptr && !_archive->closing(); }
   static bool is_C3_on();

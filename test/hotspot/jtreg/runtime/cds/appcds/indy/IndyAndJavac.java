@@ -63,7 +63,11 @@ public class IndyAndJavac extends IndyTestBase {
             }
             fw.write("}\n");
         }
-        test("Use javac with archived MethodTypes and LambdaForms", mainClass_javac, sourceFile, sourceFile, RUN_STATIC | RUN_AOT);
+        test("Use javac with archived MethodTypes and LambdaForms", mainClass_javac, sourceFile, sourceFile,
+             RUN_STATIC |
+           //RUN_BENCH |
+             RUN_AOT
+             );
         checkExec(null, /*lambdaFormsMustBeArchived*/false); // Some lambda forms are generated because we don't cache invokedynamic for lambda proxies yet
     }
 }

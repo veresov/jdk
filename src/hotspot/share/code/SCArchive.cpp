@@ -131,6 +131,16 @@ void SCArchive::initialize() {
   }
 }
 
+void SCArchive::init2() {
+  // After Universe initialized
+  address byte_map_base = ci_card_table_address_as<address>();
+  if (is_on_for_write() && !external_word_Relocation::can_be_relocated(byte_map_base)) {
+    // Bail out since we can't encode card table base address with relocation
+    log_warning(sca, init)("Can't create shared code archive because card table base address is not relocatable: " INTPTR_FORMAT, p2i(byte_map_base));
+    close();
+  }
+}
+
 void SCArchive::print_timers() {
   if (LoadSharedCode) {
     tty->print_cr ("    SC Load Time:         %7.3f s", _t_totalLoad.seconds());
@@ -239,16 +249,16 @@ bool SCArchive::open_archive(const char* archive_path) {
     log_info(sca)("Trying to load shared code archive '%s'", archive_path);
     struct stat st;
     if (os::stat(archive_path, &st) != 0) {
-      log_info(sca, init)("Specified shared code archive not found '%s'", archive_path);
+      log_warning(sca, init)("Specified shared code archive not found '%s'", archive_path);
       return false;
     } else if ((st.st_mode & S_IFMT) != S_IFREG) {
-      log_info(sca, init)("Specified shared code archive is not file '%s'", archive_path);
+      log_warning(sca, init)("Specified shared code archive is not file '%s'", archive_path);
       return false;
     }
     int fd = os::open(archive_path, O_RDONLY | O_BINARY, 0);
     if (fd < 0) {
       if (errno == ENOENT) {
-        log_info(sca, init)("Specified shared code archive not found '%s'", archive_path);
+        log_warning(sca, init)("Specified shared code archive not found '%s'", archive_path);
       } else {
         log_warning(sca, init)("Failed to open shared code archive file '%s': (%s)", archive_path, os::strerror(errno));
       }
@@ -2905,12 +2915,15 @@ void SCAReader::print_on(outputStream* st) {
 #define _extrs_max 80
 #define _stubs_max 120
 #define _blobs_max 80
-#define   _all_max 280
+#define _shared_blobs_max 16
+#define _C2_blobs_max 16
+#define _C1_blobs_max (_blobs_max - _shared_blobs_max - _C2_blobs_max)
+#define _all_max 280
 
-#define SET_ADDRESS(type, addr)                          \
-  {                                                      \
-    type##_addr[type##_length++] = (address) (addr);     \
-    assert(type##_length < type##_max - 1, "increase size"); \
+#define SET_ADDRESS(type, addr)                           \
+  {                                                       \
+    type##_addr[type##_length++] = (address) (addr);      \
+    assert(type##_length <= type##_max, "increase size"); \
   }
 
 static bool initializing = false;
@@ -2921,9 +2934,16 @@ void SCAddressTable::init() {
   _stubs_addr = NEW_C_HEAP_ARRAY(address, _stubs_max, mtCode);
   _blobs_addr = NEW_C_HEAP_ARRAY(address, _blobs_max, mtCode);
 
+  // Divide _blobs_addr array to chunks because they could be initialized in parrallel
+  _C2_blobs_addr = _blobs_addr + _shared_blobs_max;// C2 blobs addresses stored after shared blobs
+  _C1_blobs_addr = _C2_blobs_addr + _C2_blobs_max; // C1 blobs addresses stored after C2 blobs
+
   _extrs_length = 0;
   _stubs_length = 0;
-  _blobs_length = 0;
+  _blobs_length = 0;       // for shared blobs
+  _C1_blobs_length = 0;
+  _C2_blobs_length = 0;
+  _final_blobs_length = 0; // Depends on numnber of C1 blobs
 
   // Runtime methods
 #ifdef COMPILER2
@@ -3176,34 +3196,41 @@ void SCAddressTable::init() {
   SET_ADDRESS(_blobs, StubRoutines::throw_StackOverflowError_entry());
   SET_ADDRESS(_blobs, StubRoutines::throw_delayed_StackOverflowError_entry());
 
+  assert(_blobs_length <= _shared_blobs_max, "increase _shared_blobs_max to %d", _blobs_length);
+  _final_blobs_length = _blobs_length;
   _complete = true;
+  log_info(sca,init)("External addresses and stubs recorded");
 }
 
 void SCAddressTable::init_opto() {
 #ifdef COMPILER2
   // OptoRuntime Blobs
-  SET_ADDRESS(_blobs, OptoRuntime::exception_blob()->entry_point());
-  SET_ADDRESS(_blobs, OptoRuntime::new_instance_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::new_array_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::new_array_nozero_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::multianewarray2_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::multianewarray3_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::multianewarray4_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::multianewarray5_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::multianewarrayN_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::vtable_must_compile_stub());
-  SET_ADDRESS(_blobs, OptoRuntime::complete_monitor_locking_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::monitor_notify_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::monitor_notifyAll_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::rethrow_stub());
-  SET_ADDRESS(_blobs, OptoRuntime::slow_arraycopy_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::register_finalizer_Java());
-  SET_ADDRESS(_blobs, OptoRuntime::notify_jvmti_vthread_start());
-  SET_ADDRESS(_blobs, OptoRuntime::notify_jvmti_vthread_end());
-  SET_ADDRESS(_blobs, OptoRuntime::notify_jvmti_vthread_mount());
-  SET_ADDRESS(_blobs, OptoRuntime::notify_jvmti_vthread_unmount());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::exception_blob()->entry_point());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::new_instance_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::new_array_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::new_array_nozero_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::multianewarray2_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::multianewarray3_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::multianewarray4_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::multianewarray5_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::multianewarrayN_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::vtable_must_compile_stub());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::complete_monitor_locking_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::monitor_notify_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::monitor_notifyAll_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::rethrow_stub());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::slow_arraycopy_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::register_finalizer_Java());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::notify_jvmti_vthread_start());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::notify_jvmti_vthread_end());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::notify_jvmti_vthread_mount());
+  SET_ADDRESS(_C2_blobs, OptoRuntime::notify_jvmti_vthread_unmount());
 #endif
+
+  assert(_C2_blobs_length <= _C2_blobs_max, "increase _C2_blobs_max to %d", _C2_blobs_length);
+  _final_blobs_length = MAX2(_final_blobs_length, (_shared_blobs_max + _C2_blobs_length));
   _opto_complete = true;
+  log_info(sca,init)("OptoRuntime Blobs recorded");
 }
 
 void SCAddressTable::init_c1() {
@@ -3220,25 +3247,32 @@ void SCAddressTable::init_c1() {
       continue;
     }
     address entry = Runtime1::entry_for(id);
-    SET_ADDRESS(_blobs, entry);
+    SET_ADDRESS(_C1_blobs, entry);
   }
 #if INCLUDE_G1GC
   if (UseG1GC) {
     G1BarrierSetC1* bs = (G1BarrierSetC1*)BarrierSet::barrier_set()->barrier_set_c1();
     address entry = bs->pre_barrier_c1_runtime_code_blob()->code_begin();
-    SET_ADDRESS(_blobs, entry);
+    SET_ADDRESS(_C1_blobs, entry);
     entry = bs->post_barrier_c1_runtime_code_blob()->code_begin();
-    SET_ADDRESS(_blobs, entry);
+    SET_ADDRESS(_C1_blobs, entry);
   }
 #endif // INCLUDE_G1GC
 #endif // COMPILER1
+
+  assert(_C1_blobs_length <= _C1_blobs_max, "increase _C1_blobs_max to %d", _C1_blobs_length);
+  _final_blobs_length = MAX2(_final_blobs_length, (_shared_blobs_max + _C2_blobs_max + _C1_blobs_length));
   _c1_complete = true;
+  log_info(sca,init)("Runtime1 Blobs recorded");
 }
 
 #undef SET_ADDRESS
 #undef _extrs_max
 #undef _stubs_max
 #undef _blobs_max
+#undef _shared_blobs_max
+#undef _C1_blobs_max
+#undef _C2_blobs_max
 
 SCAddressTable::~SCAddressTable() {
   if (_extrs_addr != nullptr) {
@@ -3404,7 +3438,7 @@ address SCAddressTable::address_for_id(int idx) {
   if (id >= _all_max && idx < (_all_max + _C_strings_count)) {
     return address_for_C_string(idx - _all_max);
   }
-  if (idx < 0 || id == (_extrs_length + _stubs_length + _blobs_length)) {
+  if (idx < 0 || id == (_extrs_length + _stubs_length + _final_blobs_length)) {
     fatal("Incorrect id %d for SCA table", id);
   }
   if (idx > (_all_max + _C_strings_count)) {
@@ -3418,7 +3452,7 @@ address SCAddressTable::address_for_id(int idx) {
     return _stubs_addr[id];
   }
   id -= _stubs_length;
-  if (id < _blobs_length) {
+  if (id < _final_blobs_length) {
     return _blobs_addr[id];
   }
   return nullptr;
@@ -3454,7 +3488,7 @@ int SCAddressTable::id_for_address(address addr, RelocIterator reloc, CodeBuffer
     CodeBlob* cb = CodeCache::find_blob(addr);
     if (cb != nullptr) {
       // Search in code blobs
-      id = search_address(addr, _blobs_addr, _blobs_length);
+      id = search_address(addr, _blobs_addr, _final_blobs_length);
       if (id < 0) {
         fatal("Address " INTPTR_FORMAT " for Blob:%s is missing in SCA table", p2i(addr), cb->name());
       } else {
