@@ -1428,6 +1428,10 @@ void MacroAssembler::check_klass_subtype_slow_path(Register sub_klass,
   }
 
 #ifndef PRODUCT
+  if (SCArchive::is_on_for_write()) {
+    // SCA needs relocation info for this
+    relocate(relocInfo::external_word_type);
+  }
   mov(rscratch2, (address)&SharedRuntime::_partial_subtype_ctr);
   Address pst_counter_addr(rscratch2);
   ldr(rscratch1, pst_counter_addr);
@@ -4917,6 +4921,10 @@ void MacroAssembler::load_byte_map_base(Register reg) {
 
   // Strictly speaking the byte_map_base isn't an address at all, and it might
   // even be negative. It is thus materialised as a constant.
+  if (SCArchive::is_on_for_write()) {
+    // SCA needs relocation info for card table base
+    relocate(relocInfo::external_word_type);
+  }
   mov(reg, (uint64_t)byte_map_base);
 }
 
